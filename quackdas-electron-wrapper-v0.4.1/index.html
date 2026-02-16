@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+    Quackdas - Qualitative Data Analysis Software
+    Version 0.4.1
+    
+    MIT License
+    
+    Copyright (c) 2026 Quackdas Contributors
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+    
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+    
+    ---
+    
+    Logo: Rabbit-duck illusion (public domain)
+    Developed with assistance from Claude (Anthropic)
+    
+    This is free and open source software. You are free to use, modify, and
+    distribute it. Contributions welcome!
+-->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:;">
+    <title>Quackdas - Qualitative Coding</title>
+    <script src="js/mammoth.browser.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <img src="data:image/jpeg;base64,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PozPlGntdG+k7e/zNl6nRu7aI+cfXugr6DCW+HZ61bsYmC5Dpr69+rJJUeWkfldKAGhw+0mt91j5vH8PyWSp3IuPWIsmddV2/UjnY9m+ol8jQ4Sf7muB+xCuTHZWp1tbkKl9jOwhsvhbK0jXYe7C52//AC0tDyzBULFN9i/Dh5B07Lmtkg6AToblj79/u5ukFKcvlwlfFNu4rkWQxk/R7Fb4OQWqUpI10ua7bx2+jjsAee3euOT8Qy0mMle+zVydOSUV91spOY5elvVtsMrntaNHtrZBB0Boq68jxvK1HtsQy5CSmT8ssJZerDsQC7oGx50SQ0gd9rXVMJWyMPx9TH40baRNGGaD2k6J6SSNjY8O+/ZBzXnfTui1kUfG4szYvdAbahZ7JJ+7mMPSXDf22s/G4V3ErFOtgKYzeSyFkV6sFirLDMJ3AAMMMgLCdny13jez9uk73EYYacVqGFvW149n4WAHpPc76Qfy99a3234W44HgauZyrYsjh+Nyzsc17TYgcJpGaJLWuYexGt9+rao3XoV6G4jhczOWZ+KPJczsxAz2XOL4qRI7xVw7ZAA+XrJLj37gHSuQdl51YY4IGRQs6GNAAbvwF6KAiIgIiICIiAiIgIiICIiAiIgIiICIiAiIgLwu1o7UBjeyNxB20vb1AH7/AP8ACF7og0eSxL2VH2KJLLgj6R0xtkH66DiPP+4H9fCi1qfKyQMgnmgEjC75JXviLf1b1OjeB/5PVir8c1rmlrmhwP0I2greXFOsthErIpnnREsH971gf50EjHjx9Wu+ncrJp5O3VmkjvxZWwxjekBkkU73A+HdJayXsP0PlT1sMTSCImDXjTQv18bHjT2NcPsRtBC8ff4zautcbsMUvfYs0TXk7jX5i1vf/AL/dfdjjdN8MssMpvCQu6XPjZO+JxPcteOl3gffamQY0N6Q0Bv212RrWtGmtAH6BBBqMZYYoWT0Q4NP8vrbG55B0P5crCQex8H/lSXA1DD7sroII+rQa5kTGl4+5Lf8A9LZujY4guY1xb4JG9L6QEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQf/2Q==" alt="Logo" style="width: 44px; height: 44px; object-fit: contain;">
+                Quackdas
+            </div>
+            <div class="search-bar" onclick="openSearchModal()" title="Search documents (Ctrl+F)">
+                <svg class="toolbar-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <span class="search-bar-text">Search documents...</span>
+                <span class="search-bar-shortcut">⌘F</span>
+            </div>
+            <div class="doc-actions">
+                
+                <button class="doc-action-btn btn-toolbar-primary" onclick="newProject()" title="New project">
+                    <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    New
+                </button>
+<button class="doc-action-btn" id="saveBtn" onclick="manualSave()" title="Save project (Ctrl+S)">
+                    <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+                    <span id="saveStatus">Save</span>
+                </button>
+                <div class="header-dropdown">
+                    <button class="doc-action-btn" onclick="toggleHeaderDropdown(event)" title="More actions">
+                        <svg class="toolbar-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                        More
+                    </button>
+                    <div class="header-dropdown-menu" id="headerDropdownMenu">
+                        <button class="header-dropdown-item" onclick="importProjectNative(); closeHeaderDropdown();">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Import project…
+                        </button>
+                        <button class="header-dropdown-item" onclick="exportProject(); closeHeaderDropdown();">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Export project…
+                        </button>
+                        <button class="header-dropdown-item" onclick="openStatsModal(); closeHeaderDropdown();">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+                            Statistics
+                        </button>
+                        <button class="header-dropdown-item" onclick="exportCodedData(); closeHeaderDropdown();">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
+                            Export report…
+                        </button>
+                    </div>
+                </div>
+                <input type="file" id="importProjectInput" accept=".qdpx,.json" style="display: none;" onchange="importProject(event)">
+            </div>
+        </header>
+
+        <!-- Codes Panel -->
+        <aside class="codes-panel">
+            <div class="panel-header">
+                <div class="panel-title">Codes</div>
+                <button class="add-code-btn" onclick="openCodeModal()">+ New Code</button>
+            </div>
+            <div class="codes-list" id="codesList">
+                <!-- Codes will be populated here -->
+            </div>
+        </aside>
+
+        <!-- Content Panel -->
+        <main class="content-panel">
+            <div class="content-header">
+                <div class="document-title" id="documentTitle">Select or add a document</div>
+                <div class="doc-actions">
+                    <div class="history-actions">
+                        <button class="history-btn" id="undoBtn" onclick="undo()" title="Undo (Ctrl+Z)" disabled>↶</button>
+                        <button class="history-btn" id="redoBtn" onclick="redo()" title="Redo (Ctrl+Y)" disabled>↷</button>
+                    </div>
+                    <div class="pdf-nav-controls" id="pdfNavControls" hidden>
+                        <button class="zoom-btn" onclick="pdfPrevPage()" id="pdfPrevBtn" title="Previous page" disabled>◀</button>
+                        <span class="pdf-page-info">
+                            <span id="pdfCurrentPage">1</span>/<span id="pdfTotalPages">1</span>
+                        </span>
+                        <button class="zoom-btn" onclick="pdfNextPage()" id="pdfNextBtn" title="Next page" disabled>▶</button>
+                    </div>
+                    <div class="zoom-controls">
+                        <button class="zoom-btn" id="docZoomOutBtn" onclick="adjustZoom(-10)" title="Zoom out">−</button>
+                        <span class="zoom-level" id="zoomLevel">100%</span>
+                        <button class="zoom-btn" id="docZoomInBtn" onclick="adjustZoom(10)" title="Zoom in">+</button>
+                    </div>
+                    <button class="doc-action-btn" onclick="openImportModal()" title="Import document">
+                        <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>
+                        Import
+                    </button>
+                    <button class="doc-action-btn" onclick="openPasteModal()" title="Paste text">
+                        <svg class="toolbar-icon" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+                        Paste
+                    </button>
+                </div>
+            </div>
+            <div class="content-body">
+                <div id="documentContent" class="document-text" style="white-space: pre-wrap;">
+                    <div class="empty-state">
+                        <h3>Start coding your data</h3>
+                        <p>Import a document or paste text to begin qualitative analysis. Create codes in the left panel and apply them to text selections.</p>
+                        <div class="empty-state-actions">
+                            <button class="empty-state-btn" onclick="openImportModal()"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>Import Document</button>
+                            <button class="empty-state-btn" onclick="openPasteModal()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>Paste Text</button>
+                        </div>
+                        <p class="empty-state-hint">Or drag and drop a .txt or .docx file anywhere</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Documents Panel -->
+        <aside class="documents-panel">
+            <div class="panel-header">
+                <div class="panel-title">Recent Documents</div>
+            </div>
+            <div class="documents-list" id="recentDocumentsList" style="max-height: 180px;">
+                <!-- Recent documents will be populated here -->
+            </div>
+            <div class="panel-header" style="border-top: 1px solid var(--border);">
+                <div class="panel-title">All Documents</div>
+                <button class="panel-header-action" onclick="createFolder()" title="New folder">+ Folder</button>
+            </div>
+            <div class="documents-list" id="documentsList">
+                <!-- Documents will be populated here -->
+            </div>
+        </aside>
+    </div>
+
+    <!-- Drag and Drop Overlay -->
+    <div class="drop-overlay" id="dropOverlay">
+        <div class="drop-icon">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14,2 14,8 20,8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <polyline points="9,15 12,12 15,15"/>
+            </svg>
+        </div>
+        <div class="drop-text">Drop files here</div>
+        <div class="drop-subtext">Documents (.txt, .docx, .doc, .rtf)</div>
+    </div>
+
+    <!-- Memo Modal -->
+    <div id="memoModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title" id="memoModalTitle">Add Memo</h2>
+            <form onsubmit="saveMemo(event)">
+                <div class="form-group">
+                    <label class="form-label">Memo Content</label>
+                    <textarea class="form-textarea" id="memoContent" rows="6" required></textarea>
+                </div>
+                <div class="memo-list" id="existingMemosList" style="display: none;">
+                    <!-- Existing memos will be shown here -->
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMemoModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Memo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Segment Boundaries Modal -->
+    <div id="editBoundariesModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Edit Segment Boundaries</h2>
+            <div class="boundary-preview" id="boundaryPreview">
+                <!-- Preview will be rendered here -->
+            </div>
+            <div class="form-group">
+                <label class="form-label">Adjust Boundaries</label>
+                <div class="boundary-controls">
+                    <span style="font-size: 13px;">Start:</span>
+                    <input type="number" class="boundary-input" id="boundaryStart" min="0">
+                    <span style="font-size: 13px;">End:</span>
+                    <input type="number" class="boundary-input" id="boundaryEnd" min="0">
+                    <button type="button" class="btn btn-secondary" onclick="updateBoundaryPreview()">Preview</button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeEditBoundariesModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveBoundaryEdit()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Metadata Modal -->
+    <div id="metadataModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Document Metadata</h2>
+            <form onsubmit="saveMetadata(event)">
+                <div class="metadata-fields">
+                    <div class="form-group">
+                        <label class="form-label">Participant ID</label>
+                        <input type="text" class="form-input" id="metaParticipantId">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Interview Date</label>
+                        <input type="date" class="form-input" id="metaDate">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Location</label>
+                        <input type="text" class="form-input" id="metaLocation">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Age</label>
+                        <input type="number" class="form-input" id="metaAge">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Gender</label>
+                        <input type="text" class="form-input" id="metaGender">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Custom Field 1</label>
+                        <input type="text" class="form-input" id="metaCustom1">
+                    </div>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-textarea" id="metaNotes" rows="3"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeMetadataModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Metadata</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard Modal -->
+    <div id="statsModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <h2 class="modal-title">Statistics Dashboard</h2>
+            <div class="stats-grid" id="statsGrid">
+                <!-- Stats will be rendered here -->
+            </div>
+            <div class="stat-chart">
+                <h3 style="font-size: 16px; margin-bottom: 12px;">Most Used Codes</h3>
+                <div id="codeChart">
+                    <!-- Chart will be rendered here -->
+                </div>
+            </div>
+            <div class="stat-chart">
+                <h3 style="font-size: 16px; margin-bottom: 12px;">Coding Progress by Document</h3>
+                <div id="documentChart">
+                    <!-- Chart will be rendered here -->
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeStatsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Results Modal -->
+    <div id="searchResultsModal" class="modal search-results-modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Search Results</h2>
+            <div class="search-help">
+                <strong>Search syntax:</strong><br>
+                <code>term1 AND term2</code> — both terms must appear<br>
+                <code>term1 OR term2</code> — either term can appear<br>
+                <code>NOT term</code> — exclude documents containing term<br>
+                <code>interview*</code> — wildcard matches "interview", "interviews", "interviewer", etc.
+            </div>
+            <div class="search-summary" id="searchSummary">
+                <!-- Summary will be populated here -->
+            </div>
+            <div class="search-results-list" id="searchResultsList">
+                <!-- Results will be populated here -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeSearchResults()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Segment Action Modal -->
+    <div id="segmentActionModal" class="modal">
+        <div class="modal-content" style="max-width: 320px;">
+            <h2 class="modal-title">Segment Options</h2>
+            <div class="segment-action-buttons">
+                <button class="btn btn-secondary segment-action-option" onclick="segmentActionChoice('memo')">
+                    <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    Add Memo
+                </button>
+                <button class="btn btn-secondary segment-action-option" onclick="segmentActionChoice('edit')">
+                    <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit Boundaries
+                </button>
+                <button class="btn btn-secondary segment-action-option" onclick="segmentActionChoice('remove')">
+                    <svg class="toolbar-icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Remove Coding
+                </button>
+            </div>
+            <div class="modal-actions" style="margin-top: var(--space-4);">
+                <button type="button" class="btn btn-secondary" onclick="closeSegmentActionModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Code Modal -->
+    <div id="codeModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">New Code</h2>
+            <form onsubmit="saveCode(event)">
+                <div class="form-group">
+                    <label class="form-label">Code Name</label>
+                    <input type="text" class="form-input" id="codeName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description (optional)</label>
+                    <textarea class="form-textarea" id="codeDescription" rows="3" placeholder="Define what this code represents..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Keyboard Shortcut (optional)</label>
+                    <select class="form-select" id="codeShortcut">
+                        <option value="">None</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parent Code (optional)</label>
+                    <select class="form-select" id="parentCode">
+                        <option value="">None (Top-level code)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCodeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Code</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Import Document Modal -->
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Import Document</h2>
+            <form onsubmit="importDocument(event)">
+                <div class="form-group">
+                    <label class="form-label">Document Title</label>
+                    <input type="text" class="form-input" id="importTitle" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select File (.txt, .docx, .doc, .rtf)</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" class="file-input" id="fileInput" accept=".txt,.docx,.doc,.rtf,.pdf" required>
+                        <div class="file-input-label">Choose file...</div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Import</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Paste Document Modal -->
+    <div id="pasteModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Paste Text</h2>
+            <form onsubmit="pasteDocument(event)">
+                <div class="form-group">
+                    <label class="form-label">Document Title</label>
+                    <input type="text" class="form-input" id="pasteTitle" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Text Content</label>
+                    <textarea class="form-textarea" id="pasteContent" required></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closePasteModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Document</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Code Selection Modal -->
+    <div id="codeSelectionModal" class="modal code-selection-modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Apply Codes</h2>
+            <div class="code-selection-list" id="codeSelectionList">
+                <!-- Checkboxes will be populated here -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeCodeSelectionModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="applySelectedCodes()">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Move to Folder Modal -->
+    <div id="moveToFolderModal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <h2 class="modal-title">Move to Folder</h2>
+            <div class="folder-selection-list" id="folderSelectionList">
+                <!-- Folder options will be populated here -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeMoveToFolderModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder Info Modal -->
+    <div id="folderInfoModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <h2 class="modal-title">Folder Information</h2>
+            <form onsubmit="saveFolderInfo(event)">
+                <div class="folder-info-header">
+                    <span class="folder-info-icon">📁</span>
+                    <span class="folder-info-name" id="folderInfoName"></span>
+                </div>
+                <div class="folder-info-stats">
+                    <div class="folder-info-stat">
+                        <span class="folder-info-stat-value" id="folderInfoDocCount">0</span>
+                        <span class="folder-info-stat-label">Documents</span>
+                    </div>
+                    <div class="folder-info-stat">
+                        <span class="folder-info-stat-value" id="folderInfoSubfolderCount">0</span>
+                        <span class="folder-info-stat-label">Subfolders</span>
+                    </div>
+                    <div class="folder-info-stat">
+                        <span class="folder-info-stat-value" id="folderInfoCreated"></span>
+                        <span class="folder-info-stat-label">Created</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="folderInfoDescription">Description / Notes</label>
+                    <textarea id="folderInfoDescription" rows="4" placeholder="Add a description for this folder..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeFolderInfoModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="contextMenu" role="menu" aria-hidden="true"></div>
+
+<!-- Simple text prompt modal (used for renaming, avoids relying on window.prompt in packaged apps) -->
+<div id="textPromptModal" class="modal">
+  <div class="modal-content" style="max-width: 520px;">
+    <div class="modal-header">
+      <h3 id="textPromptTitle">Rename</h3>
+      <button class="close-btn" onclick="closeTextPrompt(false)">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input id="textPromptInput" type="text" style="width: 100%; padding: 10px; font-size: 14px;" />
+    </div>
+    <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeTextPrompt(false)">Cancel</button>
+      <button class="btn btn-primary" onclick="closeTextPrompt(true)">OK</button>
+    </div>
+  </div>
+</div>
+
+
+    <!-- JavaScript libraries -->
+    <script src="js/jszip.min.js"></script>
+<!-- JavaScript modules -->
+    <script src="js/state.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/render.js"></script>
+    <script src="js/documents.js"></script>
+    <script src="js/codes.js"></script>
+    <script src="js/coding.js"></script>
+    <script src="js/search.js"></script>
+    <script src="js/memos.js"></script>
+    <script src="js/pdf.js"></script>
+    <script src="js/qdpx.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/app.js"></script>
+<!-- PDF.js (module build) -->
+<script type="module">
+  import * as pdfjsLib from './js/pdfjs/pdf.mjs';
+  // Expose for existing non-module code (js/pdf.js expects globalThis/window.pdfjsLib)
+  window.pdfjsLib = pdfjsLib;
+</script>
+</body>
+</html>

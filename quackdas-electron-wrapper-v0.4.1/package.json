@@ -1,0 +1,45 @@
+{
+  "name": "quackdas",
+  "version": "0.4.1",
+  "description": "Quackdas - Qualitative Data Analysis Software (REFI-QDA compatible)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "build-all": "npm run dist"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "se.staffanedling.quackdas",
+    "productName": "Quackdas",
+    "files": [
+      "**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "asarUnpack": [
+      "**/js/pdfjs/pdf.worker.min.js",
+      "**/js/pdfjs/pdf.worker.mjs"
+    ]
+  }
+}

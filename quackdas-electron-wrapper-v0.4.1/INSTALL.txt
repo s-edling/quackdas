@@ -1,0 +1,10 @@
+INSTALL (unsigned app)
+
+macOS:
+1) Open the .dmg
+2) Drag Quackdas into Applications
+3) First launch: if macOS warns, right‑click Quackdas in Applications → Open → Open.
+
+Windows:
+1) Run the Setup .exe
+2) If SmartScreen warns: More info → Run anyway.

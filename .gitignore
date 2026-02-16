@@ -1,0 +1,6 @@
+.DS_Store
+
+# Quackdas build/dependency artifacts
+quackdas-electron-wrapper-v0.4.1/node_modules/
+quackdas-electron-wrapper-v0.4.1/dist/
+
