@@ -412,6 +412,19 @@ async function exportToQdpx() {
     });
     xml += '    </DocumentMetadata>\n';
 
+    xml += '    <CodeViewPresets>\n';
+    (Array.isArray(appData.codeViewPresets) ? appData.codeViewPresets : []).forEach((preset) => {
+        if (!preset || !preset.id || !preset.name) return;
+        const state = preset.state || {};
+        xml += `      <Preset id="${escapeXml(String(preset.id))}" name="${escapeXml(String(preset.name))}" updated="${escapeXml(String(preset.updated || ''))}">\n`;
+        Object.entries(state).forEach(([key, value]) => {
+            if (value === null || value === undefined || value === '') return;
+            xml += `        <State key="${escapeXml(String(key))}" value="${escapeXml(String(value))}"/>\n`;
+        });
+        xml += '      </Preset>\n';
+    });
+    xml += '    </CodeViewPresets>\n';
+
     xml += '  </QuackdasExtensions>\n';
 
     if (exportReport.exportedPdfRegionSelections > 0) {
@@ -664,6 +677,21 @@ async function importFromQdpx(qdpxData) {
             if (!key || !value) return;
             if (applyMetadataValue(doc, key, value)) importReport.importedMetadataFields += 1;
         });
+    });
+
+    xmlDoc.querySelectorAll('QuackdasExtensions > CodeViewPresets > Preset').forEach((presetEl) => {
+        const id = getAttrFirst(presetEl, ['id']) || ('preset_' + Date.now() + '_' + Math.floor(Math.random() * 1000));
+        const name = getAttrFirst(presetEl, ['name']) || 'Preset';
+        const updated = getAttrFirst(presetEl, ['updated']) || new Date().toISOString();
+        const state = {};
+        presetEl.querySelectorAll(':scope > State').forEach((stateEl) => {
+            const key = getAttrFirst(stateEl, ['key']);
+            const value = getAttrFirst(stateEl, ['value']);
+            if (!key) return;
+            state[key] = String(value || '');
+        });
+        if (!Array.isArray(project.codeViewPresets)) project.codeViewPresets = [];
+        project.codeViewPresets.push({ id, name, updated, state });
     });
     
     // Parse selections (coded segments)

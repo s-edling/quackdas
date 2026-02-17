@@ -15,6 +15,7 @@ function makeEmptyProject(overrides = {}) {
         currentDocId: null,
         selectedText: null,
         filterCodeId: null,
+        codeViewPresets: [],
         selectedDocIds: [],
         lastSelectedDocId: null,
         scrollPositions: {}, // {docId: scrollTop}
@@ -37,6 +38,7 @@ function normaliseProject(p) {
     out.segments = Array.isArray(src.segments) ? src.segments : [];
     out.memos = Array.isArray(src.memos) ? src.memos : [];
     out.folders = Array.isArray(src.folders) ? src.folders : [];
+    out.codeViewPresets = Array.isArray(src.codeViewPresets) ? src.codeViewPresets : [];
 
     out.scrollPositions = (src.scrollPositions && typeof src.scrollPositions === 'object') ? src.scrollPositions : {};
     out.zoomLevel = Number.isFinite(src.zoomLevel) ? src.zoomLevel : d.zoomLevel;

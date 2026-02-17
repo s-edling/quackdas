@@ -844,3 +844,133 @@ function applySelectedHealthFixes() {
     lastHealthCheckReport = getHealthIssueReport();
     renderProjectHealthCheckModal(lastHealthCheckReport);
 }
+
+function openCooccurrenceModal() {
+    const modal = document.getElementById('cooccurrenceModal');
+    if (!modal) return;
+    renderCooccurrenceMatrix();
+    modal.classList.add('show');
+}
+
+function closeCooccurrenceModal() {
+    const modal = document.getElementById('cooccurrenceModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function getTopCodesForCooccurrence(limit = 24) {
+    return appData.codes
+        .map(code => ({ code, count: getCodeSegmentCountFast(code.id) }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit)
+        .map(item => item.code);
+}
+
+function renderCooccurrenceMatrix() {
+    const wrap = document.getElementById('cooccurrenceMatrix');
+    const selectA = document.getElementById('coocCodeA');
+    const selectB = document.getElementById('coocCodeB');
+    if (!wrap || !selectA || !selectB) return;
+
+    const codes = getTopCodesForCooccurrence(24);
+    if (codes.length < 2) {
+        wrap.innerHTML = '<p style="color: var(--text-secondary);">Need at least two codes for co-occurrence analysis.</p>';
+        selectA.innerHTML = '<option value="">Select code</option>';
+        selectB.innerHTML = '<option value="">Select code</option>';
+        renderCooccurrenceOverlaps();
+        return;
+    }
+
+    const codeOptions = '<option value="">Select code</option>' + codes
+        .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+        .join('');
+    selectA.innerHTML = codeOptions;
+    selectB.innerHTML = codeOptions;
+    if (!selectA.value && codes[0]) selectA.value = codes[0].id;
+    if (!selectB.value && codes[1]) selectB.value = codes[1].id;
+
+    const indexById = new Map(codes.map((c, idx) => [c.id, idx]));
+    const matrix = Array.from({ length: codes.length }, () => Array(codes.length).fill(0));
+    appData.segments.forEach(seg => {
+        const ids = Array.isArray(seg.codeIds) ? Array.from(new Set(seg.codeIds.filter(id => indexById.has(id)))) : [];
+        for (let i = 0; i < ids.length; i++) {
+            for (let j = i + 1; j < ids.length; j++) {
+                const a = indexById.get(ids[i]);
+                const b = indexById.get(ids[j]);
+                matrix[a][b] += 1;
+                matrix[b][a] += 1;
+            }
+        }
+    });
+
+    let html = '<table class="cooc-table"><thead><tr><th>Code</th>';
+    html += codes.map(c => `<th title="${escapeHtml(c.name)}">${escapeHtml(c.name).slice(0, 18)}</th>`).join('');
+    html += '</tr></thead><tbody>';
+    codes.forEach((rowCode, i) => {
+        html += `<tr><th title="${escapeHtml(rowCode.name)}">${escapeHtml(rowCode.name).slice(0, 18)}</th>`;
+        for (let j = 0; j < codes.length; j++) {
+            if (i === j) {
+                html += '<td>—</td>';
+            } else {
+                const v = matrix[i][j];
+                html += `<td class="cooc-cell" onclick="selectCooccurrencePair('${rowCode.id}', '${codes[j].id}')" title="Find overlaps">${v}</td>`;
+            }
+        }
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+    renderCooccurrenceOverlaps();
+}
+
+function selectCooccurrencePair(codeAId, codeBId) {
+    const selectA = document.getElementById('coocCodeA');
+    const selectB = document.getElementById('coocCodeB');
+    if (!selectA || !selectB) return;
+    selectA.value = codeAId;
+    selectB.value = codeBId;
+    renderCooccurrenceOverlaps();
+}
+
+function renderCooccurrenceOverlaps() {
+    const selectA = document.getElementById('coocCodeA');
+    const selectB = document.getElementById('coocCodeB');
+    const out = document.getElementById('cooccurrenceOverlaps');
+    if (!selectA || !selectB || !out) return;
+    const codeAId = selectA.value;
+    const codeBId = selectB.value;
+    if (!codeAId || !codeBId || codeAId === codeBId) {
+        out.innerHTML = '<p style="color: var(--text-secondary); margin: 4px;">Select two different codes.</p>';
+        return;
+    }
+
+    const codeA = appData.codes.find(c => c.id === codeAId);
+    const codeB = appData.codes.find(c => c.id === codeBId);
+    const overlaps = appData.segments
+        .filter(seg => Array.isArray(seg.codeIds) && seg.codeIds.includes(codeAId) && seg.codeIds.includes(codeBId))
+        .sort((a, b) => {
+            if (a.docId !== b.docId) return String(a.docId).localeCompare(String(b.docId));
+            const ap = a.pdfRegion ? (a.pdfRegion.pageNum || 0) * 100000 + Math.floor((a.pdfRegion.yNorm || 0) * 10000) : (a.startIndex || 0);
+            const bp = b.pdfRegion ? (b.pdfRegion.pageNum || 0) * 100000 + Math.floor((b.pdfRegion.yNorm || 0) * 10000) : (b.startIndex || 0);
+            return ap - bp;
+        });
+
+    if (overlaps.length === 0) {
+        out.innerHTML = `<p style="color: var(--text-secondary); margin: 4px;">No overlaps between ${escapeHtml(codeA?.name || 'Code A')} and ${escapeHtml(codeB?.name || 'Code B')}.</p>`;
+        return;
+    }
+
+    out.innerHTML = `
+        <div style="font-size:12px;color:var(--text-secondary);margin:4px 0 8px;">
+            ${overlaps.length} overlap${overlaps.length !== 1 ? 's' : ''} · ${escapeHtml(codeA?.name || '')} × ${escapeHtml(codeB?.name || '')}
+        </div>
+        ${overlaps.map(seg => {
+            const doc = appData.documents.find(d => d.id === seg.docId);
+            const loc = seg.pdfRegion ? `Page ${seg.pdfRegion.pageNum || '?'}` : `Char ${seg.startIndex || 0}`;
+            const snippet = escapeHtml(String(seg.text || '').slice(0, 220));
+            return `<div class="cooc-overlap-item" onclick="goToSegmentLocation('${seg.docId}', '${seg.id}')">
+                <div><strong>${escapeHtml(doc?.title || 'Document')}</strong> · ${escapeHtml(loc)}</div>
+                <div>${snippet}${snippet.length >= 220 ? '…' : ''}</div>
+            </div>`;
+        }).join('')}
+    `;
+}

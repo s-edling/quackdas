@@ -141,7 +141,102 @@ function setupFileInputs() {
 function setupContextMenuDismissal() {
     window.addEventListener('click', () => hideContextMenu());
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideContextMenu(); });
+    // Capture-phase fallback: close open overlays/modals even when focused controls consume key events.
+    window.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (!closeUiOnEscape()) return;
+        e.preventDefault();
+        e.stopPropagation();
+    }, true);
     window.addEventListener('scroll', () => hideContextMenu(), true);
+}
+
+function isModalOpen(modalId) {
+    const el = document.getElementById(modalId);
+    return !!(el && el.classList.contains('show'));
+}
+
+function closeTopmostShownModalFallback() {
+    const shownModals = Array.from(document.querySelectorAll('.modal.show'));
+    if (!shownModals.length) return false;
+    const topModal = shownModals[shownModals.length - 1];
+    topModal.classList.remove('show');
+    return true;
+}
+
+function closeUiOnEscape() {
+    const contextMenu = document.getElementById('contextMenu');
+    if (contextMenu && contextMenu.classList.contains('show')) {
+        hideContextMenu();
+        return true;
+    }
+
+    const bar = document.getElementById('inPageSearchBar');
+    if (bar && bar.classList.contains('show')) {
+        if (typeof closeInPageSearch === 'function') closeInPageSearch();
+        return true;
+    }
+
+    if (isModalOpen('pdfRegionPreviewModal')) {
+        if (typeof closePdfRegionPreviewModal === 'function') closePdfRegionPreviewModal();
+        else document.getElementById('pdfRegionPreviewModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('memoModal')) {
+        if (typeof closeMemoModal === 'function') closeMemoModal();
+        else document.getElementById('memoModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('statsModal')) {
+        if (typeof closeStatsModal === 'function') closeStatsModal();
+        else document.getElementById('statsModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('cooccurrenceModal')) {
+        if (typeof closeCooccurrenceModal === 'function') closeCooccurrenceModal();
+        else document.getElementById('cooccurrenceModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('healthCheckModal')) {
+        if (typeof closeHealthCheckModal === 'function') closeHealthCheckModal();
+        else document.getElementById('healthCheckModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('searchResultsModal')) {
+        if (typeof closeSearchResults === 'function') closeSearchResults();
+        else document.getElementById('searchResultsModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('textPromptModal')) {
+        if (typeof closeTextPrompt === 'function') closeTextPrompt(false);
+        else document.getElementById('textPromptModal').classList.remove('show');
+        return true;
+    }
+
+    const inlineAnnotation = document.getElementById('pdfRegionAnnotationInline');
+    if (inlineAnnotation && !inlineAnnotation.hidden) {
+        if (typeof dismissPdfRegionAnnotationInline === 'function') dismissPdfRegionAnnotationInline();
+        else inlineAnnotation.hidden = true;
+        return true;
+    }
+
+    const inspectorPanel = document.getElementById('codeInspectorPanel');
+    if (inspectorPanel && !inspectorPanel.hidden) {
+        if (typeof clearCodeInspectorSelection === 'function') {
+            clearCodeInspectorSelection();
+        } else {
+            inspectorPanel.hidden = true;
+        }
+        return true;
+    }
+
+    return closeTopmostShownModalFallback();
 }
 
 // Keyboard shortcuts
@@ -152,6 +247,14 @@ document.addEventListener('keydown', function(e) {
         activeEl.tagName === 'TEXTAREA' ||
         activeEl.isContentEditable
     );
+
+    // Escape closes open UI windows/panels in priority order
+    if (e.key === 'Escape') {
+        if (closeUiOnEscape()) {
+            e.preventDefault();
+            return;
+        }
+    }
 
     // PDF page navigation via arrow keys (when not typing in an input field)
     if (!isTypingContext && typeof isPdfDocumentActive === 'function' && isPdfDocumentActive()) {
@@ -189,21 +292,6 @@ document.addEventListener('keydown', function(e) {
         e.preventDefault();
         if (typeof openInPageSearch === 'function') openInPageSearch();
         return;
-    }
-    // Escape closes in-page find bar
-    if (e.key === 'Escape') {
-        const bar = document.getElementById('inPageSearchBar');
-        if (bar && bar.classList.contains('show')) {
-            e.preventDefault();
-            if (typeof closeInPageSearch === 'function') closeInPageSearch();
-            return;
-        }
-        const previewModal = document.getElementById('pdfRegionPreviewModal');
-        if (previewModal && previewModal.classList.contains('show')) {
-            e.preventDefault();
-            if (typeof closePdfRegionPreviewModal === 'function') closePdfRegionPreviewModal();
-            return;
-        }
     }
     // Ctrl/Cmd + S for save
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {

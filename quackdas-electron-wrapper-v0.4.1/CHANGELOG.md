@@ -640,3 +640,433 @@ Files touched:
 - `js/pdf.js`
 - `js/render.js`
 - `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17ad
+Date: 2026-02-17
+
+What changed:
+- Added a lightweight Coding Inspector panel (Code view / Segments mode):
+  - appears when a snippet/region is selected
+  - quick code assignment toggles
+  - annotation history list
+  - source location + created/modified timestamps
+  - quick add-annotation input
+- Added Retrieval Presets in Code view:
+  - save/load named presets
+  - preset state includes mode + segment filters/sorts + annotation filters
+  - added practical segment retrieval controls (document filter, with/without annotation, sort by document/date/metadata)
+- Added Code Co-occurrence tools:
+  - new `Code co-occurrence` modal from `More`
+  - code-by-code matrix (top-used codes)
+  - clickable cells to open overlap retrieval list
+  - overlap list jumps directly to source segment location
+- Added QDPX round-trip support for retrieval presets in Quackdas extension block.
+
+Why (one line):
+- To add high-impact analytical tooling (compare/retrieve/inspect) while keeping advanced UI surfaces optional and compact.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/render.js`
+- `js/ui.js`
+- `js/state.js`
+- `js/qdpx.js`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17ae
+Date: 2026-02-17
+
+What changed:
+- Compactness pass for Code view:
+  - reduced vertical spacing/padding across code banners
+  - tightened Description/notes block spacing
+  - compacted document headers/snippet row spacing
+  - reduced PDF preview footprint in snippet rows
+  - lowered virtual row height estimates to reduce oversized gaps
+- Retrieval presets panel is now collapsible:
+  - replaced always-open controls with a single-row toggle (`▸ / ▾`)
+  - expanded controls appear only when opened
+- Updated Code-view header label from `All documents · CODE` to `Code view · CODE`.
+- In-page find behavior in Code view is now scoped to visible snippet content only:
+  - searches coded snippet text and visible snippet annotation text
+  - excludes banner/header/meta UI text.
+- Coding inspector annotation input typography now matches saved annotation text size.
+
+Why (one line):
+- To improve scan density and readability in Code view while keeping advanced controls discoverable but unobtrusive.
+
+Files touched:
+- `js/render.js`
+- `js/search.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17af
+Date: 2026-02-17
+
+What changed:
+- Tightened Code view top-stack spacing further:
+  - reduced vertical gaps between banner, mode switch, presets row, and description row
+  - made closed-state spacing visually even between the top rows
+- Updated Retrieval presets expansion behavior:
+  - expanded preset controls now open inside the same presets box (no separate box below)
+- Compacted Code view snippet density further:
+  - reduced PDF preview row gaps, preview footprint, and memo spacing
+  - lowered virtualized row height estimates to reduce excess blank space between items
+- Removed the per-thumbnail three-dots button for PDF snippets in Code view.
+- Updated remove-coding confirmation copy to: `Remove this coding?`
+
+Why (one line):
+- To improve scan density and visual consistency in Code view while keeping interactions unchanged.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ag
+Date: 2026-02-17
+
+What changed:
+- Increased app version from `0.4.2` to `0.4.3`.
+- Code view compactness pass (stronger):
+  - reduced vertical spacing between top banners/rows
+  - tightened spacing for description row and document headers
+  - removed extra vertical spacing in snippet rows
+- Fixed Code view layout whitespace behavior:
+  - added `#documentContent.code-view-mode` to disable global `pre-wrap` spacing artifacts in Code view
+  - this removes unintended blank vertical gaps between UI rows/snippets
+- Retrieval presets panel behavior:
+  - collapsed state is now a single compact row
+  - expanded controls open vertically inside the same box
+- Further tightened virtual row height estimates for denser snippet rendering.
+
+Why (one line):
+- To make Code view materially denser and remove wasted vertical space while keeping retrieval controls compact.
+
+Files touched:
+- `package.json`
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ah
+Date: 2026-02-17
+
+What changed:
+- Reordered top Code view boxes to:
+  - `Code: ...`
+  - `Description and notes`
+  - `Retrieval presets`
+  - `Segments / Annotations`
+- Aggressively reduced Code view vertical spacing:
+  - tighter top box padding/margins
+  - tighter document headers, snippet rows, and memo spacing
+  - lower virtual row height estimates for denser rendering
+  - Code view now uses a dedicated compact container (`code-view-content`)
+- Made Retrieval presets collapsed state a true single-row box:
+  - compact row height when closed
+  - vertical in-box expansion when opened
+- Header stability/UI tweaks:
+  - fixed save button width so global search does not shift when save text changes
+  - increased top-left logo size to 78x78 and raised header height to preserve border/layout integrity.
+
+Why (one line):
+- To make Code view substantially denser and stabilize top-header alignment while enlarging branding safely.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `index.html`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ai
+Date: 2026-02-17
+
+What changed:
+- Rebalanced Code view density after the aggressive compact pass:
+  - increased spacing between top boxes for clearer separation
+  - increased snippet/document row spacing and typography line-height for readability
+  - increased thumbnail and annotation spacing so PDF region rows are easier to scan
+- Kept the fundamental Code-view whitespace fix (`code-view-mode`) in place to avoid the old inflated gaps.
+
+Why (one line):
+- To restore clear visual grouping in Code view while preserving the fixed spacing model.
+
+Files touched:
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17aj
+Date: 2026-02-17
+
+What changed:
+- Added more breathing room in Code view:
+  - increased spacing between top boxes
+  - increased spacing between snippets and document section headers
+  - slightly increased line-height for snippet/annotation readability
+- Rescaled top-left logo to 80% of prior enlarged size:
+  - logo changed from 78x78 to 62x62
+  - reduced header height from 84px to 68px to avoid an oversized top bar.
+
+Why (one line):
+- To keep Code view readable without the cramped look and restore a better header proportion.
+
+Files touched:
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ak
+Date: 2026-02-17
+
+What changed:
+- Increased Code view spacing by another full step:
+  - larger separation between top boxes
+  - larger spacing between snippet blocks and PDF thumbnail rows
+  - increased text line-height/size for snippet readability
+- Fixed PDF thumbnail overlap in virtualized Code view:
+  - increased estimated row heights for safer initial layout
+  - trigger virtual-list remeasure when preview images load so row heights update immediately.
+
+Why (one line):
+- To make Code view clearly separated (not cramped) and prevent thumbnails from intruding into the next row.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17al
+Date: 2026-02-17
+
+What changed:
+- Code view presets row sizing:
+  - reduced closed-state presets row vertical footprint to match other one-row top boxes more closely
+- Snippet spacing refinement:
+  - moved snippet vertical spacing from external margins to internal padding so virtualized row measurement includes spacing
+  - preserves balanced space above and below snippet content/underline separators
+- PDF thumbnail overlap fix:
+  - this spacing change prevents virtualized row overlap from margin under-measurement
+  - increased Code view thumbnail render/display size by ~20% (`250px` preview width, `312px` generation width)
+
+Why (one line):
+- To keep top controls visually consistent, improve snippet rhythm, and prevent thumbnail overflow into subsequent rows.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17am
+Date: 2026-02-17
+
+What changed:
+- Fixed virtualized Code-view PDF row remeasurement:
+  - thumbnail image load now forces a virtual-list rerender/re-measure pass
+  - prevents stale pre-image row heights from causing separator/row collisions
+- Refined snippet separator layout:
+  - replaced absolute pseudo-line with real row `border-bottom`
+  - added explicit bottom spacing in snippet and PDF row blocks so text/thumbnail content no longer sits on the separator.
+
+Why (one line):
+- To stop PDF snippet separators from overlapping thumbnail/content rows and restore visible space below snippets.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17an
+Date: 2026-02-17
+
+What changed:
+- Fixed virtualized snippet spacing math:
+  - removed external bottom margin from snippet separator rows (not counted by virtual row measurement)
+  - moved spacing into internal padding/margins so measured row height matches visual height
+- Added extra thumbnail remeasure pass for cached-image cases:
+  - after inserting preview image, if `img.complete` is already true, queue an additional forced virtual rerender
+- Normalized closed Retrieval presets row height:
+  - restored presets box vertical size to match other one-row Code view boxes.
+
+Why (one line):
+- To eliminate separator overlap artifacts in Code view and keep the closed presets row visually consistent.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ao
+Date: 2026-02-17
+
+What changed:
+- Switched Code-view snippet separation to use the code-colored snippet underline only:
+  - removed extra gray per-row border separator in filtered snippets
+  - added explicit bottom padding/margin on `.coded-segment` so text sits above the underline with visible gap below
+- Added PDF-specific snippet spacing:
+  - introduced `pdf-snippet` row class in render output
+  - increased spacing below PDF preview rows and below PDF snippet underlines.
+
+Why (one line):
+- To fix persistent “line touching/cutting content” issues by separating snippet content from its underline and giving PDF rows dedicated vertical breathing room.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ap
+Date: 2026-02-17
+
+What changed:
+- Increased snippet underline spacing in Code view:
+  - more gap between snippet text and its underline
+  - more gap under underline before the next snippet block
+- Hardened PDF region row layout against line collisions:
+  - clamped preview height (`max-height: 220px`) to keep row geometry bounded
+  - increased virtualized PDF row initial estimate from `120` to `320` to avoid under-allocation before remeasure.
+
+Why (one line):
+- To make snippet line spacing visibly balanced and prevent PDF thumbnails from breaking separator lines.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17aq
+Date: 2026-02-17
+
+What changed:
+- Fixed persistent PDF thumbnail overlap in Code view by changing rendering strategy:
+  - when segmented Code view contains PDF-region rows, rendering now uses normal DOM flow (non-virtualized list)
+  - virtualization remains in use for text-only segment lists
+- PDF previews in non-virtual mode are still hydrated lazily via existing preview hydration logic.
+
+Why (one line):
+- Absolute-position virtualization was still producing row collisions for mixed-height PDF previews; normal flow guarantees correct stacking.
+
+Files touched:
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ar
+Date: 2026-02-17
+
+What changed:
+- Adjusted Code view annotation placement for text snippets:
+  - snippet annotations are now rendered inside the coded snippet block (above the snippet underline)
+  - annotation text is right-aligned with a right-side accent marker for clearer “data vs annotation” distinction
+- Kept PDF snippet annotation layout unchanged (right-side column next to thumbnail).
+
+Why (one line):
+- To make annotations visually distinct while preserving clear linkage to their snippet.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17as
+Date: 2026-02-17
+
+What changed:
+- Removed inline three-dots annotation button from Code view snippets:
+  - annotation access in Code view is now via right-click/context menu only
+  - removed related render path and unused helper/CSS for that inline button
+- Aligned PDF-region annotations to match text-snippet annotation style:
+  - region annotations (shown beside thumbnails) are now right-aligned with right-side accent marker.
+
+Why (one line):
+- To declutter snippet UI and make annotation presentation consistent across text and PDF region codings.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17at
+Date: 2026-02-17
+
+What changed:
+- Added centralized `Esc` close handling for open UI layers:
+  - closes (in priority order): context menu, in-page find, PDF region preview, Annotations modal, Statistics, Code co-occurrence, Project health, Global search, text prompt, and Coding inspector
+  - includes a safe fallback to close the topmost `.modal.show` dialog if a specific closer is not mapped
+- Replaced prior narrow Esc handling (find bar + PDF preview only) with the new shared close dispatcher.
+
+Why (one line):
+- To make Escape consistently close open windows/panels across the app.
+
+Files touched:
+- `js/app.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17au
+Date: 2026-02-17
+
+What changed:
+- Recent documents panel sizing:
+  - removed hardcoded `180px` inline max-height
+  - added dynamic sizing to show exactly three full recent-document cards (and no partial fourth) when four or more recents exist
+- Annotation list layout in document annotation modal:
+  - forced existing-annotation items/content to top-left alignment
+  - removed implicit fixed-height behavior so annotation card height follows text content
+- Escape behavior fix for annotation overlay/modal:
+  - Esc close stack now runs before PDF-selection Esc handling, so open annotation windows close reliably on Esc.
+
+Why (one line):
+- To make the right sidebar look orderly, improve annotation readability, and ensure Esc closes annotation UI consistently.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/render.js`
+- `js/app.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17av
+Date: 2026-02-17
+
+What changed:
+- Recent documents viewport now targets the exact bottom of the 3rd card:
+  - switched sizing logic from summed margins to `thirdCard.offsetTop + offsetHeight`
+  - removes the remaining visible sliver of card #4 at top scroll position
+- Inline annotation overlay layout refinement:
+  - forced existing annotation items to true block/top-left flow (`height:auto`, `text-align:left`, `word-break`)
+  - removed template whitespace around annotation text during rendering to prevent awkward placement
+- Esc close behavior for inline annotation overlay:
+  - added explicit close step in global Esc close stack
+  - added textarea-level Esc handling inside inline annotation panel.
+
+Why (one line):
+- To make the recent list exactly three cards tall, clean up annotation text placement, and ensure Esc closes inline annotation UI consistently.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `js/coding.js`
+- `js/app.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17aw
+Date: 2026-02-17
+
+What changed:
+- Recent documents exact-3 sizing refinement:
+  - switched from `offsetTop`-based measurement to `getBoundingClientRect()` delta (list top -> third-card bottom)
+  - avoids offset-parent/header contamination that could oversize the recent list viewport
+- Inline annotation card alignment hardening:
+  - set annotation items to explicit top-left flex layout (`justify-content:flex-start`, `align-items:flex-start`)
+- Esc close reliability hardening:
+  - added capture-phase Escape fallback that runs `closeUiOnEscape()` before bubbling handlers
+  - ensures overlay/modal close works even when focused controls intercept key events.
+
+Why (one line):
+- To make the recent list clamp to exactly three cards and make annotation/Esc behavior robust under real runtime focus/layout conditions.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `js/app.js`
+- `CHANGELOG.md`

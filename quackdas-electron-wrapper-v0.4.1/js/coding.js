@@ -85,6 +85,12 @@ function ensurePdfAnnotationInline() {
     if (skipBtn) skipBtn.addEventListener('click', dismissPdfRegionAnnotationInline);
     if (input) {
         input.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                dismissPdfRegionAnnotationInline();
+                return;
+            }
             if (event.key !== 'Enter') return;
             if (event.shiftKey) return;
             event.preventDefault();
@@ -122,12 +128,7 @@ function renderSegmentAnnotationList(segmentId) {
     list.hidden = false;
     list.innerHTML = `
         <div class="pdf-region-annotation-existing-title">Existing annotations</div>
-        ${memos.map(memo => `
-            <div class="pdf-region-annotation-item">
-                ${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}
-                ${escapeHtml(memo.content || '')}
-            </div>
-        `).join('')}
+        ${memos.map(memo => `<div class="pdf-region-annotation-item">${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}${escapeHtml(memo.content || '')}</div>`).join('')}
     `;
 }
 

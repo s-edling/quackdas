@@ -454,46 +454,55 @@ function applyInPageSearch(query) {
     if (!q) return;
 
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escaped, 'gi');
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-        acceptNode: (node) => {
-            const p = node.parentElement;
-            if (!p) return NodeFilter.FILTER_ACCEPT;
-            if (p.closest && p.closest('.code-actions, .memo-indicator')) return NodeFilter.FILTER_REJECT;
-            if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
-            return NodeFilter.FILTER_ACCEPT;
-        }
-    });
-
-    const textNodes = [];
-    while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-    textNodes.forEach(node => {
-        const text = node.nodeValue || '';
-        if (!text) return;
-        regex.lastIndex = 0;
-        if (!regex.test(text)) return;
-        regex.lastIndex = 0;
-
-        const frag = document.createDocumentFragment();
-        let last = 0;
-        let match;
-        while ((match = regex.exec(text)) !== null) {
-            if (match.index > last) {
-                frag.appendChild(document.createTextNode(text.substring(last, match.index)));
+    const markTextNodesIn = (container) => {
+        const regex = new RegExp(escaped, 'gi');
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) => {
+                const p = node.parentElement;
+                if (!p) return NodeFilter.FILTER_ACCEPT;
+                if (p.closest && p.closest('.code-actions, .memo-indicator')) return NodeFilter.FILTER_REJECT;
+                if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
             }
-            const mark = document.createElement('mark');
-            mark.className = 'in-page-search-mark';
-            mark.textContent = match[0];
-            frag.appendChild(mark);
-            inPageSearchState.marks.push(mark);
-            last = regex.lastIndex;
-        }
-        if (last < text.length) {
-            frag.appendChild(document.createTextNode(text.substring(last)));
-        }
-        node.parentNode.replaceChild(frag, node);
-    });
+        });
+
+        const textNodes = [];
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+        textNodes.forEach(node => {
+            const text = node.nodeValue || '';
+            if (!text) return;
+            regex.lastIndex = 0;
+            if (!regex.test(text)) return;
+            regex.lastIndex = 0;
+
+            const frag = document.createDocumentFragment();
+            let last = 0;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                if (match.index > last) {
+                    frag.appendChild(document.createTextNode(text.substring(last, match.index)));
+                }
+                const mark = document.createElement('mark');
+                mark.className = 'in-page-search-mark';
+                mark.textContent = match[0];
+                frag.appendChild(mark);
+                inPageSearchState.marks.push(mark);
+                last = regex.lastIndex;
+            }
+            if (last < text.length) {
+                frag.appendChild(document.createTextNode(text.substring(last)));
+            }
+            node.parentNode.replaceChild(frag, node);
+        });
+    };
+
+    if (appData.filterCodeId) {
+        const targets = Array.from(root.querySelectorAll('.filter-snippet .coded-segment, .filter-snippet .filter-snippet-memo'));
+        targets.forEach(markTextNodesIn);
+    } else {
+        markTextNodesIn(root);
+    }
 
     setActiveInPageSearchMatch(0);
 }
