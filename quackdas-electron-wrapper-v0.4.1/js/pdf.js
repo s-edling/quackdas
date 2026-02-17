@@ -26,6 +26,17 @@ let currentPdfState = {
 };
 const pdfRegionPreviewCache = new Map();
 const pdfRegionPreviewInflight = new Map();
+const pdfRegionPreviewQueue = [];
+const pdfRegionPreviewQueued = new Map();
+const PDF_THUMB_QUEUE_CONCURRENCY = 2;
+let pdfRegionPreviewWorkers = 0;
+let pdfRegionPreviewPumpTimer = null;
+const PDF_THUMB_MANIFEST_LIMIT = 500;
+const PDF_THUMB_MANIFEST_PREFIX = 'quackdas-thumb-manifest:';
+let pdfThumbManifestKey = null;
+let pdfThumbManifestLoaded = false;
+let pdfThumbManifestMap = new Map();
+let pdfThumbManifestSaveTimer = null;
 let pdfSelectionStatusTimer = null;
 const PDF_SELECTION_READY_TEXT = 'Region selected. Click a code to apply. Press Esc to clear.';
 
@@ -341,12 +352,60 @@ function clearPendingPdfRegionSelection() {
     if (pending && pending.parentElement) pending.parentElement.removeChild(pending);
 }
 
-async function getPdfRegionThumbnail(doc, region, opts = {}) {
-    if (!doc || !doc.pdfData || !region || !region.pageNum) return null;
-    if (!(await isPdfSupported())) return null;
+function getCurrentThumbManifestKey() {
+    const projectId = String(appData?.projectName || 'untitled-project').trim().toLowerCase();
+    return PDF_THUMB_MANIFEST_PREFIX + projectId;
+}
 
-    const width = Number.isFinite(opts.width) ? opts.width : 260;
-    const key = [
+function ensureThumbManifestLoaded() {
+    try {
+        const key = getCurrentThumbManifestKey();
+        if (pdfThumbManifestLoaded && pdfThumbManifestKey === key) return;
+        pdfThumbManifestLoaded = true;
+        pdfThumbManifestKey = key;
+        pdfThumbManifestMap = new Map();
+        const raw = localStorage.getItem(key);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return;
+        Object.keys(parsed).forEach((k) => {
+            const ts = Number(parsed[k]);
+            if (Number.isFinite(ts)) pdfThumbManifestMap.set(k, ts);
+        });
+    } catch (_) {
+        pdfThumbManifestMap = new Map();
+    }
+}
+
+function scheduleThumbManifestSave() {
+    if (pdfThumbManifestSaveTimer) clearTimeout(pdfThumbManifestSaveTimer);
+    pdfThumbManifestSaveTimer = setTimeout(() => {
+        pdfThumbManifestSaveTimer = null;
+        try {
+            ensureThumbManifestLoaded();
+            if (!pdfThumbManifestKey) return;
+            const out = {};
+            Array.from(pdfThumbManifestMap.entries()).forEach(([k, ts]) => {
+                out[k] = ts;
+            });
+            localStorage.setItem(pdfThumbManifestKey, JSON.stringify(out));
+        } catch (_) {}
+    }, 700);
+}
+
+function markThumbInManifest(key) {
+    ensureThumbManifestLoaded();
+    if (!key) return;
+    pdfThumbManifestMap.set(key, Date.now());
+    if (pdfThumbManifestMap.size > PDF_THUMB_MANIFEST_LIMIT) {
+        const sorted = Array.from(pdfThumbManifestMap.entries()).sort((a, b) => b[1] - a[1]);
+        pdfThumbManifestMap = new Map(sorted.slice(0, PDF_THUMB_MANIFEST_LIMIT));
+    }
+    scheduleThumbManifestSave();
+}
+
+function buildPdfRegionThumbKey(doc, region, width = 260) {
+    return [
         doc.id,
         region.pageNum,
         roundRegion(region.xNorm || 0),
@@ -355,85 +414,167 @@ async function getPdfRegionThumbnail(doc, region, opts = {}) {
         roundRegion(region.hNorm || 0),
         width
     ].join(':');
+}
+
+async function generatePdfRegionThumbnail(doc, region, width, key) {
+    const arrayBuffer = base64ToArrayBuffer(doc.pdfData);
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice() });
+    let pdfDoc = null;
+    try {
+        pdfDoc = await loadingTask.promise;
+        const page = await pdfDoc.getPage(region.pageNum);
+        const viewport = page.getViewport({ scale: 1.0 });
+
+        const renderCanvas = document.createElement('canvas');
+        renderCanvas.width = Math.ceil(viewport.width);
+        renderCanvas.height = Math.ceil(viewport.height);
+        const renderCtx = renderCanvas.getContext('2d');
+        await page.render({ canvasContext: renderCtx, viewport }).promise;
+
+        const sx = Math.max(0, Math.floor((region.xNorm || 0) * renderCanvas.width));
+        const sy = Math.max(0, Math.floor((region.yNorm || 0) * renderCanvas.height));
+        const sw = Math.max(8, Math.floor((region.wNorm || 0) * renderCanvas.width));
+        const sh = Math.max(8, Math.floor((region.hNorm || 0) * renderCanvas.height));
+
+        const padX = Math.floor(sw * 0.18);
+        const padY = Math.floor(sh * 0.22);
+        const csx = Math.max(0, sx - padX);
+        const csy = Math.max(0, sy - padY);
+        const csw = Math.min(renderCanvas.width - csx, sw + padX * 2);
+        const csh = Math.min(renderCanvas.height - csy, sh + padY * 2);
+
+        const outW = width;
+        const scale = outW / Math.max(1, csw);
+        const outH = Math.max(40, Math.round(csh * scale));
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = outW;
+        outCanvas.height = outH;
+        const outCtx = outCanvas.getContext('2d');
+        outCtx.fillStyle = '#ffffff';
+        outCtx.fillRect(0, 0, outW, outH);
+        outCtx.drawImage(renderCanvas, csx, csy, csw, csh, 0, 0, outW, outH);
+
+        const hx = Math.round((sx - csx) * scale);
+        const hy = Math.round((sy - csy) * scale);
+        const hw = Math.max(2, Math.round(sw * scale));
+        const hh = Math.max(2, Math.round(sh * scale));
+        outCtx.strokeStyle = '#c17a5c';
+        outCtx.lineWidth = 2;
+        outCtx.strokeRect(hx, hy, hw, hh);
+        outCtx.fillStyle = 'rgba(193, 122, 92, 0.14)';
+        outCtx.fillRect(hx, hy, hw, hh);
+
+        const dataUrl = outCanvas.toDataURL('image/png');
+        pdfRegionPreviewCache.set(key, dataUrl);
+        markThumbInManifest(key);
+        if (pdfRegionPreviewCache.size > 260) {
+            const firstKey = pdfRegionPreviewCache.keys().next().value;
+            if (firstKey) pdfRegionPreviewCache.delete(firstKey);
+        }
+        return dataUrl;
+    } catch (err) {
+        console.warn('Failed to build PDF region thumbnail', err);
+        return null;
+    } finally {
+        try {
+            if (loadingTask && typeof loadingTask.destroy === 'function') loadingTask.destroy();
+        } catch (_) {}
+        try {
+            if (pdfDoc) await pdfDoc.destroy();
+        } catch (_) {}
+    }
+}
+
+function pumpPdfRegionPreviewQueue() {
+    if (pdfRegionPreviewWorkers >= PDF_THUMB_QUEUE_CONCURRENCY) return;
+    while (pdfRegionPreviewWorkers < PDF_THUMB_QUEUE_CONCURRENCY && pdfRegionPreviewQueue.length > 0) {
+        const task = pdfRegionPreviewQueue.shift();
+        if (!task) break;
+        pdfRegionPreviewQueued.delete(task.key);
+        if (pdfRegionPreviewCache.has(task.key)) {
+            task.resolve(pdfRegionPreviewCache.get(task.key));
+            continue;
+        }
+        if (pdfRegionPreviewInflight.has(task.key)) {
+            pdfRegionPreviewInflight.get(task.key).then(task.resolve).catch(task.reject);
+            continue;
+        }
+
+        pdfRegionPreviewWorkers += 1;
+        const work = generatePdfRegionThumbnail(task.doc, task.region, task.width, task.key);
+        pdfRegionPreviewInflight.set(task.key, work);
+        work.then(task.resolve).catch(task.reject).finally(() => {
+            pdfRegionPreviewInflight.delete(task.key);
+            pdfRegionPreviewWorkers = Math.max(0, pdfRegionPreviewWorkers - 1);
+            if (pdfRegionPreviewQueue.length > 0) {
+                if (pdfRegionPreviewPumpTimer) clearTimeout(pdfRegionPreviewPumpTimer);
+                pdfRegionPreviewPumpTimer = setTimeout(() => {
+                    pdfRegionPreviewPumpTimer = null;
+                    pumpPdfRegionPreviewQueue();
+                }, 0);
+            }
+        });
+    }
+}
+
+function queuePdfRegionThumbnail(doc, region, opts = {}) {
+    if (!doc || !doc.pdfData || !region || !region.pageNum) return Promise.resolve(null);
+    const width = Number.isFinite(opts.width) ? opts.width : 260;
+    const priority = Number.isFinite(opts.priority) ? opts.priority : 10;
+    const key = buildPdfRegionThumbKey(doc, region, width);
+    ensureThumbManifestLoaded();
+
+    if (pdfRegionPreviewCache.has(key)) return Promise.resolve(pdfRegionPreviewCache.get(key));
+    if (pdfRegionPreviewInflight.has(key)) return pdfRegionPreviewInflight.get(key);
+
+    return new Promise((resolve, reject) => {
+        const existing = pdfRegionPreviewQueued.get(key);
+        if (existing) {
+            existing.priority = Math.max(existing.priority, priority);
+            existing.resolveList.push(resolve);
+            existing.rejectList.push(reject);
+        } else {
+            const queuedTask = {
+                key,
+                doc,
+                region,
+                width,
+                priority,
+                resolveList: [resolve],
+                rejectList: [reject]
+            };
+            pdfRegionPreviewQueued.set(key, queuedTask);
+            pdfRegionPreviewQueue.push({
+                key,
+                doc,
+                region,
+                width,
+                priority,
+                resolve: (value) => {
+                    const q = pdfRegionPreviewQueued.get(key) || queuedTask;
+                    q.resolveList.forEach(fn => fn(value));
+                },
+                reject: (err) => {
+                    const q = pdfRegionPreviewQueued.get(key) || queuedTask;
+                    q.rejectList.forEach(fn => fn(err));
+                }
+            });
+            pdfRegionPreviewQueue.sort((a, b) => b.priority - a.priority);
+        }
+        pumpPdfRegionPreviewQueue();
+    });
+}
+
+async function getPdfRegionThumbnail(doc, region, opts = {}) {
+    if (!doc || !doc.pdfData || !region || !region.pageNum) return null;
+    if (!(await isPdfSupported())) return null;
+
+    const width = Number.isFinite(opts.width) ? opts.width : 260;
+    const key = buildPdfRegionThumbKey(doc, region, width);
 
     if (pdfRegionPreviewCache.has(key)) return pdfRegionPreviewCache.get(key);
     if (pdfRegionPreviewInflight.has(key)) return pdfRegionPreviewInflight.get(key);
-
-    const work = (async () => {
-        const arrayBuffer = base64ToArrayBuffer(doc.pdfData);
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice() });
-        let pdfDoc = null;
-        try {
-            pdfDoc = await loadingTask.promise;
-            const page = await pdfDoc.getPage(region.pageNum);
-            const viewport = page.getViewport({ scale: 1.0 });
-
-            const renderCanvas = document.createElement('canvas');
-            renderCanvas.width = Math.ceil(viewport.width);
-            renderCanvas.height = Math.ceil(viewport.height);
-            const renderCtx = renderCanvas.getContext('2d');
-            await page.render({ canvasContext: renderCtx, viewport }).promise;
-
-            const sx = Math.max(0, Math.floor((region.xNorm || 0) * renderCanvas.width));
-            const sy = Math.max(0, Math.floor((region.yNorm || 0) * renderCanvas.height));
-            const sw = Math.max(8, Math.floor((region.wNorm || 0) * renderCanvas.width));
-            const sh = Math.max(8, Math.floor((region.hNorm || 0) * renderCanvas.height));
-
-            const padX = Math.floor(sw * 0.18);
-            const padY = Math.floor(sh * 0.22);
-            const csx = Math.max(0, sx - padX);
-            const csy = Math.max(0, sy - padY);
-            const csw = Math.min(renderCanvas.width - csx, sw + padX * 2);
-            const csh = Math.min(renderCanvas.height - csy, sh + padY * 2);
-
-            const outW = width;
-            const scale = outW / Math.max(1, csw);
-            const outH = Math.max(40, Math.round(csh * scale));
-            const outCanvas = document.createElement('canvas');
-            outCanvas.width = outW;
-            outCanvas.height = outH;
-            const outCtx = outCanvas.getContext('2d');
-            outCtx.fillStyle = '#ffffff';
-            outCtx.fillRect(0, 0, outW, outH);
-            outCtx.drawImage(renderCanvas, csx, csy, csw, csh, 0, 0, outW, outH);
-
-            // Highlight selected region in thumbnail
-            const hx = Math.round((sx - csx) * scale);
-            const hy = Math.round((sy - csy) * scale);
-            const hw = Math.max(2, Math.round(sw * scale));
-            const hh = Math.max(2, Math.round(sh * scale));
-            outCtx.strokeStyle = '#c17a5c';
-            outCtx.lineWidth = 2;
-            outCtx.strokeRect(hx, hy, hw, hh);
-            outCtx.fillStyle = 'rgba(193, 122, 92, 0.14)';
-            outCtx.fillRect(hx, hy, hw, hh);
-
-            const dataUrl = outCanvas.toDataURL('image/png');
-            pdfRegionPreviewCache.set(key, dataUrl);
-            if (pdfRegionPreviewCache.size > 200) {
-                const firstKey = pdfRegionPreviewCache.keys().next().value;
-                if (firstKey) pdfRegionPreviewCache.delete(firstKey);
-            }
-            return dataUrl;
-        } catch (err) {
-            console.warn('Failed to build PDF region thumbnail', err);
-            return null;
-        } finally {
-            try {
-                if (loadingTask && typeof loadingTask.destroy === 'function') loadingTask.destroy();
-            } catch (_) {}
-            try {
-                if (pdfDoc) await pdfDoc.destroy();
-            } catch (_) {}
-        }
-    })();
-
-    pdfRegionPreviewInflight.set(key, work);
-    try {
-        return await work;
-    } finally {
-        pdfRegionPreviewInflight.delete(key);
-    }
+    return queuePdfRegionThumbnail(doc, region, { width, priority: 120 });
 }
 
 async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {

@@ -3,6 +3,106 @@
  * Boolean search with AND/OR/NOT and wildcards
  */
 
+const globalSearchIndex = {
+    dirty: true,
+    entries: new Map() // key -> { kind, kindLabel, primaryId, docId, title, searchText }
+};
+
+function markSearchIndexDirty() {
+    globalSearchIndex.dirty = true;
+}
+
+if (typeof window !== 'undefined') {
+    window.__markSearchIndexDirty = markSearchIndexDirty;
+}
+
+function getSearchIndexEntriesSnapshot() {
+    const snapshot = new Map();
+
+    appData.documents.forEach(doc => {
+        snapshot.set(`d:${doc.id}`, {
+            kind: 'document',
+            kindLabel: 'Document',
+            primaryId: doc.id,
+            docId: doc.id,
+            title: doc.title || 'Untitled document',
+            searchText: String(doc.content || '')
+        });
+    });
+
+    appData.codes.forEach(code => {
+        const desc = String(code.description || '').trim();
+        if (!desc) return;
+        snapshot.set(`c:${code.id}`, {
+            kind: 'code',
+            kindLabel: 'Code description',
+            primaryId: code.id,
+            docId: '',
+            title: `Code: ${code.name || 'Untitled code'}`,
+            searchText: desc
+        });
+    });
+
+    appData.memos.forEach(memo => {
+        const searchable = [memo.content || '', memo.tag || ''].join(' ').trim();
+        if (!searchable) return;
+
+        let targetLabel = 'Project';
+        let docId = '';
+        if (memo.type === 'document') {
+            const doc = appData.documents.find(d => d.id === memo.targetId);
+            targetLabel = doc ? doc.title : 'Document';
+            docId = memo.targetId || '';
+        } else if (memo.type === 'code') {
+            const code = appData.codes.find(c => c.id === memo.targetId);
+            targetLabel = code ? code.name : 'Code';
+        } else if (memo.type === 'segment') {
+            const segment = appData.segments.find(s => s.id === memo.targetId);
+            const doc = segment ? appData.documents.find(d => d.id === segment.docId) : null;
+            targetLabel = doc ? doc.title : 'Segment';
+            docId = segment?.docId || '';
+        }
+
+        snapshot.set(`m:${memo.id}`, {
+            kind: 'annotation',
+            kindLabel: 'Annotation',
+            primaryId: memo.id,
+            docId,
+            title: `Annotation${memo.tag ? ` [${memo.tag}]` : ''}: ${targetLabel}`,
+            searchText: searchable
+        });
+    });
+
+    return snapshot;
+}
+
+function ensureSearchIndexCurrent() {
+    if (!globalSearchIndex.dirty) return;
+    const snapshot = getSearchIndexEntriesSnapshot();
+
+    // Remove entries that no longer exist
+    Array.from(globalSearchIndex.entries.keys()).forEach(key => {
+        if (!snapshot.has(key)) {
+            globalSearchIndex.entries.delete(key);
+        }
+    });
+
+    // Add/update changed entries
+    snapshot.forEach((next, key) => {
+        const prev = globalSearchIndex.entries.get(key);
+        if (!prev ||
+            prev.searchText !== next.searchText ||
+            prev.title !== next.title ||
+            prev.docId !== next.docId ||
+            prev.kind !== next.kind ||
+            prev.kindLabel !== next.kindLabel) {
+            globalSearchIndex.entries.set(key, next);
+        }
+    });
+
+    globalSearchIndex.dirty = false;
+}
+
 function openSearchModal() {
     if (typeof closeInPageSearch === 'function') closeInPageSearch();
     if (appData.documents.length === 0) {
@@ -136,6 +236,7 @@ function convertWildcardToRegex(term) {
 }
 
 function searchAllDocuments(query) {
+    ensureSearchIndexCurrent();
     const parsed = parseSearchQuery(query);
     const results = [];
     
@@ -206,62 +307,15 @@ function searchAllDocuments(query) {
         return { matches, matchCount, snippets };
     };
 
-    appData.documents.forEach(doc => {
-        const result = collectMatchData(doc.content);
+    globalSearchIndex.entries.forEach((entry) => {
+        const result = collectMatchData(entry.searchText);
         if (!result.matches) return;
         results.push({
-            kind: 'document',
-            kindLabel: 'Document',
-            primaryId: doc.id,
-            docId: doc.id,
-            title: doc.title,
-            matchCount: result.matchCount,
-            snippets: result.snippets
-        });
-    });
-
-    appData.codes.forEach(code => {
-        const desc = (code.description || '').trim();
-        if (!desc) return;
-        const result = collectMatchData(desc);
-        if (!result.matches) return;
-        results.push({
-            kind: 'code',
-            kindLabel: 'Code description',
-            primaryId: code.id,
-            title: `Code: ${code.name}`,
-            matchCount: result.matchCount,
-            snippets: result.snippets
-        });
-    });
-
-    appData.memos.forEach(memo => {
-        const searchable = [memo.content || '', memo.tag || ''].join(' ');
-        const result = collectMatchData(searchable);
-        if (!result.matches) return;
-
-        let targetLabel = 'Project';
-        let docId = '';
-        if (memo.type === 'document') {
-            const doc = appData.documents.find(d => d.id === memo.targetId);
-            targetLabel = doc ? doc.title : 'Document';
-            docId = memo.targetId || '';
-        } else if (memo.type === 'code') {
-            const code = appData.codes.find(c => c.id === memo.targetId);
-            targetLabel = code ? code.name : 'Code';
-        } else if (memo.type === 'segment') {
-            const segment = appData.segments.find(s => s.id === memo.targetId);
-            const doc = segment ? appData.documents.find(d => d.id === segment.docId) : null;
-            targetLabel = doc ? doc.title : 'Segment';
-            docId = segment?.docId || '';
-        }
-
-        results.push({
-            kind: 'annotation',
-            kindLabel: 'Annotation',
-            primaryId: memo.id,
-            docId,
-            title: `Annotation${memo.tag ? ` [${memo.tag}]` : ''}: ${targetLabel}`,
+            kind: entry.kind,
+            kindLabel: entry.kindLabel,
+            primaryId: entry.primaryId,
+            docId: entry.docId || '',
+            title: entry.title,
             matchCount: result.matchCount,
             snippets: result.snippets
         });

@@ -224,6 +224,9 @@ function loadData() {
     if (!shouldUseLocalProjectCache()) {
         appData = makeEmptyProject();
         rebuildIndexes();
+        if (typeof window !== 'undefined' && typeof window.__markSearchIndexDirty === 'function') {
+            window.__markSearchIndexDirty();
+        }
         return;
     }
 
@@ -266,10 +269,16 @@ function loadData() {
             } catch (_) {}
         }
         rebuildIndexes();
+        if (typeof window !== 'undefined' && typeof window.__markSearchIndexDirty === 'function') {
+            window.__markSearchIndexDirty();
+        }
     } catch (e) {
         console.error('Failed to load saved data, starting fresh:', e);
         appData = makeEmptyProject();
         rebuildIndexes();
+        if (typeof window !== 'undefined' && typeof window.__markSearchIndexDirty === 'function') {
+            window.__markSearchIndexDirty();
+        }
         // Clear corrupted data
         try { localStorage.removeItem(PROJECT_CACHE_KEY); } catch {}
     }
@@ -306,6 +315,9 @@ function saveData(options = {}) {
     }
 
     rebuildIndexes();
+    if (typeof window !== 'undefined' && typeof window.__markSearchIndexDirty === 'function') {
+        window.__markSearchIndexDirty();
+    }
     if (markUnsaved === true && typeof scheduleProjectBackup === 'function') {
         scheduleProjectBackup('state-change');
     }

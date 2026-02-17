@@ -242,6 +242,9 @@ function setZoomControlsVisible(visible) {
 
 function renderCurrentDocument() {
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    if (!appData.filterCodeId) {
+        destroyFilterVirtualization();
+    }
     
     // If in filtered view, we show all documents regardless of current selection
     if (appData.filterCodeId) {
@@ -418,6 +421,20 @@ const codeViewUiState = {
     annotationDateRange: 'all'
 };
 
+const filterVirtualState = {
+    active: false,
+    rows: [],
+    heights: [],
+    offsets: [],
+    totalHeight: 0,
+    listEl: null,
+    contentBodyEl: null,
+    rafId: null,
+    onScroll: null,
+    lastStart: -1,
+    lastEnd: -1
+};
+
 function setCodeViewMode(mode) {
     codeViewUiState.mode = (mode === 'annotations') ? 'annotations' : 'segments';
     renderCurrentDocument();
@@ -516,6 +533,145 @@ function preserveLineBreaks(text) {
     return text.replace(/\n/g, '<br>');
 }
 
+function destroyFilterVirtualization() {
+    if (!filterVirtualState.active) return;
+    if (filterVirtualState.contentBodyEl && filterVirtualState.onScroll) {
+        filterVirtualState.contentBodyEl.removeEventListener('scroll', filterVirtualState.onScroll);
+    }
+    if (filterVirtualState.rafId) {
+        cancelAnimationFrame(filterVirtualState.rafId);
+    }
+    filterVirtualState.active = false;
+    filterVirtualState.rows = [];
+    filterVirtualState.heights = [];
+    filterVirtualState.offsets = [];
+    filterVirtualState.totalHeight = 0;
+    filterVirtualState.listEl = null;
+    filterVirtualState.contentBodyEl = null;
+    filterVirtualState.rafId = null;
+    filterVirtualState.onScroll = null;
+    filterVirtualState.lastStart = -1;
+    filterVirtualState.lastEnd = -1;
+}
+
+function estimateFilterRowHeight(row) {
+    if (!row) return 56;
+    if (row.type === 'header') return 42;
+    const textLen = String(row.text || '').length;
+    if (row.isPdf) return 170;
+    const textLines = Math.max(1, Math.ceil(textLen / 120));
+    const memoLines = row.hasMemo ? Math.max(1, Math.ceil(String(row.memoText || '').length / 120)) : 0;
+    return 44 + (textLines * 16) + (memoLines * 14);
+}
+
+function recomputeFilterVirtualOffsets() {
+    const offsets = new Array(filterVirtualState.heights.length);
+    let running = 0;
+    for (let i = 0; i < filterVirtualState.heights.length; i++) {
+        offsets[i] = running;
+        running += filterVirtualState.heights[i];
+    }
+    filterVirtualState.offsets = offsets;
+    filterVirtualState.totalHeight = running;
+    if (filterVirtualState.listEl) {
+        filterVirtualState.listEl.style.height = `${Math.max(1, running)}px`;
+    }
+}
+
+function findFilterVirtualRowIndex(y) {
+    const arr = filterVirtualState.offsets;
+    if (!arr || arr.length === 0) return 0;
+    let lo = 0;
+    let hi = arr.length - 1;
+    while (lo < hi) {
+        const mid = Math.floor((lo + hi + 1) / 2);
+        if (arr[mid] <= y) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo;
+}
+
+function getFilterVirtualVisibleRange() {
+    const contentBody = filterVirtualState.contentBodyEl;
+    const listEl = filterVirtualState.listEl;
+    if (!contentBody || !listEl || filterVirtualState.rows.length === 0) return { start: 0, end: -1 };
+    const overscanPx = 800;
+    const listTop = listEl.offsetTop;
+    const localTop = Math.max(0, contentBody.scrollTop - listTop);
+    const localBottom = localTop + contentBody.clientHeight;
+    const startY = Math.max(0, localTop - overscanPx);
+    const endY = Math.max(0, localBottom + overscanPx);
+    const start = findFilterVirtualRowIndex(startY);
+    let end = findFilterVirtualRowIndex(endY);
+    if (end < filterVirtualState.rows.length - 1) end += 1;
+    return {
+        start: Math.max(0, start),
+        end: Math.min(filterVirtualState.rows.length - 1, end)
+    };
+}
+
+function renderFilterVirtualWindow(force = false) {
+    if (!filterVirtualState.active || !filterVirtualState.listEl) return;
+    const range = getFilterVirtualVisibleRange();
+    if (!force && range.start === filterVirtualState.lastStart && range.end === filterVirtualState.lastEnd) return;
+    filterVirtualState.lastStart = range.start;
+    filterVirtualState.lastEnd = range.end;
+
+    const rows = filterVirtualState.rows;
+    let html = '';
+    for (let i = range.start; i <= range.end; i++) {
+        const row = rows[i];
+        const top = filterVirtualState.offsets[i] || 0;
+        html += `<div class="filter-virtual-row" data-row-index="${i}" style="top:${top}px;">${row.html}</div>`;
+    }
+    filterVirtualState.listEl.innerHTML = html;
+
+    let changed = false;
+    const renderedRows = filterVirtualState.listEl.querySelectorAll('.filter-virtual-row');
+    renderedRows.forEach((el) => {
+        const idx = Number(el.dataset.rowIndex);
+        if (!Number.isFinite(idx)) return;
+        const measured = Math.max(24, Math.ceil(el.offsetHeight));
+        if (measured !== filterVirtualState.heights[idx]) {
+            filterVirtualState.heights[idx] = measured;
+            changed = true;
+        }
+    });
+
+    if (changed) {
+        recomputeFilterVirtualOffsets();
+        renderFilterVirtualWindow(true);
+        return;
+    }
+    hydrateFilterPdfRegionPreviews(filterVirtualState.listEl);
+}
+
+function scheduleFilterVirtualRender() {
+    if (!filterVirtualState.active) return;
+    if (filterVirtualState.rafId) return;
+    filterVirtualState.rafId = requestAnimationFrame(() => {
+        filterVirtualState.rafId = null;
+        renderFilterVirtualWindow(false);
+    });
+}
+
+function initFilterVirtualization(rows) {
+    destroyFilterVirtualization();
+    const listEl = document.getElementById('filterVirtualizedList');
+    const contentBody = document.querySelector('.content-body');
+    if (!listEl || !contentBody || !Array.isArray(rows) || rows.length === 0) return;
+
+    filterVirtualState.active = true;
+    filterVirtualState.rows = rows;
+    filterVirtualState.heights = rows.map(estimateFilterRowHeight);
+    filterVirtualState.listEl = listEl;
+    filterVirtualState.contentBodyEl = contentBody;
+    filterVirtualState.onScroll = scheduleFilterVirtualRender;
+    contentBody.addEventListener('scroll', filterVirtualState.onScroll, { passive: true });
+    recomputeFilterVirtualOffsets();
+    renderFilterVirtualWindow(true);
+}
+
 function renderFilteredView() {
     const code = appData.codes.find(c => c.id === appData.filterCodeId);
     
@@ -580,6 +736,7 @@ function renderFilteredView() {
     `;
 
     if (codeViewUiState.mode === 'annotations') {
+        destroyFilterVirtualization();
         const codeOptions = [{ id: '', name: 'All codes' }]
             .concat(appData.codes.map(c => ({ id: c.id, name: c.name })));
         const docsWithAnnotations = Array.from(new Set(appData.memos.map(getMemoLinkedDocId).filter(Boolean)));
@@ -739,8 +896,10 @@ function renderFilteredView() {
         }
         html += '</div>';
     } else if (sortedDocs.length === 0) {
+        destroyFilterVirtualization();
         html += '<p style="color: var(--text-secondary);">No segments found for this code.</p>';
     } else {
+        const rows = [];
         sortedDocs.forEach(doc => {
             const docSegments = segmentsByDoc[doc.id];
             // Sort segments by their position in the document
@@ -753,9 +912,12 @@ function renderFilteredView() {
             });
             
             const segmentCount = docSegments.length;
-            html += `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${doc.id}')" title="Click to open document">${escapeHtml(doc.title)}<span class="filter-doc-meta">(${segmentCount} segment${segmentCount !== 1 ? 's' : ''})</span></div>`;
+            rows.push({
+                type: 'header',
+                html: `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${doc.id}')" title="Click to open document">${escapeHtml(doc.title)}<span class="filter-doc-meta">(${segmentCount} segment${segmentCount !== 1 ? 's' : ''})</span></div>`
+            });
             
-            docSegments.forEach((segment, i) => {
+            docSegments.forEach((segment) => {
                 const snippetText = segment.pdfRegion
                     ? `[PDF page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
                     : segment.text;
@@ -777,64 +939,88 @@ function renderFilteredView() {
                     : '';
                 const inlineMemoHtml = segment.pdfRegion ? '' : (memos.length > 0 ? memoHtml : '');
                 const textMenuBtnHtml = segment.pdfRegion ? '' : menuBtnHtml;
-                html += `<div class="filter-snippet" oncontextmenu="showFilterSnippetContextMenu('${segment.id}', '${doc.id}', event)">
-                    ${previewHtml}
-                    <div class="filter-snippet-main">
-                        <span class="coded-segment" style="border-color: ${code.color};">${preserveLineBreaks(escapeHtml(snippetText))}</span>
-                        ${textMenuBtnHtml}
-                    </div>
-                    ${inlineMemoHtml}
-                </div>`;
+                rows.push({
+                    type: 'snippet',
+                    isPdf: !!segment.pdfRegion,
+                    text: snippetText,
+                    hasMemo: memos.length > 0,
+                    memoText: memos[0]?.content || '',
+                    html: `<div class="filter-snippet" oncontextmenu="showFilterSnippetContextMenu('${segment.id}', '${doc.id}', event)">
+                        ${previewHtml}
+                        <div class="filter-snippet-main">
+                            <span class="coded-segment" style="border-color: ${code.color};">${preserveLineBreaks(escapeHtml(snippetText))}</span>
+                            ${textMenuBtnHtml}
+                        </div>
+                        ${inlineMemoHtml}
+                    </div>`
+                });
             });
         });
+        html += '<div id="filterVirtualizedList" class="filter-virtualized-list"></div>';
+        content.innerHTML = `${html}</div>`;
+        initFilterVirtualization(rows);
+        return;
     }
     
     html += '</div>';
     content.innerHTML = html;
-    if (codeViewUiState.mode === 'segments') {
-        hydrateFilterPdfRegionPreviews();
-    }
+    if (codeViewUiState.mode === 'segments') hydrateFilterPdfRegionPreviews();
 }
 
-async function hydrateFilterPdfRegionPreviews() {
-    const holders = Array.from(document.querySelectorAll('.filter-pdf-preview'));
+async function hydrateFilterPdfRegionPreviews(rootEl = document) {
+    const scope = rootEl || document;
+    const holders = Array.from(scope.querySelectorAll('.filter-pdf-preview'));
     if (holders.length === 0) return;
 
-    const PREVIEW_LIMIT = 12;
-    const toRender = holders.slice(0, PREVIEW_LIMIT);
-    const skipped = holders.slice(PREVIEW_LIMIT);
+    const VISIBLE_LIMIT = (scope === document) ? 16 : 32;
+    const visible = holders.slice(0, VISIBLE_LIMIT);
+    const background = holders.slice(VISIBLE_LIMIT);
+    const thumbFn = (typeof queuePdfRegionThumbnail === 'function')
+        ? queuePdfRegionThumbnail
+        : getPdfRegionThumbnail;
 
-    for (const el of skipped) {
-        el.innerHTML = '<div class="filter-pdf-preview-note">Preview omitted for performance. Use "Go to location".</div>';
-    }
-
-    for (const el of toRender) {
+    const requestThumb = (el, priority) => {
+        if (!el || el.dataset.hydrated === '1') return;
         const segmentId = el.dataset.segmentId;
         const docId = el.dataset.docId;
         const segment = appData.segments.find(s => s.id === segmentId);
         const doc = appData.documents.find(d => d.id === docId);
         if (!segment || !segment.pdfRegion || !doc) {
             el.innerHTML = '<div class="filter-pdf-preview-note">Region unavailable.</div>';
-            continue;
-        }
-        if (typeof getPdfRegionThumbnail !== 'function') {
-            el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
-            continue;
+            el.dataset.hydrated = '1';
+            return;
         }
 
-        try {
-            const dataUrl = await getPdfRegionThumbnail(doc, segment.pdfRegion, { width: 260 });
-            if (!dataUrl) {
-                el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
-                continue;
-            }
-            el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" onclick="openPdfRegionPreviewModal('${segment.id}', '${doc.id}', event)" title="Open full-size preview">
-                <img src="${dataUrl}" alt="PDF region preview" class="filter-pdf-preview-img">
-            </button>`;
-        } catch (_) {
-            el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
-        }
-    }
+        Promise.resolve(thumbFn(doc, segment.pdfRegion, { width: 260, priority }))
+            .then((dataUrl) => {
+                if (!dataUrl) {
+                    if (el.dataset.hydrated !== '1') {
+                        el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+                        el.dataset.hydrated = '1';
+                    }
+                    return;
+                }
+                if (!el.isConnected) return;
+                if (el.dataset.segmentId !== segmentId || el.dataset.docId !== docId) return;
+                el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" onclick="openPdfRegionPreviewModal('${segment.id}', '${doc.id}', event)" title="Open full-size preview">
+                    <img src="${dataUrl}" alt="PDF region preview" class="filter-pdf-preview-img">
+                </button>`;
+                el.dataset.hydrated = '1';
+            })
+            .catch(() => {
+                if (el.dataset.hydrated !== '1') {
+                    el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+                    el.dataset.hydrated = '1';
+                }
+            });
+    };
+
+    visible.forEach((el, idx) => requestThumb(el, 120 - idx));
+    background.forEach((el, idx) => {
+        if (el.dataset.hydrated === '1') return;
+        el.innerHTML = '<div class="filter-pdf-preview-note">Preparing preview...</div>';
+        requestThumb(el, 20 - Math.min(19, idx));
+    });
 }
 
 function openSegmentMemoFromFilter(segmentId, event) {

@@ -1516,6 +1516,19 @@
             gap: var(--space-2);
         }
 
+        .filter-virtualized-list {
+            position: relative;
+            width: 100%;
+            min-height: 40px;
+        }
+
+        .filter-virtual-row {
+            position: absolute;
+            left: 0;
+            right: 0;
+            will-change: transform;
+        }
+
         .annotation-filters {
             display: grid;
             grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(130px, 1fr));

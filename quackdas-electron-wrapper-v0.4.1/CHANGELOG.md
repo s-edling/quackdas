@@ -576,3 +576,67 @@ Why (one line):
 Files touched:
 - `styles.css`
 - `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17aa
+Date: 2026-02-17
+
+What changed:
+- Added virtualized rendering for `Code view -> Segments`:
+  - rows are now windowed based on viewport + overscan
+  - only near-viewport snippets/thumbnails are mounted in the DOM
+  - dynamic row-height measurement keeps mixed text/PDF rows aligned
+  - scroll listener is attached only while in segmented Code view and cleaned up outside it
+- Updated PDF region preview hydration to work with virtualized containers and avoid rehydrating already-rendered previews.
+
+Why (one line):
+- To keep Code view smooth on large projects by reducing DOM size and render work during scrolling.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17ab
+Date: 2026-02-17
+
+What changed:
+- Added incremental global search indexing:
+  - in-memory search index now stores normalized entries for documents, code descriptions, and annotations
+  - lazy index reconciliation runs only when state is marked dirty
+  - add/update/remove reconciliation is key-based, so unchanged entries are retained
+- Global search now queries indexed entries instead of rebuilding source lists on every query.
+- Wired index invalidation into state lifecycle:
+  - marked dirty on project load/reset paths
+  - marked dirty on `saveData()` updates.
+
+Why (one line):
+- To improve repeated-search responsiveness while keeping search results current after edits/imports.
+
+Files touched:
+- `js/search.js`
+- `js/state.js`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17ac
+Date: 2026-02-17
+
+What changed:
+- Added a bounded background PDF thumbnail generation queue:
+  - priority-based scheduling (visible previews first, background precompute after)
+  - limited worker concurrency to reduce UI blocking
+  - shared inflight de-duplication and cache reuse
+- Added lightweight per-project thumbnail manifest metadata in localStorage:
+  - tracks recently generated thumbnail keys by project name
+  - retained with size cap and debounced writes
+- Updated Code view PDF preview hydration:
+  - requests high-priority thumbnails for near-viewport items
+  - enqueues offscreen thumbnails as low-priority background work
+  - avoids blocking render on serial thumbnail generation.
+
+Why (one line):
+- To improve perceived smoothness in Code view with many PDF region codings while keeping background work bounded.
+
+Files touched:
+- `js/pdf.js`
+- `js/render.js`
+- `CHANGELOG.md`
