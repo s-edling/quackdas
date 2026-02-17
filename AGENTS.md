@@ -7,7 +7,7 @@ The purpose is for it to be significantly less sluggish than NVivo even with dat
 
 
 Instructions:
-Please update the version history by 0.0.1 with each new app zip unless you're only fixing something that's broken, the change is very minor, or I'm specifically telling you something else in the prompt. Make sure that the version is consistent between index.html and package.json.
+Please up the version history when significant changes have been done.
 
 Maintain a CHANGELOG.md in the app (one file, append-only), with entries like:
 Version/build identifier

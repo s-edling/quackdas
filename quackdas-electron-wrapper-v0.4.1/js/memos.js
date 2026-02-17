@@ -1,6 +1,6 @@
 /**
  * Quackdas - Memo Functions
- * Analytical memos for codes, documents, and segments
+ * Analytical annotations for codes, documents, and segments
  */
 
 // Current memo target
@@ -18,13 +18,13 @@ function openMemoModal(type, targetId, event) {
     const targetName = type === 'code' ? appData.codes.find(c => c.id === targetId)?.name :
                        type === 'document' ? appData.documents.find(d => d.id === targetId)?.title :
                        'Segment';
-    titleEl.textContent = `Memos for ${targetName}`;
+    titleEl.textContent = `Annotations for ${targetName}`;
     
     // Show existing memos
     const memos = appData.memos.filter(m => m.type === type && m.targetId === targetId);
     if (memos.length > 0) {
         existingList.style.display = 'block';
-        existingList.innerHTML = '<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Existing Memos:</div>' +
+        existingList.innerHTML = '<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Existing annotations:</div>' +
             memos.map(memo => `
                 <div class="memo-item">
                     <div class="memo-item-header">
@@ -66,14 +66,11 @@ function saveMemo(e) {
     appData.memos.push(memo);
     saveData();
     renderAll();
-    
-    // Refresh the modal to show the new memo
-    openMemoModal(currentMemoTarget.type, currentMemoTarget.id);
-    document.getElementById('memoContent').value = '';
+    closeMemoModal();
 }
 
 function deleteMemo(memoId) {
-    if (!confirm('Delete this memo?')) return;
+    if (!confirm('Delete this annotation?')) return;
     
     saveHistory();
     appData.memos = appData.memos.filter(m => m.id !== memoId);

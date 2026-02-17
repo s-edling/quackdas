@@ -90,6 +90,7 @@
             display: inline-flex;
             align-items: center;
             gap: var(--space-3);
+            line-height: 1;
         }
 
         .search-bar {
@@ -417,6 +418,12 @@
             flex-shrink: 0;
         }
 
+        .header-dropdown-item-white {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border);
+        }
+
         .content-body {
             flex: 1;
             overflow-y: auto;
@@ -621,8 +628,13 @@
         }
 
         .document-item.active {
-            background: var(--accent-light);
-            border-color: var(--accent);
+            background: #d4cfcc;
+            border-color: #8f7f79;
+        }
+
+        .document-item.selected:not(.active) {
+            background: var(--bg-hover);
+            border-color: var(--accent-light);
         }
 
         .document-item-title {
@@ -722,6 +734,11 @@
             display: block;
         }
 
+        .root-doc-separator {
+            height: 10px;
+            margin: 2px 0 6px;
+        }
+
         .folder-expand {
             width: 16px;
             text-align: center;
@@ -792,21 +809,27 @@
         }
 
         /* Folder info modal */
+        .folder-info-modal-content {
+            max-width: min(900px, 92vw);
+            width: 92vw;
+            padding: var(--space-7);
+        }
+
         .folder-info-header {
             display: flex;
             align-items: center;
             gap: var(--space-3);
-            margin-bottom: var(--space-4);
+            margin-bottom: var(--space-5);
             padding-bottom: var(--space-3);
             border-bottom: 1px solid var(--border);
         }
 
         .folder-info-icon {
-            font-size: 24px;
+            font-size: 28px;
         }
 
         .folder-info-name {
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 600;
             color: var(--text-primary);
         }
@@ -814,7 +837,8 @@
         .folder-info-stats {
             display: flex;
             gap: var(--space-4);
-            margin-bottom: var(--space-4);
+            margin-bottom: var(--space-5);
+            flex-wrap: wrap;
         }
 
         .folder-info-stat {
@@ -824,19 +848,44 @@
             padding: var(--space-2) var(--space-3);
             background: var(--bg-primary);
             border-radius: 4px;
-            min-width: 80px;
+            min-width: 120px;
+            max-width: 160px;
+            border: 1px solid var(--border);
         }
 
         .folder-info-stat-value {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             color: var(--text-primary);
         }
 
         .folder-info-stat-label {
-            font-size: 11px;
+            font-size: 10px;
             color: var(--text-tertiary);
             text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .folder-info-description-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: var(--space-2);
+        }
+
+        .folder-info-description-input {
+            width: 100%;
+            min-height: 230px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.55;
+            color: var(--text-primary);
+            padding: var(--space-3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-primary);
         }
 
         .add-document-btn {
@@ -1130,11 +1179,23 @@
 
         /* Filter view */
         .filter-active {
-            background: var(--accent-light);
-            border: 1px solid var(--accent);
-            padding: var(--space-2) var(--space-3);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            padding: var(--space-3) var(--space-4);
             margin-bottom: var(--space-3);
-            border-radius: 4px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+        }
+
+        .code-view-banner {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            padding: var(--space-3) var(--space-4);
+            margin-bottom: var(--space-3);
+            border-radius: 6px;
             display: flex;
             align-items: center;
             flex-wrap: wrap;
@@ -1151,14 +1212,6 @@
             color: var(--text-secondary);
         }
 
-        .filter-clear {
-            font-size: 12px;
-            color: var(--accent);
-            cursor: pointer;
-            text-decoration: underline;
-            margin-left: auto;
-        }
-
         .filter-shortcut {
             font-size: 12px;
             color: var(--accent);
@@ -1170,8 +1223,45 @@
             color: var(--accent-dark);
         }
 
-        .filter-clear:hover {
-            color: var(--accent-dark);
+        .filter-code-description {
+            margin: 0 0 var(--space-3) 0;
+            padding: var(--space-3) var(--space-4);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: flex-start;
+            gap: var(--space-2);
+        }
+
+        .filter-code-description.empty {
+            color: var(--text-tertiary);
+        }
+
+        .filter-code-description-label {
+            flex: 0 0 auto;
+        }
+
+        .filter-code-description-text {
+            flex: 1;
+            margin: 0;
+            white-space: pre-wrap;
+            text-indent: 0;
+            padding-top: 0;
+        }
+
+        .filter-description-btn {
+            margin-left: var(--space-2);
+            border: none;
+            background: transparent;
+            color: var(--accent);
+            text-decoration: underline;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 0;
         }
 
         .filter-doc-header {
@@ -1181,7 +1271,7 @@
             padding: var(--space-4) 0 var(--space-2) 0;
             margin-top: var(--space-2);
             border-bottom: 2px solid var(--accent);
-            margin-bottom: var(--space-3);
+            margin-bottom: 2px;
             cursor: pointer;
             transition: color 0.15s;
         }
@@ -1204,7 +1294,83 @@
 
         .filter-snippet {
             position: relative;
-            padding: var(--space-3) 0;
+            padding: 2px 0;
+        }
+
+        .filter-snippet-menu-btn {
+            border: 1px solid var(--border);
+            background: var(--bg-primary);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            width: 24px;
+            height: 22px;
+            line-height: 1;
+            font-size: 16px;
+            flex: 0 0 auto;
+        }
+
+        .filter-pdf-row {
+            display: flex;
+            align-items: flex-start;
+            gap: var(--space-3);
+            margin: 0 0 4px 0;
+        }
+
+        .filter-pdf-row .filter-snippet-menu-btn {
+            margin-top: 4px;
+        }
+
+        .filter-pdf-preview {
+            margin: 0 0 var(--space-2) 0;
+            width: 260px;
+            min-height: 70px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-primary);
+            overflow: hidden;
+        }
+
+        .filter-pdf-preview-btn {
+            display: block;
+            width: 100%;
+            border: none;
+            padding: 0;
+            cursor: zoom-in;
+            background: transparent;
+        }
+
+        .filter-pdf-side {
+            flex: 1;
+            min-width: 180px;
+        }
+
+        .filter-pdf-preview-loading,
+        .filter-pdf-preview-note {
+            font-size: 11px;
+            color: var(--text-secondary);
+            padding: 10px;
+            line-height: 1.35;
+        }
+
+        .filter-pdf-preview-img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .filter-snippet-memo {
+            margin-top: var(--space-2);
+            font-size: 12px;
+            color: var(--text-secondary);
+            border-left: 3px solid var(--accent-light);
+            padding-left: var(--space-2);
+            line-height: 1.45;
+        }
+
+        .filter-snippet-memo.empty {
+            color: var(--text-tertiary);
+            border-left-color: var(--border);
         }
 
         .filter-snippet:not(:last-child)::after {
@@ -1219,7 +1385,146 @@
 
         .filter-snippet .coded-segment {
             display: block;
-            line-height: 1.7;
+            line-height: 1.55;
+            padding-right: 0;
+            flex: 1;
+        }
+
+        .filter-snippet-main {
+            display: flex;
+            align-items: flex-start;
+            gap: var(--space-2);
+        }
+
+        .pdf-region-preview-modal-content {
+            max-width: min(1100px, 94vw);
+            width: 94vw;
+        }
+
+        .pdf-region-preview-layout {
+            display: flex;
+            gap: var(--space-4);
+            align-items: flex-start;
+        }
+
+        .pdf-region-preview-main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .pdf-region-preview-image-wrap {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-primary);
+            padding: var(--space-2);
+            min-height: 220px;
+        }
+
+        .pdf-region-preview-image {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .pdf-region-preview-side {
+            width: 260px;
+            max-height: 68vh;
+            overflow: auto;
+            border-left: 1px solid var(--border);
+            padding-left: var(--space-3);
+        }
+
+        .pdf-region-preview-side-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-tertiary);
+            margin-bottom: var(--space-2);
+        }
+
+        .pdf-region-preview-note-item {
+            margin-bottom: var(--space-3);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .pdf-region-preview-note-head {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            margin-bottom: 4px;
+        }
+
+        .pdf-region-preview-note-empty {
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .pdf-region-annotation-inline {
+            position: fixed;
+            right: 16px;
+            top: calc(var(--header-height) + 76px);
+            width: min(360px, calc(100vw - 32px));
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: 0 14px 38px rgba(42, 37, 32, 0.2);
+            padding: var(--space-3);
+            z-index: 1200;
+        }
+
+        .pdf-region-annotation-title {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: var(--space-2);
+        }
+
+        .pdf-region-annotation-input {
+            width: 100%;
+            resize: vertical;
+            min-height: 72px;
+            max-height: 180px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: var(--space-2);
+            font-family: inherit;
+            font-size: 13px;
+            color: var(--text-primary);
+            background: var(--bg-primary);
+        }
+
+        .pdf-region-annotation-actions {
+            margin-top: var(--space-2);
+            display: flex;
+            justify-content: flex-end;
+            gap: var(--space-2);
+        }
+
+        .pdf-region-annotation-existing {
+            margin-top: var(--space-2);
+            border-top: 1px solid var(--border);
+            padding-top: var(--space-2);
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .pdf-region-annotation-existing-title {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: var(--space-1);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .pdf-region-annotation-item {
+            font-size: 12px;
+            color: var(--text-primary);
+            line-height: 1.4;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 8px;
+            margin-bottom: 6px;
+            white-space: pre-wrap;
         }
 
         /* Location indicator for "go to" navigation */
@@ -1528,6 +1833,26 @@
             display: none !important;
         }
 
+        .pdf-selection-status {
+            font-size: 11px;
+            color: var(--accent-dark);
+            background: var(--accent-light);
+            border: 1px solid var(--accent);
+            border-radius: 999px;
+            padding: 4px 10px;
+            white-space: nowrap;
+        }
+
+        .pdf-selection-status.warning {
+            color: #6b3f1f;
+            background: rgba(229, 180, 78, 0.25);
+            border-color: rgba(194, 142, 29, 0.52);
+        }
+
+        .pdf-selection-status[hidden] {
+            display: none !important;
+        }
+
         .zoom-btn {
             background: var(--bg-primary);
             border: 1px solid var(--border);
@@ -1773,8 +2098,8 @@
 
         .pdf-text-layer {
             position: absolute;
-            user-select: text;
-            pointer-events: auto;
+            user-select: none;
+            pointer-events: none;
             left: 0;
             top: 0;
             right: 0;
@@ -1791,15 +2116,6 @@
             white-space: pre;
             transform-origin: 0% 0%;
             cursor: text;
-            color: transparent;
-        }
-
-        .pdf-text-layer::selection {
-            background: rgba(78, 110, 198, 0.24);
-        }
-
-        .pdf-text-layer *::selection {
-            background: rgba(78, 110, 198, 0.28);
             color: transparent;
         }
 
@@ -1842,9 +2158,9 @@
             position: absolute;
             white-space: pre;
             transform-origin: 0% 0%;
-            cursor: text;
+            cursor: default;
             color: transparent;
-            user-select: text;
+            user-select: none;
             line-height: 1;
         }
         .pdf-text-layer span::selection {
@@ -1852,11 +2168,47 @@
             color: transparent;
         }
 
-        .pdf-text-layer br::selection {
-            background: transparent;
-        }
-
         .pdf-text-layer .markedContent {
             top: 0;
             height: 0;
+        }
+
+        .pdf-region-layer {
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            cursor: crosshair;
+        }
+
+        .pdf-region-selection-box {
+            position: absolute;
+            border: 2px dashed var(--accent);
+            background: rgba(193, 122, 92, 0.16);
+            pointer-events: none;
+        }
+
+        .pdf-coded-region {
+            position: absolute;
+            border: 2px solid var(--accent);
+            background: rgba(193, 122, 92, 0.18);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+            cursor: pointer;
+            transition: transform 0.1s ease, box-shadow 0.2s ease;
+        }
+
+        .pdf-coded-region:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 0 0 3px rgba(193, 122, 92, 0.22), inset 0 0 0 1px rgba(255,255,255,0.35);
+        }
+
+        .pdf-coded-region.flash {
+            animation: pdfRegionFlash 0.9s ease;
+        }
+
+        @keyframes pdfRegionFlash {
+            0% { box-shadow: 0 0 0 0 rgba(193, 122, 92, 0.75); }
+            60% { box-shadow: 0 0 0 8px rgba(193, 122, 92, 0.15); }
+            100% { box-shadow: 0 0 0 0 rgba(193, 122, 92, 0.0); }
         }

@@ -1,6 +1,8 @@
 
 const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 let win;
@@ -264,6 +266,77 @@ ipcMain.handle('file:openDocumentFile', async () => {
       const text = fs.readFileSync(p, 'utf-8');
       return { ok: true, kind: 'text', name, data: text };
     }
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+// OCR helper for scanned/image-only PDFs (renderer sends page image as data URL).
+ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
+  try {
+    const dataUrl = String(payload.dataUrl || '');
+    const lang = String(payload.lang || 'eng');
+    const psm = Number.isFinite(payload.psm) ? String(payload.psm) : '6';
+
+    if (!dataUrl.startsWith('data:image/png;base64,')) {
+      return { ok: false, error: 'Invalid OCR image payload.' };
+    }
+
+    const imageBase64 = dataUrl.substring('data:image/png;base64,'.length);
+    const imageBuffer = Buffer.from(imageBase64, 'base64');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-ocr-'));
+    const imgPath = path.join(tmpDir, 'page.png');
+    const outBase = path.join(tmpDir, 'ocr');
+    const tsvPath = outBase + '.tsv';
+    fs.writeFileSync(imgPath, imageBuffer);
+
+    const runTesseract = (useLang) => {
+      execFileSync('tesseract', [imgPath, outBase, '-l', useLang, '--psm', psm, 'tsv'], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+    };
+
+    try {
+      runTesseract(lang);
+    } catch (e) {
+      // Fallback language for systems without Swedish model installed.
+      if (lang !== 'eng') runTesseract('eng');
+      else throw e;
+    }
+
+    const tsv = fs.readFileSync(tsvPath, 'utf8');
+    const lines = tsv.split(/\r?\n/);
+    const words = [];
+    let fullText = '';
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line) continue;
+      const cols = line.split('\t');
+      if (cols.length < 12) continue;
+
+      const level = Number(cols[0]);
+      const left = Number(cols[6]);
+      const top = Number(cols[7]);
+      const width = Number(cols[8]);
+      const height = Number(cols[9]);
+      const conf = Number(cols[10]);
+      const text = (cols[11] || '').trim();
+      const lineNum = Number(cols[4]);
+
+      if (level !== 5 || !text || width <= 0 || height <= 0) continue;
+      if (Number.isFinite(conf) && conf < 15) continue;
+
+      words.push({ text, left, top, width, height, conf, lineNum });
+      fullText += (fullText ? ' ' : '') + text;
+    }
+
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch (_) {}
+
+    return { ok: true, words, text: fullText };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }

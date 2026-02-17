@@ -8,6 +8,7 @@ function renderAll() {
     renderCodes();
     renderCurrentDocument();
     applyZoom();
+    if (typeof updateHeaderPrimaryAction === 'function') updateHeaderPrimaryAction();
 }
 
 function renderDocuments() {
@@ -24,18 +25,19 @@ function renderDocuments() {
         const typeIndicator = isPdf ? '<span class="doc-type-badge" title="PDF document">PDF</span>' : '';
         const contentInfo = isPdf ? `${doc.pdfPages?.length || '?'} pages` : `${doc.content.length} chars`;
         
+        const isSelected = Array.isArray(appData.selectedDocIds) && appData.selectedDocIds.includes(doc.id);
         return `
-            <div class="document-item ${doc.id === appData.currentDocId ? 'active' : ''}" 
+            <div class="document-item ${doc.id === appData.currentDocId ? 'active' : ''} ${isSelected ? 'selected' : ''}" 
                  ${indentStyle} 
                  draggable="true"
                  data-doc-id="${doc.id}"
                  ondragstart="handleDocDragStart(event, '${doc.id}')"
                  ondragend="handleDocDragEnd(event)"
-                 onclick="selectDocument('${doc.id}')" 
-                 oncontextmenu="openDocumentContextMenu('${doc.id}', event)">
+                onclick="selectDocumentFromList(event, '${doc.id}')" 
+                oncontextmenu="openDocumentContextMenu('${doc.id}', event)">
                 <div class="document-item-title">
                     ${typeIndicator}${escapeHtml(doc.title)}${memoIndicator}
-                    <button class="code-action-btn" onclick="openDocumentMetadata('${doc.id}', event)" title="Edit metadata" style="float: right;"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                    <button class="code-action-btn" onclick="openDocumentMetadata('${doc.id}', event)" title="Edit metadata" style="float: right;"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
                 </div>
                 <div class="document-item-meta">${contentInfo} • ${getDocSegmentCountFast(doc.id)} codes${metaPreview}</div>
             </div>
@@ -47,8 +49,6 @@ function renderDocuments() {
         const isExpanded = folder.expanded !== false;
         const expandIcon = isExpanded ? '▼' : '▶';
         const indentStyle = indent > 0 ? `padding-left: ${12 + indent * 16}px;` : '';
-        const hasDescription = folder.description && folder.description.trim();
-        const descIndicator = hasDescription ? ' •' : '';
         
         return `
             <div class="folder-item" style="${indentStyle}" 
@@ -59,8 +59,8 @@ function renderDocuments() {
                  oncontextmenu="openFolderContextMenu('${folder.id}', event)">
                 <span class="folder-expand" onclick="toggleFolderExpanded('${folder.id}', event)">${expandIcon}</span>
                 <span class="folder-icon">📁</span>
-                <span class="folder-name">${escapeHtml(folder.name)}${descIndicator}</span>
-                <button class="folder-settings-btn" onclick="openFolderInfo('${folder.id}', event)" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                <span class="folder-name">${escapeHtml(folder.name)}</span>
+                <button class="folder-settings-btn" onclick="openFolderInfo('${folder.id}', event)" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
             </div>
         `;
     };
@@ -113,6 +113,9 @@ function renderDocuments() {
     
     // Render root-level documents (no folder)
     const rootDocs = appData.documents.filter(d => !d.folderId);
+    if (appData.folders.length > 0 && rootDocs.length > 0) {
+        allHtml += '<div class="root-doc-separator"></div>';
+    }
     rootDocs.forEach(doc => {
         allHtml += renderDocItem(doc, 0);
     });
@@ -193,7 +196,6 @@ function renderCodeItem(code, isChild = false, index = 0) {
             <div class="code-name">${escapeHtml(code.name)}${shortcutBadge}${memoIndicator}</div>
             <div class="code-count">${count}</div>
             <div class="code-actions">
-                <button class="code-action-btn" onclick="openMemoModal('code', '${code.id}', event)" title="Add/view memos">💭</button>
                 <button class="code-action-btn" onclick="deleteCode('${code.id}', event)" title="Delete">×</button>
             </div>
         </div>
@@ -218,8 +220,17 @@ function renderCodeItem(code, isChild = false, index = 0) {
 function setDocumentViewMode(isPdf) {
     const panel = document.querySelector('.content-panel');
     const nav = document.getElementById('pdfNavControls');
+    const status = document.getElementById('pdfSelectionStatus');
     if (panel) panel.classList.toggle('pdf-mode', !!isPdf);
     if (nav) nav.hidden = !isPdf;
+    if (status && !isPdf) {
+        status.hidden = true;
+        status.classList.remove('warning');
+        status.textContent = 'Region selected. Click a code to apply. Press Esc to clear.';
+    }
+    if (!isPdf && typeof dismissPdfRegionAnnotationInline === 'function') {
+        dismissPdfRegionAnnotationInline();
+    }
 }
 
 function renderCurrentDocument() {
@@ -427,14 +438,27 @@ function renderFilteredView() {
     const shortcutAction = code.shortcut 
         ? `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
         : `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to assign shortcut">Assign shortcut</span>`;
+    const hasDescription = !!(code.description && code.description.trim());
+    const descriptionText = hasDescription ? escapeHtml(code.description) : 'No description yet.';
+    const descriptionHtml = hasDescription
+        ? `<div class="filter-code-description">
+                <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
+                <span class="filter-code-description-text">${preserveLineBreaks(descriptionText)}</span>
+                <button class="filter-description-btn" onclick="editFilterCodeDescription('${code.id}')">Edit</button>
+            </div>`
+        : `<div class="filter-code-description empty">
+                <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
+                <span class="filter-code-description-text">${descriptionText}</span>
+                <button class="filter-description-btn" onclick="editFilterCodeDescription('${code.id}')">Add description</button>
+            </div>`;
     
     let html = `
-        <div class="filter-active">
-            <span class="filter-title">Filtering: ${code.name}${shortcutDisplay}</span>
+        <div class="code-view-banner">
+            <span class="filter-title"><strong>Code: ${code.name}${shortcutDisplay}</strong></span>
             <span class="filter-meta">${totalSegments} segment${totalSegments !== 1 ? 's' : ''} · ${docCount} document${docCount !== 1 ? 's' : ''}</span>
             ${shortcutAction}
-            <span class="filter-clear" onclick="clearFilter()">Clear filter</span>
         </div>
+        ${descriptionHtml}
         <div class="document-text">
     `;
     
@@ -444,19 +468,161 @@ function renderFilteredView() {
         sortedDocs.forEach(doc => {
             const docSegments = segmentsByDoc[doc.id];
             // Sort segments by their position in the document
-            docSegments.sort((a, b) => a.startIndex - b.startIndex);
+            docSegments.sort((a, b) => {
+                if (a.pdfRegion && b.pdfRegion) {
+                    if (a.pdfRegion.pageNum !== b.pdfRegion.pageNum) return a.pdfRegion.pageNum - b.pdfRegion.pageNum;
+                    return (a.pdfRegion.yNorm || 0) - (b.pdfRegion.yNorm || 0);
+                }
+                return (a.startIndex || 0) - (b.startIndex || 0);
+            });
             
             const segmentCount = docSegments.length;
             html += `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${doc.id}')" title="Click to open document">${escapeHtml(doc.title)}<span class="filter-doc-meta">(${segmentCount} segment${segmentCount !== 1 ? 's' : ''})</span></div>`;
             
             docSegments.forEach((segment, i) => {
-                html += `<div class="filter-snippet" oncontextmenu="showFilterSnippetContextMenu('${segment.id}', '${doc.id}', ${segment.startIndex}, event)"><span class="coded-segment" style="border-color: ${code.color};">${preserveLineBreaks(escapeHtml(segment.text))}</span></div>`;
+                const snippetText = segment.pdfRegion
+                    ? `[PDF page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
+                    : segment.text;
+                const memos = getMemosForTarget('segment', segment.id);
+                const memoHtml = memos.length > 0
+                    ? `<div class="filter-snippet-memo">💭 ${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
+                    : '<div class="filter-snippet-memo empty">No annotation.</div>';
+                const menuBtnHtml = memos.length > 0
+                    ? `<button class="filter-snippet-menu-btn" onclick="openSegmentMemoFromFilter('${segment.id}', event)" title="Annotations">⋯</button>`
+                    : '';
+                const previewHtml = segment.pdfRegion
+                    ? `<div class="filter-pdf-row">
+                            <div class="filter-pdf-preview" data-segment-id="${segment.id}" data-doc-id="${doc.id}">
+                                <div class="filter-pdf-preview-loading">Loading region preview...</div>
+                            </div>
+                            ${menuBtnHtml}
+                            <div class="filter-pdf-side">${memoHtml}</div>
+                        </div>`
+                    : '';
+                const inlineMemoHtml = segment.pdfRegion ? '' : (memos.length > 0 ? memoHtml : '');
+                const textMenuBtnHtml = segment.pdfRegion ? '' : menuBtnHtml;
+                html += `<div class="filter-snippet" oncontextmenu="showFilterSnippetContextMenu('${segment.id}', '${doc.id}', event)">
+                    ${previewHtml}
+                    <div class="filter-snippet-main">
+                        <span class="coded-segment" style="border-color: ${code.color};">${preserveLineBreaks(escapeHtml(snippetText))}</span>
+                        ${textMenuBtnHtml}
+                    </div>
+                    ${inlineMemoHtml}
+                </div>`;
             });
         });
     }
     
     html += '</div>';
     content.innerHTML = html;
+    hydrateFilterPdfRegionPreviews();
+}
+
+async function hydrateFilterPdfRegionPreviews() {
+    const holders = Array.from(document.querySelectorAll('.filter-pdf-preview'));
+    if (holders.length === 0) return;
+
+    const PREVIEW_LIMIT = 12;
+    const toRender = holders.slice(0, PREVIEW_LIMIT);
+    const skipped = holders.slice(PREVIEW_LIMIT);
+
+    for (const el of skipped) {
+        el.innerHTML = '<div class="filter-pdf-preview-note">Preview omitted for performance. Use "Go to location".</div>';
+    }
+
+    for (const el of toRender) {
+        const segmentId = el.dataset.segmentId;
+        const docId = el.dataset.docId;
+        const segment = appData.segments.find(s => s.id === segmentId);
+        const doc = appData.documents.find(d => d.id === docId);
+        if (!segment || !segment.pdfRegion || !doc) {
+            el.innerHTML = '<div class="filter-pdf-preview-note">Region unavailable.</div>';
+            continue;
+        }
+        if (typeof getPdfRegionThumbnail !== 'function') {
+            el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+            continue;
+        }
+
+        try {
+            const dataUrl = await getPdfRegionThumbnail(doc, segment.pdfRegion, { width: 260 });
+            if (!dataUrl) {
+                el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+                continue;
+            }
+            el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" onclick="openPdfRegionPreviewModal('${segment.id}', '${doc.id}', event)" title="Open full-size preview">
+                <img src="${dataUrl}" alt="PDF region preview" class="filter-pdf-preview-img">
+            </button>`;
+        } catch (_) {
+            el.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+        }
+    }
+}
+
+function openSegmentMemoFromFilter(segmentId, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    openMemoModal('segment', segmentId);
+}
+
+async function editFilterCodeDescription(codeId) {
+    const code = appData.codes.find(c => c.id === codeId);
+    if (!code) return;
+    const input = await openTextPrompt('Code description', code.description || '');
+    if (input === null) return;
+
+    saveHistory();
+    code.description = input.trim();
+    saveData();
+    renderAll();
+}
+
+async function openPdfRegionPreviewModal(segmentId, docId, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const modal = document.getElementById('pdfRegionPreviewModal');
+    const titleEl = document.getElementById('pdfRegionPreviewTitle');
+    const imageWrap = document.getElementById('pdfRegionPreviewImageWrap');
+    const notesEl = document.getElementById('pdfRegionPreviewNotes');
+    const segment = appData.segments.find(s => s.id === segmentId);
+    const doc = appData.documents.find(d => d.id === docId);
+    if (!modal || !titleEl || !imageWrap || !notesEl || !segment || !doc || !segment.pdfRegion) return;
+
+    titleEl.textContent = `${doc.title} · Page ${segment.pdfRegion.pageNum}`;
+    imageWrap.innerHTML = '<div class="filter-pdf-preview-loading">Loading full-size preview...</div>';
+    const memos = getMemosForTarget('segment', segment.id);
+    if (memos.length === 0) {
+        notesEl.innerHTML = '<div class="pdf-region-preview-note-empty">No annotations.</div>';
+    } else {
+        notesEl.innerHTML = memos.map((memo, idx) => `
+            <div class="pdf-region-preview-note-item">
+                <div class="pdf-region-preview-note-head">Note ${idx + 1}</div>
+                <div>${preserveLineBreaks(escapeHtml(memo.content || ''))}</div>
+            </div>
+        `).join('');
+    }
+    modal.classList.add('show');
+
+    try {
+        const dataUrl = await getPdfRegionThumbnail(doc, segment.pdfRegion, { width: 900 });
+        if (!dataUrl) {
+            imageWrap.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+            return;
+        }
+        imageWrap.innerHTML = `<img src="${dataUrl}" alt="PDF region full preview" class="pdf-region-preview-image">`;
+    } catch (_) {
+        imageWrap.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
+    }
+}
+
+function closePdfRegionPreviewModal() {
+    const modal = document.getElementById('pdfRegionPreviewModal');
+    if (modal) modal.classList.remove('show');
 }
 
 function escapeHtml(text) {
@@ -470,7 +636,7 @@ function goToDocumentFromFilter(docId) {
     selectDocument(docId);
 }
 
-function showFilterSnippetContextMenu(segmentId, docId, startIndex, event) {
+function showFilterSnippetContextMenu(segmentId, docId, event) {
     event.preventDefault();
     event.stopPropagation();
     
@@ -478,18 +644,27 @@ function showFilterSnippetContextMenu(segmentId, docId, startIndex, event) {
     const docName = doc ? doc.title : 'document';
     
     showContextMenu([
-        { label: `Go to location in "${docName}"`, onClick: () => goToSegmentLocation(docId, startIndex) }
+        { label: 'Annotations', onClick: () => openMemoModal('segment', segmentId) },
+        { type: 'sep' },
+        { label: `Go to location in "${docName}"`, onClick: () => goToSegmentLocation(docId, segmentId) }
     ], event.clientX, event.clientY);
 }
 
-function goToSegmentLocation(docId, startIndex) {
+function goToSegmentLocation(docId, segmentId) {
     // Clear filter and navigate to document
     appData.filterCodeId = null;
     selectDocument(docId);
     
     // After render, scroll to and highlight the segment location
     setTimeout(() => {
-        scrollToCharacterPosition(startIndex);
+        const segment = appData.segments.find(s => s.id === segmentId);
+        if (!segment) return;
+        const doc = appData.documents.find(d => d.id === docId);
+        if (doc && doc.type === 'pdf' && segment.pdfRegion && typeof pdfGoToRegion === 'function') {
+            pdfGoToRegion(doc, segment.pdfRegion, segment.id);
+        } else {
+            scrollToCharacterPosition(segment.startIndex || 0);
+        }
     }, 50);
 }
 

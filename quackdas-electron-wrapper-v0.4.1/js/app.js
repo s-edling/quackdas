@@ -102,6 +102,17 @@ document.addEventListener('keydown', function(e) {
 
     // PDF page navigation via arrow keys (when not typing in an input field)
     if (!isTypingContext && typeof isPdfDocumentActive === 'function' && isPdfDocumentActive()) {
+        if (e.key === 'Escape' && typeof clearPendingPdfRegionSelection === 'function') {
+            if (appData.selectedText && appData.selectedText.kind === 'pdfRegion') {
+                e.preventDefault();
+                clearPendingPdfRegionSelection();
+                const doc = appData.documents.find(d => d.id === appData.currentDocId);
+                if (doc && typeof renderPdfPage === 'function') {
+                    renderPdfPage(currentPdfState.currentPage, doc);
+                }
+                return;
+            }
+        }
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
             if (typeof pdfPrevPage === 'function') pdfPrevPage();
@@ -156,7 +167,9 @@ document.addEventListener('keydown', function(e) {
     // Keyboard shortcuts for codes (1-9)
     if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const selection = window.getSelection();
-        if (selection.toString().trim().length > 0) {
+        const hasTextSelection = selection.toString().trim().length > 0;
+        const hasPdfRegionSelection = !!(appData.selectedText && appData.selectedText.kind === 'pdfRegion' && appData.selectedText.pdfRegion);
+        if (hasTextSelection || hasPdfRegionSelection) {
             const shortcutNum = e.key;
             const code = appData.codes.find(c => c.shortcut === shortcutNum);
             if (code && appData.currentDocId && !appData.filterCodeId) {

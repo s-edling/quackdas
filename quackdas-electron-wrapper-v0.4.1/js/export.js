@@ -100,7 +100,6 @@ function importProject(event) {
                 appData = normaliseProject(imported);
                 saveData();
                 renderAll();
-                alert('Project imported successfully!');
             } catch (error) {
                 console.error('Import error:', error);
                 alert('Error importing project: ' + error.message);
@@ -128,7 +127,6 @@ function importProject(event) {
                 appData = normaliseProject(imported);
                 saveData();
                 renderAll();
-                alert('Project imported successfully!');
             } catch (error) {
                 alert('Error importing project: ' + error.message);
             }
@@ -165,7 +163,6 @@ async function importProjectNative() {
             
             saveData();
             renderAll();
-            alert('Project imported successfully!');
             return;
         } catch (e) {
             console.error(e);
@@ -267,9 +264,12 @@ function exportCodedData() {
 
         segments.forEach((segment, i) => {
             const doc = appData.documents.find(d => d.id === segment.docId);
+            const segmentText = segment.pdfRegion
+                ? `[PDF region, page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
+                : segment.text;
             report += `**${i + 1}. From: ${doc.title}**`;
             report += `\n\n`;
-            report += `> ${segment.text}\n\n`;
+            report += `> ${segmentText}\n\n`;
             
             // Show other codes applied to this segment
             const otherCodes = segment.codeIds

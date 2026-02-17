@@ -15,6 +15,8 @@ function makeEmptyProject(overrides = {}) {
         currentDocId: null,
         selectedText: null,
         filterCodeId: null,
+        selectedDocIds: [],
+        lastSelectedDocId: null,
         scrollPositions: {}, // {docId: scrollTop}
         zoomLevel: 100,
         hasUnsavedChanges: false,
@@ -43,6 +45,13 @@ function normaliseProject(p) {
     if (out.currentDocId && !out.documents.some(doc => doc.id === out.currentDocId)) {
         out.currentDocId = out.documents[0]?.id || null;
     }
+
+    out.selectedDocIds = Array.isArray(src.selectedDocIds)
+        ? src.selectedDocIds.filter(id => out.documents.some(doc => doc.id === id))
+        : (out.currentDocId ? [out.currentDocId] : []);
+    out.lastSelectedDocId = (src.lastSelectedDocId && out.documents.some(doc => doc.id === src.lastSelectedDocId))
+        ? src.lastSelectedDocId
+        : (out.selectedDocIds[out.selectedDocIds.length - 1] || null);
 
     // Validate filterCodeId exists
     if (out.filterCodeId && !out.codes.some(c => c.id === out.filterCodeId)) {

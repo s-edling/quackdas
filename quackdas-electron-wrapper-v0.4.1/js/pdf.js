@@ -14,13 +14,19 @@ let currentPdfState = {
     pdfDoc: null,
     currentPage: 1,
     totalPages: 0,
-    scale: 1.5,
+    scale: 1.0,
     docId: null,
     loadingTask: null,
     pageRenderTask: null,
     textLayerRenderTask: null,
-    renderToken: 0
+    renderToken: 0,
+    ocrPromise: null,
+    pendingRegion: null
 };
+const pdfRegionPreviewCache = new Map();
+const pdfRegionPreviewInflight = new Map();
+let pdfSelectionStatusTimer = null;
+const PDF_SELECTION_READY_TEXT = 'Region selected. Click a code to apply. Press Esc to clear.';
 
 function getCurrentPdfZoomPercent() {
     return currentPdfState.scale * 100;
@@ -43,6 +49,29 @@ function updatePdfToolbarState() {
     if (prevBtn) prevBtn.disabled = currentPdfState.currentPage <= 1;
     if (nextBtn) nextBtn.disabled = currentPdfState.currentPage >= currentPdfState.totalPages;
     if (zoomEl) zoomEl.textContent = Math.round(getCurrentPdfZoomPercent()) + '%';
+}
+
+function setPdfSelectionStatus(message, variant = 'selected', autoHideMs = 0) {
+    const status = document.getElementById('pdfSelectionStatus');
+    if (!status) return;
+
+    if (pdfSelectionStatusTimer) {
+        clearTimeout(pdfSelectionStatusTimer);
+        pdfSelectionStatusTimer = null;
+    }
+
+    status.textContent = message || PDF_SELECTION_READY_TEXT;
+    status.classList.toggle('warning', variant === 'warning');
+    status.hidden = false;
+
+    if (autoHideMs > 0) {
+        pdfSelectionStatusTimer = setTimeout(() => {
+            status.hidden = true;
+            status.classList.remove('warning');
+            status.textContent = PDF_SELECTION_READY_TEXT;
+            pdfSelectionStatusTimer = null;
+        }, autoHideMs);
+    }
 }
 
 function cancelPdfRenderTasks() {
@@ -74,6 +103,401 @@ function getPdfPageTextOffset(doc, pageNum) {
         offset += 2; // '\n\n' page break marker used at import
     }
     return offset;
+}
+
+function isLikelyImageOnlyPdf(doc, totalPages) {
+    if (!doc || !Array.isArray(doc.pdfPages) || doc.pdfPages.length !== totalPages) return false;
+    return doc.pdfPages.every(p => !p.textItems || p.textItems.length === 0);
+}
+
+function normaliseOcrWords(words, imageWidth, imageHeight) {
+    const safeW = Math.max(1, imageWidth || 1);
+    const safeH = Math.max(1, imageHeight || 1);
+    return (Array.isArray(words) ? words : [])
+        .filter(w => w && w.text)
+        .map(w => ({
+            text: String(w.text),
+            xNorm: Math.max(0, Number(w.left || 0) / safeW),
+            yNorm: Math.max(0, Number(w.top || 0) / safeH),
+            wNorm: Math.max(0, Number(w.width || 0) / safeW),
+            hNorm: Math.max(0, Number(w.height || 0) / safeH),
+            lineNum: Number.isFinite(w.lineNum) ? w.lineNum : 0
+        }));
+}
+
+function buildDocumentTextFromOcrPages(ocrPages) {
+    const pages = [];
+    let fullText = '';
+
+    for (const srcPage of ocrPages) {
+        const page = {
+            pageNum: srcPage.pageNum,
+            width: srcPage.width,
+            height: srcPage.height,
+            ocr: true,
+            textItems: []
+        };
+
+        let lastLine = null;
+        const words = Array.isArray(srcPage.words) ? srcPage.words : [];
+        for (const word of words) {
+            const txt = String(word.text || '').trim();
+            if (!txt) continue;
+
+            if (page.textItems.length > 0) {
+                if (word.lineNum && lastLine !== null && word.lineNum !== lastLine) {
+                    fullText += '\n';
+                } else {
+                    fullText += ' ';
+                }
+            }
+
+            const start = fullText.length;
+            fullText += txt;
+            const end = fullText.length;
+            lastLine = word.lineNum || lastLine;
+
+            page.textItems.push({
+                text: txt,
+                start,
+                end,
+                xNorm: word.xNorm,
+                yNorm: word.yNorm,
+                wNorm: word.wNorm,
+                hNorm: word.hNorm
+            });
+        }
+
+        pages.push(page);
+        if (srcPage.pageNum < ocrPages.length) fullText += '\n\n';
+    }
+
+    return { pages, fullText };
+}
+
+function renderOcrTextLayer(textLayer, pageInfo, viewport) {
+    textLayer.innerHTML = '';
+    const items = Array.isArray(pageInfo?.textItems) ? pageInfo.textItems : [];
+    for (const item of items) {
+        const span = document.createElement('span');
+        span.className = 'pdf-text-item';
+        span.textContent = item.text || '';
+        span.dataset.start = String(item.start);
+        span.dataset.end = String(item.end);
+        span.style.left = ((item.xNorm || 0) * viewport.width) + 'px';
+        span.style.top = ((item.yNorm || 0) * viewport.height) + 'px';
+        span.style.width = Math.max(1, (item.wNorm || 0) * viewport.width) + 'px';
+        span.style.height = Math.max(1, (item.hNorm || 0) * viewport.height) + 'px';
+        span.style.fontSize = Math.max(10, (item.hNorm || 0) * viewport.height * 0.9) + 'px';
+        textLayer.appendChild(span);
+    }
+}
+
+function roundRegion(value) {
+    return Math.round(value * 10000) / 10000;
+}
+
+function regionsEqual(a, b, tolerance = 0.0015) {
+    if (!a || !b) return false;
+    if (a.pageNum !== b.pageNum) return false;
+    return Math.abs((a.xNorm || 0) - (b.xNorm || 0)) <= tolerance &&
+        Math.abs((a.yNorm || 0) - (b.yNorm || 0)) <= tolerance &&
+        Math.abs((a.wNorm || 0) - (b.wNorm || 0)) <= tolerance &&
+        Math.abs((a.hNorm || 0) - (b.hNorm || 0)) <= tolerance;
+}
+
+function renderPdfRegionOverlays(doc, pageNum, viewport) {
+    const regionLayer = document.getElementById('pdfRegionLayer');
+    if (!regionLayer) return;
+    regionLayer.innerHTML = '';
+    regionLayer.style.width = viewport.width + 'px';
+    regionLayer.style.height = viewport.height + 'px';
+
+    const segments = getSegmentsForDoc(doc.id).filter(seg => seg.pdfRegion && seg.pdfRegion.pageNum === pageNum);
+    for (const seg of segments) {
+        const code = appData.codes.find(c => seg.codeIds?.includes(c.id));
+        const color = code?.color || '#7c9885';
+        const region = seg.pdfRegion;
+        const box = document.createElement('div');
+        box.className = 'pdf-coded-region';
+        box.dataset.segmentId = seg.id;
+        box.style.left = (region.xNorm * viewport.width) + 'px';
+        box.style.top = (region.yNorm * viewport.height) + 'px';
+        box.style.width = Math.max(4, region.wNorm * viewport.width) + 'px';
+        box.style.height = Math.max(4, region.hNorm * viewport.height) + 'px';
+        box.style.borderColor = color;
+        box.style.backgroundColor = color + '33';
+        box.title = seg.text || `PDF region (page ${pageNum})`;
+        box.onclick = (event) => showSegmentMenu(seg.id, event);
+        box.oncontextmenu = (event) => showSegmentContextMenu(seg.id, event);
+        regionLayer.appendChild(box);
+    }
+
+    if (currentPdfState.pendingRegion && currentPdfState.pendingRegion.pageNum === pageNum) {
+        const p = currentPdfState.pendingRegion;
+        const pending = document.createElement('div');
+        pending.className = 'pdf-region-selection-box';
+        pending.style.left = (p.xNorm * viewport.width) + 'px';
+        pending.style.top = (p.yNorm * viewport.height) + 'px';
+        pending.style.width = Math.max(4, p.wNorm * viewport.width) + 'px';
+        pending.style.height = Math.max(4, p.hNorm * viewport.height) + 'px';
+        regionLayer.appendChild(pending);
+    }
+}
+
+function setupPdfRegionInteraction(doc, pageNum, viewport) {
+    const regionLayer = document.getElementById('pdfRegionLayer');
+    if (!regionLayer) return;
+
+    regionLayer.onmousedown = (event) => {
+        if (event.button !== 0) return;
+        if (event.target && event.target !== regionLayer) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rect = regionLayer.getBoundingClientRect();
+        const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
+        const startX = clamp(event.clientX - rect.left, 0, rect.width);
+        const startY = clamp(event.clientY - rect.top, 0, rect.height);
+
+        const box = document.createElement('div');
+        box.className = 'pdf-region-selection-box';
+        box.style.left = startX + 'px';
+        box.style.top = startY + 'px';
+        box.style.width = '0px';
+        box.style.height = '0px';
+        regionLayer.appendChild(box);
+
+        const move = (e) => {
+            const x = clamp(e.clientX - rect.left, 0, rect.width);
+            const y = clamp(e.clientY - rect.top, 0, rect.height);
+            const left = Math.min(startX, x);
+            const top = Math.min(startY, y);
+            const width = Math.abs(x - startX);
+            const height = Math.abs(y - startY);
+            box.style.left = left + 'px';
+            box.style.top = top + 'px';
+            box.style.width = width + 'px';
+            box.style.height = height + 'px';
+        };
+
+        const up = (e) => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+
+            const x = clamp(e.clientX - rect.left, 0, rect.width);
+            const y = clamp(e.clientY - rect.top, 0, rect.height);
+            const left = Math.min(startX, x);
+            const top = Math.min(startY, y);
+            const width = Math.abs(x - startX);
+            const height = Math.abs(y - startY);
+
+            if (box.parentElement) box.parentElement.removeChild(box);
+            if (width < 6 || height < 6) {
+                clearPendingPdfRegionSelection();
+                return;
+            }
+
+            const region = {
+                pageNum,
+                xNorm: roundRegion(left / rect.width),
+                yNorm: roundRegion(top / rect.height),
+                wNorm: roundRegion(width / rect.width),
+                hNorm: roundRegion(height / rect.height)
+            };
+
+            currentPdfState.pendingRegion = region;
+            appData.selectedText = {
+                kind: 'pdfRegion',
+                text: `[PDF region: page ${pageNum}]`,
+                pdfRegion: region
+            };
+            setPdfSelectionStatus(PDF_SELECTION_READY_TEXT, 'selected');
+            renderPdfRegionOverlays(doc, pageNum, viewport);
+        };
+
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+}
+
+function clearPendingPdfRegionSelection() {
+    currentPdfState.pendingRegion = null;
+    if (appData.selectedText && appData.selectedText.kind === 'pdfRegion') {
+        appData.selectedText = null;
+    }
+    if (pdfSelectionStatusTimer) {
+        clearTimeout(pdfSelectionStatusTimer);
+        pdfSelectionStatusTimer = null;
+    }
+    const status = document.getElementById('pdfSelectionStatus');
+    if (status) {
+        status.hidden = true;
+        status.classList.remove('warning');
+        status.textContent = PDF_SELECTION_READY_TEXT;
+    }
+    const pending = document.querySelector('.pdf-region-selection-box');
+    if (pending && pending.parentElement) pending.parentElement.removeChild(pending);
+}
+
+async function getPdfRegionThumbnail(doc, region, opts = {}) {
+    if (!doc || !doc.pdfData || !region || !region.pageNum) return null;
+    if (!(await isPdfSupported())) return null;
+
+    const width = Number.isFinite(opts.width) ? opts.width : 260;
+    const key = [
+        doc.id,
+        region.pageNum,
+        roundRegion(region.xNorm || 0),
+        roundRegion(region.yNorm || 0),
+        roundRegion(region.wNorm || 0),
+        roundRegion(region.hNorm || 0),
+        width
+    ].join(':');
+
+    if (pdfRegionPreviewCache.has(key)) return pdfRegionPreviewCache.get(key);
+    if (pdfRegionPreviewInflight.has(key)) return pdfRegionPreviewInflight.get(key);
+
+    const work = (async () => {
+        const arrayBuffer = base64ToArrayBuffer(doc.pdfData);
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice() });
+        let pdfDoc = null;
+        try {
+            pdfDoc = await loadingTask.promise;
+            const page = await pdfDoc.getPage(region.pageNum);
+            const viewport = page.getViewport({ scale: 1.0 });
+
+            const renderCanvas = document.createElement('canvas');
+            renderCanvas.width = Math.ceil(viewport.width);
+            renderCanvas.height = Math.ceil(viewport.height);
+            const renderCtx = renderCanvas.getContext('2d');
+            await page.render({ canvasContext: renderCtx, viewport }).promise;
+
+            const sx = Math.max(0, Math.floor((region.xNorm || 0) * renderCanvas.width));
+            const sy = Math.max(0, Math.floor((region.yNorm || 0) * renderCanvas.height));
+            const sw = Math.max(8, Math.floor((region.wNorm || 0) * renderCanvas.width));
+            const sh = Math.max(8, Math.floor((region.hNorm || 0) * renderCanvas.height));
+
+            const padX = Math.floor(sw * 0.18);
+            const padY = Math.floor(sh * 0.22);
+            const csx = Math.max(0, sx - padX);
+            const csy = Math.max(0, sy - padY);
+            const csw = Math.min(renderCanvas.width - csx, sw + padX * 2);
+            const csh = Math.min(renderCanvas.height - csy, sh + padY * 2);
+
+            const outW = width;
+            const scale = outW / Math.max(1, csw);
+            const outH = Math.max(40, Math.round(csh * scale));
+            const outCanvas = document.createElement('canvas');
+            outCanvas.width = outW;
+            outCanvas.height = outH;
+            const outCtx = outCanvas.getContext('2d');
+            outCtx.fillStyle = '#ffffff';
+            outCtx.fillRect(0, 0, outW, outH);
+            outCtx.drawImage(renderCanvas, csx, csy, csw, csh, 0, 0, outW, outH);
+
+            // Highlight selected region in thumbnail
+            const hx = Math.round((sx - csx) * scale);
+            const hy = Math.round((sy - csy) * scale);
+            const hw = Math.max(2, Math.round(sw * scale));
+            const hh = Math.max(2, Math.round(sh * scale));
+            outCtx.strokeStyle = '#c17a5c';
+            outCtx.lineWidth = 2;
+            outCtx.strokeRect(hx, hy, hw, hh);
+            outCtx.fillStyle = 'rgba(193, 122, 92, 0.14)';
+            outCtx.fillRect(hx, hy, hw, hh);
+
+            const dataUrl = outCanvas.toDataURL('image/png');
+            pdfRegionPreviewCache.set(key, dataUrl);
+            if (pdfRegionPreviewCache.size > 200) {
+                const firstKey = pdfRegionPreviewCache.keys().next().value;
+                if (firstKey) pdfRegionPreviewCache.delete(firstKey);
+            }
+            return dataUrl;
+        } catch (err) {
+            console.warn('Failed to build PDF region thumbnail', err);
+            return null;
+        } finally {
+            try {
+                if (loadingTask && typeof loadingTask.destroy === 'function') loadingTask.destroy();
+            } catch (_) {}
+            try {
+                if (pdfDoc) await pdfDoc.destroy();
+            } catch (_) {}
+        }
+    })();
+
+    pdfRegionPreviewInflight.set(key, work);
+    try {
+        return await work;
+    } finally {
+        pdfRegionPreviewInflight.delete(key);
+    }
+}
+
+async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
+    if (!window.electronAPI || typeof window.electronAPI.ocrImage !== 'function') return false;
+    if (!currentPdfState.pdfDoc) return false;
+    if (doc._ocrReady) return true;
+    if (currentPdfState.ocrPromise) return currentPdfState.ocrPromise;
+
+    const run = (async () => {
+        const pdfDoc = currentPdfState.pdfDoc;
+        const total = pdfDoc.numPages;
+        const ocrPages = [];
+        const status = document.createElement('div');
+        status.className = 'pdf-error';
+        status.id = 'pdfOcrStatus';
+        status.textContent = 'Running OCR on scanned PDF (page 1/' + total + ')...';
+        if (container) container.appendChild(status);
+
+        try {
+            for (let pageNum = 1; pageNum <= total; pageNum++) {
+                if (expectedToken !== currentPdfState.renderToken) return false;
+                status.textContent = `Running OCR on scanned PDF (page ${pageNum}/${total})...`;
+
+                const page = await pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 2.0 });
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport }).promise;
+                const dataUrl = canvas.toDataURL('image/png');
+
+                const ocrResult = await window.electronAPI.ocrImage(dataUrl, { lang: 'swe+eng', psm: 6 });
+                if (!ocrResult || !ocrResult.ok) {
+                    console.warn('OCR failed for page', pageNum, ocrResult?.error || 'unknown error');
+                }
+
+                const baseViewport = page.getViewport({ scale: 1.0 });
+                const words = normaliseOcrWords(ocrResult?.words || [], canvas.width, canvas.height);
+                ocrPages.push({
+                    pageNum,
+                    width: baseViewport.width,
+                    height: baseViewport.height,
+                    words
+                });
+            }
+
+            const rebuilt = buildDocumentTextFromOcrPages(ocrPages);
+            doc.pdfPages = rebuilt.pages;
+            doc.content = rebuilt.fullText;
+            doc._ocrReady = true;
+            doc._ocrGeneratedAt = new Date().toISOString();
+            saveData();
+            return true;
+        } finally {
+            status.remove();
+        }
+    })();
+
+    currentPdfState.ocrPromise = run;
+    try {
+        return await run;
+    } finally {
+        currentPdfState.ocrPromise = null;
+    }
 }
 
 /**
@@ -274,10 +698,24 @@ async function renderPdfDocument(doc, container) {
                 <div class="pdf-page-wrapper" id="pdfPageWrapper">
                     <canvas id="pdfCanvas"></canvas>
                     <div class="pdf-text-layer" id="pdfTextLayer"></div>
+                    <div class="pdf-region-layer" id="pdfRegionLayer"></div>
                 </div>
             </div>
         </div>
     `;
+    const pdfContainer = container.querySelector('#pdfContainer');
+    if (pdfContainer && typeof showContextMenu === 'function') {
+        pdfContainer.oncontextmenu = (event) => {
+            if (event.target && event.target.closest('.pdf-coded-region')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const items = [];
+            if (typeof extractPdfTextAsDocument === 'function') {
+                items.push({ label: 'Extract text as document', onClick: () => extractPdfTextAsDocument(doc.id) });
+            }
+            if (items.length > 0) showContextMenu(items, event.clientX, event.clientY);
+        };
+    }
 
     // Load PDF from stored base64 data
     const arrayBuffer = base64ToArrayBuffer(doc.pdfData);
@@ -302,6 +740,20 @@ async function renderPdfDocument(doc, container) {
     currentPdfState.totalPages = pdfDoc.numPages;
     currentPdfState.currentPage = 1;
     updatePdfToolbarState();
+
+    if (isLikelyImageOnlyPdf(doc, pdfDoc.numPages)) {
+        const ocrReady = await ensureOcrForImageOnlyPdf(doc, renderToken, container.querySelector('.pdf-viewer'));
+        if (!ocrReady && !doc._ocrReady) {
+            const ocrNotice = document.createElement('div');
+            ocrNotice.className = 'pdf-error';
+            ocrNotice.id = 'pdfOcrUnavailable';
+            ocrNotice.innerHTML = '<p>This appears to be a scanned PDF without a text layer.</p><p>OCR fallback was not available in this build or failed on this machine.</p>';
+            container.querySelector('.pdf-viewer')?.appendChild(ocrNotice);
+        } else {
+            const staleNotice = document.getElementById('pdfOcrUnavailable');
+            if (staleNotice) staleNotice.remove();
+        }
+    }
 
     // Render first page
     await renderPdfPage(1, doc, renderToken);
@@ -365,43 +817,48 @@ async function renderPdfPage(pageNum, doc, expectedToken = currentPdfState.rende
     
     // Get page info from stored data
     const pageInfo = doc.pdfPages?.find(p => p.pageNum === pageNum) || null;
+    const hasNativeText = Array.isArray(textContent?.items) && textContent.items.some(item => item && item.str && item.str.length > 0);
     
-    // Render text layer using PDF.js helper (much more reliable for selection than manual positioning)
-    try {
-        const textLayerTask = pdfjsLib.renderTextLayer({
-            textContentSource: textContent,
-            container: textLayer,
-            viewport,
-            textDivs: [],
-            enhanceTextSelection: true
-        });
-        currentPdfState.textLayerRenderTask = textLayerTask;
+    if (!hasNativeText && pageInfo?.ocr) {
+        renderOcrTextLayer(textLayer, pageInfo, viewport);
+    } else {
+        // Render text layer using PDF.js helper (much more reliable for selection than manual positioning)
+        try {
+            const textLayerTask = pdfjsLib.renderTextLayer({
+                textContentSource: textContent,
+                container: textLayer,
+                viewport,
+                textDivs: [],
+                enhanceTextSelection: true
+            });
+            currentPdfState.textLayerRenderTask = textLayerTask;
 
-        if (textLayerTask && textLayerTask.promise) {
-            await textLayerTask.promise;
-        } else if (textLayerTask && typeof textLayerTask.then === 'function') {
-            await textLayerTask;
+            if (textLayerTask && textLayerTask.promise) {
+                await textLayerTask.promise;
+            } else if (textLayerTask && typeof textLayerTask.then === 'function') {
+                await textLayerTask;
+            }
+        } catch (e) {
+            if (!e || e.name !== 'RenderingCancelledException') {
+                console.warn('PDF.js renderTextLayer failed; falling back to manual text positioning', e);
+            }
+            // Fallback: keep existing (simple) manual positioning for at least some selection
+            textContent.items.forEach((item) => {
+                if (!item.str) return;
+                const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+                const div = document.createElement('span');
+                div.textContent = item.str;
+                div.className = 'pdf-text-item';
+                const fontSize = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]);
+                div.style.left = tx[4] + 'px';
+                div.style.top = (viewport.height - tx[5]) + 'px';
+                div.style.fontSize = fontSize + 'px';
+                div.style.transformOrigin = '0% 0%';
+                const angle = Math.atan2(tx[1], tx[0]);
+                if (angle !== 0) div.style.transform = `rotate(${angle}rad)`;
+                textLayer.appendChild(div);
+            });
         }
-    } catch (e) {
-        if (!e || e.name !== 'RenderingCancelledException') {
-            console.warn('PDF.js renderTextLayer failed; falling back to manual text positioning', e);
-        }
-        // Fallback: keep existing (simple) manual positioning for at least some selection
-        textContent.items.forEach((item) => {
-            if (!item.str) return;
-            const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-            const div = document.createElement('span');
-            div.textContent = item.str;
-            div.className = 'pdf-text-item';
-            const fontSize = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]);
-            div.style.left = tx[4] + 'px';
-            div.style.top = (viewport.height - tx[5]) + 'px';
-            div.style.fontSize = fontSize + 'px';
-            div.style.transformOrigin = '0% 0%';
-            const angle = Math.atan2(tx[1], tx[0]);
-            if (angle !== 0) div.style.transform = `rotate(${angle}rad)`;
-            textLayer.appendChild(div);
-        });
     }
 
     if (expectedToken !== currentPdfState.renderToken) return;
@@ -421,8 +878,9 @@ async function renderPdfPage(pageNum, doc, expectedToken = currentPdfState.rende
         }
     }
 
-    // Set up text selection handler
-    textLayer.onmouseup = () => handlePdfTextSelection(doc);
+    // Region-based PDF coding overlays and interaction
+    renderPdfRegionOverlays(doc, pageNum, viewport);
+    setupPdfRegionInteraction(doc, pageNum, viewport);
     
     // Update UI
     currentPdfState.currentPage = pageNum;
@@ -579,12 +1037,28 @@ function pdfGoToPosition(doc, charPos) {
     renderPdfPage(pageNum, doc);
 }
 
+function pdfGoToRegion(doc, region, segmentId = null) {
+    if (!doc || !region || !region.pageNum) return;
+    renderPdfPage(region.pageNum, doc);
+    setTimeout(() => {
+        if (segmentId) {
+            const el = document.querySelector(`.pdf-coded-region[data-segment-id="${segmentId}"]`);
+            if (el) {
+                el.classList.add('flash');
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+                setTimeout(() => el.classList.remove('flash'), 900);
+            }
+        }
+    }, 60);
+}
+
 /**
  * Cleanup when switching documents
  */
 function cleanupPdfState() {
     currentPdfState.renderToken += 1;
     cancelPdfRenderTasks();
+    clearPendingPdfRegionSelection();
 
     const loadingTask = currentPdfState.loadingTask;
     if (loadingTask && typeof loadingTask.destroy === 'function') {
@@ -602,5 +1076,6 @@ function cleanupPdfState() {
     currentPdfState.currentPage = 1;
     currentPdfState.totalPages = 0;
     currentPdfState.docId = null;
+    currentPdfState.scale = 1.0;
     updatePdfToolbarState();
 }

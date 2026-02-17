@@ -247,7 +247,70 @@ function saveFolderInfo(e) {
     renderAll();
 }
 
-function selectDocument(docId) {
+function getVisibleDocumentOrder() {
+    const orderedIds = [];
+    const visitedFolders = new Set();
+
+    const walkFolders = (parentId) => {
+        const folders = appData.folders.filter(f => f.parentId === parentId);
+        folders.forEach(folder => {
+            if (visitedFolders.has(folder.id)) return;
+            visitedFolders.add(folder.id);
+
+            appData.documents
+                .filter(d => d.folderId === folder.id)
+                .forEach(doc => orderedIds.push(doc.id));
+
+            if (folder.expanded !== false) {
+                walkFolders(folder.id);
+            }
+        });
+    };
+
+    walkFolders(null);
+    appData.documents.filter(d => !d.folderId).forEach(doc => orderedIds.push(doc.id));
+    return orderedIds;
+}
+
+function selectDocumentFromList(event, docId) {
+    const toggle = !!(event && (event.metaKey || event.ctrlKey));
+    const range = !!(event && event.shiftKey);
+    selectDocument(docId, { toggleSelect: toggle, rangeSelect: range });
+}
+
+function updateDocumentSelection(docId, options = {}) {
+    const orderedDocIds = getVisibleDocumentOrder();
+    const existing = Array.isArray(appData.selectedDocIds) ? appData.selectedDocIds.slice() : [];
+
+    if (options.rangeSelect && appData.lastSelectedDocId && orderedDocIds.includes(docId)) {
+        const from = orderedDocIds.indexOf(appData.lastSelectedDocId);
+        const to = orderedDocIds.indexOf(docId);
+        if (from !== -1 && to !== -1) {
+            const [start, end] = from <= to ? [from, to] : [to, from];
+            appData.selectedDocIds = orderedDocIds.slice(start, end + 1);
+        } else {
+            appData.selectedDocIds = [docId];
+        }
+        appData.lastSelectedDocId = docId;
+        return;
+    }
+
+    if (options.toggleSelect) {
+        if (existing.includes(docId)) {
+            appData.selectedDocIds = existing.filter(id => id !== docId);
+        } else {
+            existing.push(docId);
+            appData.selectedDocIds = existing;
+        }
+        appData.lastSelectedDocId = docId;
+        return;
+    }
+
+    appData.selectedDocIds = [docId];
+    appData.lastSelectedDocId = docId;
+}
+
+function selectDocument(docId, options = {}) {
     // Save current scroll position only if not in filtered view
     if (appData.currentDocId && !appData.filterCodeId) {
         const contentBody = document.querySelector('.content-body');
@@ -263,6 +326,7 @@ function selectDocument(docId) {
         saveData();
     }
     
+    updateDocumentSelection(docId, options);
     appData.currentDocId = docId;
     appData.filterCodeId = null;
     renderAll();
@@ -467,6 +531,36 @@ function addDocument(title, content) {
     };
     appData.documents.push(doc);
     appData.currentDocId = doc.id;
+    saveData();
+    renderAll();
+}
+
+function extractPdfTextAsDocument(docId) {
+    const source = appData.documents.find(d => d.id === docId);
+    if (!source || source.type !== 'pdf') return;
+
+    saveHistory();
+    const baseTitle = `${source.title}_text`;
+    let nextTitle = baseTitle;
+    let suffix = 2;
+    while (appData.documents.some(d => d.title === nextTitle)) {
+        nextTitle = `${baseTitle}_${suffix}`;
+        suffix++;
+    }
+
+    const doc = {
+        id: 'doc_' + Date.now(),
+        title: nextTitle,
+        content: source.content || '',
+        metadata: Object.assign({}, source.metadata || {}),
+        folderId: source.folderId || null,
+        created: new Date().toISOString(),
+        lastAccessed: new Date().toISOString()
+    };
+
+    appData.documents.push(doc);
+    appData.currentDocId = doc.id;
+    appData.filterCodeId = null;
     saveData();
     renderAll();
 }

@@ -164,7 +164,8 @@ async function exportToQdpx() {
         let codeXml = `${indent}<Code guid="${guid}" `;
         codeXml += `name="${escapeXml(code.name)}" `;
         codeXml += `isCodable="true" `;
-        codeXml += `color="${formatColor(code.color)}"`;
+        codeXml += `color="${formatColor(code.color)}" `;
+        codeXml += `quackdasShortcut="${escapeXml(code.shortcut || '')}"`;
         
         if (code.description || children.length > 0) {
             codeXml += '>\n';
@@ -230,6 +231,8 @@ async function exportToQdpx() {
     // Selections (coded segments)
     xml += '  <Selections>\n';
     appData.segments.forEach(segment => {
+        if (segment.pdfRegion) return; // Region-based PDF codings are app-specific; not representable in plain-text QDPX selections.
+        if (!Number.isFinite(segment.startIndex) || !Number.isFinite(segment.endIndex) || segment.endIndex <= segment.startIndex) return;
         const segGuid = getOrCreateGuid(segment.id);
         const sourceGuid = getOrCreateGuid(segment.docId);
         
@@ -351,6 +354,8 @@ async function importFromQdpx(qdpxData) {
         const guid = codeEl.getAttribute('guid');
         const name = codeEl.getAttribute('name') || 'Unnamed Code';
         const color = parseColor(codeEl.getAttribute('color'));
+        const rawShortcut = (codeEl.getAttribute('quackdasShortcut') || '').trim();
+        const shortcut = /^[1-9]$/.test(rawShortcut) ? rawShortcut : '';
         const descEl = codeEl.querySelector(':scope > Description');
         const description = descEl ? descEl.textContent : '';
         
@@ -365,7 +370,7 @@ async function importFromQdpx(qdpxData) {
             parentId: parentId,
             created: new Date().toISOString(),
             lastUsed: new Date().toISOString(),
-            shortcut: ''
+            shortcut: shortcut
         };
         
         codesByGuid[guid] = code;

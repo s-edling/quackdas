@@ -36,6 +36,27 @@ function closeHeaderDropdownOnOutsideClick(event) {
     }
 }
 
+function hasProjectDataLoaded() {
+    return (appData.documents.length + appData.codes.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
+}
+
+function updateHeaderPrimaryAction() {
+    const btn = document.getElementById('headerPrimaryAction');
+    if (!btn) return;
+
+    const showOpen = !hasProjectDataLoaded();
+    btn.style.display = showOpen ? 'inline-flex' : 'none';
+    btn.title = 'Open project';
+    btn.innerHTML = `
+        <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        Open project
+    `;
+}
+
+function handleHeaderPrimaryAction() {
+    importProjectNative();
+}
+
 // Context menu functions
 function showContextMenu(items, x, y) {
     const menu = document.getElementById('contextMenu');
@@ -143,6 +164,9 @@ function openDocumentContextMenu(docId, event) {
         { label: 'Move to folder...', onClick: () => openMoveToFolderModal(docId) },
         { label: `Delete document: ${doc.title}`, onClick: () => deleteDocument(docId), danger: true }
     ];
+    if (doc.type === 'pdf' && typeof extractPdfTextAsDocument === 'function') {
+        items.splice(2, 0, { label: 'Extract text as document', onClick: () => extractPdfTextAsDocument(docId) });
+    }
 
     showContextMenu(items, event.clientX, event.clientY);
 }

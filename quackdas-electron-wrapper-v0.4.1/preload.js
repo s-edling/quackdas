@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Native file helpers (dialog-gated, no arbitrary path access)
   openProjectFile: () => ipcRenderer.invoke('file:openProjectFile'),
   openDocumentFile: () => ipcRenderer.invoke('file:openDocumentFile'),
+  ocrImage: (dataUrl, opts) => ipcRenderer.invoke('ocr:image', Object.assign({ dataUrl }, opts || {})),
 
   // IPC for menu actions
   onMenuAction: (cb) => ipcRenderer.on('menu:action', (_evt, action, payload) => cb(action, payload))

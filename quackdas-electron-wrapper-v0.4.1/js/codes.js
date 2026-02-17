@@ -131,9 +131,12 @@ function filterByCode(codeId, e) {
 
     // If the user has a stored selection, clicking a code applies it.
     // Hold Shift/Alt/Ctrl/Cmd to force filter behaviour instead.
-    const hasStoredSelection = appData.selectedText && appData.selectedText.startIndex !== undefined && appData.selectedText.endIndex !== undefined && appData.selectedText.text;
+    const sel = appData.selectedText;
+    const hasTextSelection = !!(sel && typeof sel.text === 'string' && sel.text.length > 0 &&
+        sel.startIndex !== undefined && sel.endIndex !== undefined);
+    const hasPdfRegionSelection = !!(sel && sel.kind === 'pdfRegion' && sel.pdfRegion);
+    const hasStoredSelection = hasTextSelection || hasPdfRegionSelection;
     const forceFilter = e.shiftKey || e.altKey || e.ctrlKey || e.metaKey;
-
     if (hasStoredSelection && !forceFilter) {
         applyCodeToStoredSelection(codeId);
         return;

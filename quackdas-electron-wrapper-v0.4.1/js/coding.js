@@ -32,6 +32,136 @@ function getCodeWithParents(codeId) {
     return [codeId, ...getParentCodeIds(codeId)];
 }
 
+function regionsEqualForSegment(a, b, tolerance = 0.0015) {
+    if (!a || !b) return false;
+    if (a.pageNum !== b.pageNum) return false;
+    return Math.abs((a.xNorm || 0) - (b.xNorm || 0)) <= tolerance &&
+        Math.abs((a.yNorm || 0) - (b.yNorm || 0)) <= tolerance &&
+        Math.abs((a.wNorm || 0) - (b.wNorm || 0)) <= tolerance &&
+        Math.abs((a.hNorm || 0) - (b.hNorm || 0)) <= tolerance;
+}
+
+let currentPdfAnnotationSegmentId = null;
+let pdfAnnotationOutsideBound = false;
+let pdfAnnotationOpenedAt = 0;
+
+function addSegmentMemo(segmentId, text) {
+    if (!text) return;
+    appData.memos.push({
+        id: 'memo_' + Date.now(),
+        type: 'segment',
+        targetId: segmentId,
+        content: text,
+        created: new Date().toISOString()
+    });
+}
+
+function ensurePdfAnnotationInline() {
+    let panel = document.getElementById('pdfRegionAnnotationInline');
+    if (panel) return panel;
+
+    panel = document.createElement('div');
+    panel.id = 'pdfRegionAnnotationInline';
+    panel.className = 'pdf-region-annotation-inline';
+    panel.hidden = true;
+    panel.innerHTML = `
+        <div class="pdf-region-annotation-title" id="pdfRegionAnnotationTitle">Add annotation</div>
+        <textarea id="pdfRegionAnnotationInput" class="pdf-region-annotation-input" rows="3" placeholder="Why this region matters..."></textarea>
+        <div id="pdfRegionAnnotationExisting" class="pdf-region-annotation-existing" hidden></div>
+        <div class="pdf-region-annotation-actions">
+            <button type="button" id="pdfRegionAnnotationSave" class="btn btn-primary">Save annotation</button>
+            <button type="button" id="pdfRegionAnnotationSkip" class="btn btn-secondary">Close</button>
+        </div>
+    `;
+    document.body.appendChild(panel);
+
+    const saveBtn = panel.querySelector('#pdfRegionAnnotationSave');
+    const skipBtn = panel.querySelector('#pdfRegionAnnotationSkip');
+    const input = panel.querySelector('#pdfRegionAnnotationInput');
+    if (saveBtn) saveBtn.addEventListener('click', savePdfRegionAnnotationInline);
+    if (skipBtn) skipBtn.addEventListener('click', dismissPdfRegionAnnotationInline);
+    if (input) {
+        input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            if (event.shiftKey) return;
+            event.preventDefault();
+            savePdfRegionAnnotationInline();
+        });
+    }
+
+    if (!pdfAnnotationOutsideBound) {
+        const closeIfOutside = (event) => {
+            const host = document.getElementById('pdfRegionAnnotationInline');
+            if (!host || host.hidden) return;
+            if (Date.now() - pdfAnnotationOpenedAt < 160) return;
+            if (host.contains(event.target)) return;
+            dismissPdfRegionAnnotationInline();
+        };
+        document.addEventListener('pointerdown', closeIfOutside, true);
+        pdfAnnotationOutsideBound = true;
+    }
+    return panel;
+}
+
+function renderSegmentAnnotationList(segmentId) {
+    const panel = document.getElementById('pdfRegionAnnotationInline');
+    if (!panel) return;
+    const list = panel.querySelector('#pdfRegionAnnotationExisting');
+    if (!list) return;
+
+    const memos = getMemosForTarget('segment', segmentId);
+    if (memos.length === 0) {
+        list.hidden = true;
+        list.innerHTML = '';
+        return;
+    }
+
+    list.hidden = false;
+    list.innerHTML = `
+        <div class="pdf-region-annotation-existing-title">Existing annotations</div>
+        ${memos.map(memo => `<div class="pdf-region-annotation-item">${escapeHtml(memo.content || '')}</div>`).join('')}
+    `;
+}
+
+function showPdfRegionAnnotationInline(segment, options = {}) {
+    if (!segment || !segment.id) return;
+    const panel = ensurePdfAnnotationInline();
+    const titleEl = panel.querySelector('#pdfRegionAnnotationTitle');
+    const input = panel.querySelector('#pdfRegionAnnotationInput');
+    currentPdfAnnotationSegmentId = segment.id;
+    if (titleEl) {
+        titleEl.textContent = options.title || 'Add annotation';
+    }
+    if (input) {
+        input.value = '';
+        input.placeholder = options.placeholder || 'Add annotation (optional)...';
+        setTimeout(() => input.focus(), 0);
+    }
+    renderSegmentAnnotationList(segment.id);
+    pdfAnnotationOpenedAt = Date.now();
+    panel.hidden = false;
+}
+
+function savePdfRegionAnnotationInline() {
+    if (!currentPdfAnnotationSegmentId) return;
+    const panel = document.getElementById('pdfRegionAnnotationInline');
+    if (!panel) return;
+    const input = panel.querySelector('#pdfRegionAnnotationInput');
+    const text = (input?.value || '').trim();
+
+    saveHistory();
+    addSegmentMemo(currentPdfAnnotationSegmentId, text);
+    saveData();
+    renderAll();
+    dismissPdfRegionAnnotationInline();
+}
+
+function dismissPdfRegionAnnotationInline() {
+    const panel = document.getElementById('pdfRegionAnnotationInline');
+    if (panel) panel.hidden = true;
+    currentPdfAnnotationSegmentId = null;
+}
+
 // Text selection and coding
 function handleTextSelection() {
     if (appData.filterCodeId) return; // Don't allow coding in filter view
@@ -114,9 +244,13 @@ function applyCodeToStoredSelection(codeId) {
     if (!appData.currentDocId || appData.filterCodeId) return;
 
     const sel = appData.selectedText;
-    if (!sel || sel.startIndex === undefined || sel.endIndex === undefined || !sel.text) return;
+    if (!sel) return;
 
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    const isPdfRegion = sel.kind === 'pdfRegion' && sel.pdfRegion;
+    if (isPdfRegion && !sel.pdfRegion) return;
+    if (!isPdfRegion && !sel.text) return;
+    if (!isPdfRegion && (sel.startIndex === undefined || sel.endIndex === undefined)) return;
 
     // Save history before making changes
     saveHistory();
@@ -131,12 +265,22 @@ function applyCodeToStoredSelection(codeId) {
     const allCodeIds = getCodeWithParents(codeId);
 
     // Merge into existing segment if boundaries match; otherwise create a new segment
-    let segment = appData.segments.find(s =>
-        s.docId === doc.id &&
-        s.startIndex === sel.startIndex &&
-        s.endIndex === sel.endIndex
-    );
+    let segment = null;
+    if (isPdfRegion) {
+        segment = appData.segments.find(s =>
+            s.docId === doc.id &&
+            s.pdfRegion &&
+            regionsEqualForSegment(s.pdfRegion, sel.pdfRegion)
+        );
+    } else {
+        segment = appData.segments.find(s =>
+            s.docId === doc.id &&
+            s.startIndex === sel.startIndex &&
+            s.endIndex === sel.endIndex
+        );
+    }
 
+    let codeApplied = false;
     if (segment) {
         if (segment.codeIds.includes(codeId)) {
             // Toggle off: remove only the specific code (not parent codes)
@@ -153,26 +297,63 @@ function applyCodeToStoredSelection(codeId) {
                 }
             });
             // Keep text in sync (useful if content changed slightly)
-            segment.text = sel.text;
+            if (typeof sel.text === 'string') {
+                segment.text = sel.text;
+            }
+            codeApplied = true;
         }
     } else {
         segment = {
             id: 'seg_' + Date.now(),
             docId: doc.id,
-            text: sel.text,
+            text: typeof sel.text === 'string' && sel.text.length > 0
+                ? sel.text
+                : `[PDF region: page ${sel.pdfRegion.pageNum}]`,
             codeIds: [...allCodeIds], // Include parent codes
-            startIndex: sel.startIndex,
-            endIndex: sel.endIndex,
+            startIndex: isPdfRegion ? 0 : sel.startIndex,
+            endIndex: isPdfRegion ? 1 : sel.endIndex,
+            pdfRegion: isPdfRegion ? Object.assign({}, sel.pdfRegion) : undefined,
             created: new Date().toISOString()
         };
         appData.segments.push(segment);
+        codeApplied = true;
     }
 
+    const contentBody = document.querySelector('.content-body');
+    const preservedScrollTop = contentBody ? contentBody.scrollTop : 0;
+    const preservedPage = currentPdfState.currentPage;
+
     saveData();
-    renderAll();
+    if (isPdfRegion) {
+        renderDocuments();
+        renderCodes();
+        if (doc && typeof renderPdfPage === 'function') {
+            renderPdfPage(preservedPage, doc);
+        }
+        setTimeout(() => {
+            const body = document.querySelector('.content-body');
+            if (body) body.scrollTop = preservedScrollTop;
+        }, 0);
+    } else {
+        renderAll();
+    }
+
+    if (isPdfRegion && codeApplied && segment && segment.codeIds && segment.codeIds.length > 0) {
+        if (typeof setPdfSelectionStatus === 'function') {
+            setPdfSelectionStatus('Code applied. Add annotation in the note field (optional).', 'selected', 2200);
+        }
+        showPdfRegionAnnotationInline(segment, {
+            title: 'Region coded. Add annotation (optional)',
+            placeholder: 'Why this region matters...'
+        });
+    }
 
     // Re-select the same text so the user can apply multiple codes
-    restoreSelectionByIndices(sel.startIndex, sel.endIndex);
+    if (!isPdfRegion) {
+        restoreSelectionByIndices(sel.startIndex, sel.endIndex);
+    } else if (typeof clearPendingPdfRegionSelection === 'function') {
+        clearPendingPdfRegionSelection();
+    }
 }
 
 // Calculate the actual character position in the original document text
@@ -298,6 +479,12 @@ function applySelectedCodes() {
 // Quick apply code using keyboard shortcut
 function quickApplyCode(codeId) {
     if (!appData.currentDocId || appData.filterCodeId) return;
+
+    const stored = appData.selectedText;
+    if (stored && stored.kind === 'pdfRegion' && stored.pdfRegion) {
+        applyCodeToStoredSelection(codeId);
+        return;
+    }
     
     const selection = window.getSelection();
     const text = selection.toString().trim();
@@ -443,20 +630,17 @@ function showSegmentContextMenu(segmentIds, event) {
 
     const label = codes.length ? codes.map(c => c.name).join(', ') : 'Coding';
 
-    const hasMemo = appData.memos.some(m => m.type === 'segment' && m.targetId === segments[0].id);
-
     showContextMenu([
-        { label: (hasMemo ? 'View memo' : 'Add memo') + ` • ${label}`, onClick: () => openMemoModal('segment', segments[0].id) },
+        { label: `Annotations • ${label}`, onClick: () => showPdfRegionAnnotationInline(segments[0], { title: 'Annotations', placeholder: 'Add annotation (optional)...' }) },
         { type: 'sep' },
         { label: `Remove coding • ${label}`, onClick: () => editSegmentGroup(segmentIds, { stopPropagation: () => {} }), danger: true }
     ], event.clientX, event.clientY);
 }
 
 function updateSegmentActionModalLabels(segmentId) {
-    const hasMemo = appData.memos.some(m => m.type === 'segment' && m.targetId === segmentId);
     let memoBtn = document.querySelector('#segmentActionModal [data-action="memo"]');
     if (!memoBtn) memoBtn = document.querySelector('#segmentActionModal button[onclick*="segmentActionChoice(\'memo\')"]');
-    if (memoBtn) memoBtn.textContent = hasMemo ? 'View memo' : 'Add memo';
+    if (memoBtn) memoBtn.textContent = 'Annotations';
 }
 
 function closeSegmentActionModal() {
@@ -470,7 +654,10 @@ function segmentActionChoice(action) {
     closeSegmentActionModal();
 
     if (action === 'memo') {
-        openMemoModal('segment', ids[0]);
+        const segment = appData.segments.find(s => s.id === ids[0]);
+        if (segment) {
+            showPdfRegionAnnotationInline(segment, { title: 'Annotations', placeholder: 'Add annotation (optional)...' });
+        }
     } else if (action === 'edit') {
         openEditBoundariesModal(ids[0]);
     } else if (action === 'remove') {
@@ -481,6 +668,11 @@ function segmentActionChoice(action) {
 function openEditBoundariesModal(segmentId) {
     currentEditSegment = appData.segments.find(s => s.id === segmentId);
     if (!currentEditSegment) return;
+    if (currentEditSegment.pdfRegion) {
+        alert('Boundary editing is not available for PDF region codings.');
+        currentEditSegment = null;
+        return;
+    }
     
     const modal = document.getElementById('editBoundariesModal');
     document.getElementById('boundaryStart').value = currentEditSegment.startIndex;
