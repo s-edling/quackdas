@@ -7,31 +7,6 @@
 let currentEditSegment = null;
 let currentSegmentActionIds = null;
 
-// Safety limit to prevent infinite loops
-const MAX_CODE_DEPTH = 20;
-
-// Get all parent code IDs for a given code (for hierarchical coding)
-function getParentCodeIds(codeId) {
-    const parentIds = [];
-    const visited = new Set();
-    let currentCode = appData.codes.find(c => c.id === codeId);
-    
-    while (currentCode && currentCode.parentId && parentIds.length < MAX_CODE_DEPTH) {
-        if (visited.has(currentCode.parentId)) break; // Cycle detection
-        visited.add(currentCode.parentId);
-        
-        parentIds.push(currentCode.parentId);
-        currentCode = appData.codes.find(c => c.id === currentCode.parentId);
-    }
-    
-    return parentIds;
-}
-
-// Get a code and all its parent codes
-function getCodeWithParents(codeId) {
-    return [codeId, ...getParentCodeIds(codeId)];
-}
-
 function regionsEqualForSegment(a, b, tolerance = 0.0015) {
     if (!a || !b) return false;
     if (a.pageNum !== b.pageNum) return false;
@@ -221,53 +196,6 @@ function handleTextSelection() {
     }
 }
 
-// Restore selection by character indices (used to keep selection when applying multiple codes)
-function restoreSelectionByIndices(startIndex, endIndex) {
-    const container = document.getElementById('documentContent');
-    if (!container) return;
-
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-        acceptNode: (node) => {
-            const p = node.parentElement;
-            if (!p) return NodeFilter.FILTER_ACCEPT;
-            if (p.classList.contains('segment-tooltip') || p.classList.contains('memo-indicator') || p.classList.contains('code-actions')) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            // Exclude any UI-only nodes inside coded segments
-            if (p.closest && p.closest('.segment-tooltip, .code-actions')) return NodeFilter.FILTER_REJECT;
-            return NodeFilter.FILTER_ACCEPT;
-        }
-    });
-    let current = 0;
-    let startNode = null, endNode = null;
-    let startOffset = 0, endOffset = 0;
-
-    while (walker.nextNode()) {
-        const node = walker.currentNode;
-        const len = (node.nodeValue || '').length;
-
-        if (startNode === null && current + len >= startIndex) {
-            startNode = node;
-            startOffset = Math.max(0, startIndex - current);
-        }
-        if (current + len >= endIndex) {
-            endNode = node;
-            endOffset = Math.max(0, endIndex - current);
-            break;
-        }
-        current += len;
-    }
-
-    if (startNode && endNode) {
-        const range = document.createRange();
-        range.setStart(startNode, startOffset);
-        range.setEnd(endNode, endOffset);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-    }
-}
-
 // Apply a single code to the currently stored selection (click-to-code workflow)
 function applyCodeToStoredSelection(codeId) {
     if (!appData.currentDocId || appData.filterCodeId) return;
@@ -289,9 +217,6 @@ function applyCodeToStoredSelection(codeId) {
     if (code) {
         code.lastUsed = new Date().toISOString();
     }
-
-    // Get all codes to apply (including parent codes for hierarchical coding)
-    const allCodeIds = getCodeWithParents(codeId);
 
     // Merge into existing segment if boundaries match; otherwise create a new segment
     let segment = null;
@@ -319,12 +244,8 @@ function applyCodeToStoredSelection(codeId) {
                 appData.segments = appData.segments.filter(s => s.id !== segment.id);
             }
         } else {
-            // Add the code and all parent codes (if not already present)
-            allCodeIds.forEach(id => {
-                if (!segment.codeIds.includes(id)) {
-                    segment.codeIds.push(id);
-                }
-            });
+            // Add only the selected code (no automatic parent propagation)
+            segment.codeIds.push(codeId);
             // Keep text in sync (useful if content changed slightly)
             if (typeof sel.text === 'string') {
                 segment.text = sel.text;
@@ -338,7 +259,7 @@ function applyCodeToStoredSelection(codeId) {
             text: typeof sel.text === 'string' && sel.text.length > 0
                 ? sel.text
                 : `[PDF region: page ${sel.pdfRegion.pageNum}]`,
-            codeIds: [...allCodeIds], // Include parent codes
+            codeIds: [codeId],
             startIndex: isPdfRegion ? 0 : sel.startIndex,
             endIndex: isPdfRegion ? 1 : sel.endIndex,
             pdfRegion: isPdfRegion ? Object.assign({}, sel.pdfRegion) : undefined,
@@ -381,11 +302,14 @@ function applyCodeToStoredSelection(codeId) {
         });
     }
 
-    // Re-select the same text so the user can apply multiple codes
+    // Applying a code should clear selection state (both stored and native).
     if (!isPdfRegion) {
-        restoreSelectionByIndices(sel.startIndex, sel.endIndex);
+        appData.selectedText = null;
+        const nativeSelection = window.getSelection();
+        if (nativeSelection) nativeSelection.removeAllRanges();
     } else if (typeof clearPendingPdfRegionSelection === 'function') {
         clearPendingPdfRegionSelection();
+        appData.selectedText = null;
     }
 }
 
@@ -444,8 +368,8 @@ function openCodeSelectionModal() {
     
     list.innerHTML = appData.codes.map(code => `
         <label class="code-checkbox">
-            <input type="checkbox" value="${code.id}">
-            <div class="code-color" style="background: ${code.color};"></div>
+            <input type="checkbox" value="${escapeHtmlAttrValue(code.id)}">
+            <div class="code-color" style="background: ${escapeHtmlAttrValue(code.color)};"></div>
             <span>${escapeHtml(code.name)}</span>
         </label>
     `).join('');
@@ -455,6 +379,7 @@ function openCodeSelectionModal() {
 
 function closeCodeSelectionModal() {
     document.getElementById('codeSelectionModal').classList.remove('show');
+    appData.selectedText = null;
     window.getSelection().removeAllRanges();
 }
 
@@ -479,11 +404,8 @@ function applySelectedCodes() {
     // Save history before making changes
     saveHistory();
     
-    // Build full list including parent codes
-    const allCodeIds = new Set();
-    selectedCodeIds.forEach(codeId => {
-        getCodeWithParents(codeId).forEach(id => allCodeIds.add(id));
-    });
+    // Apply only explicitly selected codes
+    const allCodeIds = new Set(selectedCodeIds);
     
     // Update lastUsed for all applied codes
     allCodeIds.forEach(codeId => {
@@ -539,9 +461,6 @@ function quickApplyCode(codeId) {
         code.lastUsed = new Date().toISOString();
     }
     
-    // Get all codes to apply (including parent codes for hierarchical coding)
-    const allCodeIds = getCodeWithParents(codeId);
-    
     // Check if segment with same boundaries already exists
     let segment = appData.segments.find(s =>
         s.docId === doc.id &&
@@ -558,12 +477,8 @@ function quickApplyCode(codeId) {
                 appData.segments = appData.segments.filter(s => s.id !== segment.id);
             }
         } else {
-            // Add the code and all parent codes (if not already present)
-            allCodeIds.forEach(id => {
-                if (!segment.codeIds.includes(id)) {
-                    segment.codeIds.push(id);
-                }
-            });
+            // Add only the selected code (no automatic parent propagation)
+            segment.codeIds.push(codeId);
             // Keep text in sync
             segment.text = text;
         }
@@ -572,7 +487,7 @@ function quickApplyCode(codeId) {
             id: 'seg_' + Date.now(),
             docId: doc.id,
             text: text,
-            codeIds: [...allCodeIds],
+            codeIds: [codeId],
             startIndex: position.start,
             endIndex: position.end,
             created: new Date().toISOString()
@@ -583,7 +498,9 @@ function quickApplyCode(codeId) {
     saveData();
     renderAll();
     
-    // Clear selection
+    // Clear both native and stored selection after shortcut coding.
+    // Shortcut flow should not leave an invisible pending click-to-code target.
+    appData.selectedText = null;
     window.getSelection().removeAllRanges();
 }
 
@@ -662,12 +579,19 @@ function showSegmentContextMenu(segmentIds, event) {
     });
 
     const label = codes.length ? codes.map(c => c.name).join(', ') : 'Coding';
+    const primarySegment = segments[0];
+    const menuItems = [
+        { label: `Annotations • ${label}`, onClick: () => showPdfRegionAnnotationInline(primarySegment, { title: 'Annotations', placeholder: 'Add annotation (optional)...' }) }
+    ];
 
-    showContextMenu([
-        { label: `Annotations • ${label}`, onClick: () => showPdfRegionAnnotationInline(segments[0], { title: 'Annotations', placeholder: 'Add annotation (optional)...' }) },
-        { type: 'sep' },
-        { label: `Remove coding • ${label}`, onClick: () => editSegmentGroup(segmentIds, { stopPropagation: () => {} }), danger: true }
-    ], event.clientX, event.clientY);
+    if (segments.length === 1 && primarySegment && !primarySegment.pdfRegion) {
+        menuItems.push({ label: `Edit boundaries • ${label}`, onClick: () => openEditBoundariesModal(primarySegment.id) });
+    }
+
+    menuItems.push({ type: 'sep' });
+    menuItems.push({ label: `Remove coding • ${label}`, onClick: () => editSegmentGroup(segmentIds, { stopPropagation: () => {} }), danger: true });
+
+    showContextMenu(menuItems, event.clientX, event.clientY);
 }
 
 function updateSegmentActionModalLabels(segmentId) {

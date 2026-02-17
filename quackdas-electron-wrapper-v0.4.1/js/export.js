@@ -3,14 +3,6 @@
  * Project and report export/import
  */
 
-function showQdpxCompatibilityReport(direction) {
-    if (typeof summarizeQdpxCompatibilityReport !== 'function') return;
-    const report = (direction === 'export') ? window.lastQdpxExportReport : window.lastQdpxImportReport;
-    if (!report) return;
-    const summary = summarizeQdpxCompatibilityReport(report);
-    if (summary) alert(summary);
-}
-
 function newProject() {
     if (appData.documents.length > 0 || appData.codes.length > 0) {
         if (!confirm('This will clear all current data. Continue?')) {
@@ -22,7 +14,6 @@ function newProject() {
     if (window.electronAPI && window.electronAPI.clearProjectHandle) {
         window.electronAPI.clearProjectHandle().catch(() => {});
     }
-    projectFileHandle = null;
     
     history.past = [];
     history.future = [];
@@ -37,113 +28,41 @@ function newProject() {
     if (typeof updateSaveStatus === 'function') updateSaveStatus();
 }
 
-async function exportProject() {
-    // Export as QDPX format
-    try {
-        if (typeof exportToQdpx !== 'function') {
-            throw new Error('QDPX export not available');
-        }
-        
-        const blob = await exportToQdpx();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${appData.projectName || 'quackdas-project'}-${new Date().toISOString().split('T')[0]}.qdpx`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        showQdpxCompatibilityReport('export');
-    } catch (err) {
-        console.error('Export failed:', err);
-        alert('Export failed: ' + (err?.message || err));
-    }
-}
-
-// Legacy JSON export for backwards compatibility
-function exportProjectAsJson() {
-    // Create a copy without pdfData to reduce size
-    const exportData = JSON.parse(JSON.stringify(appData));
-    exportData.documents.forEach(doc => {
-        if (doc.pdfData) {
-            delete doc.pdfData;
-            delete doc.pdfPages;
-            delete doc.pdfTextPositions;
-        }
-    });
-    
-    const dataStr = JSON.stringify(exportData, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `quackdas-project-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-}
-
 function importProject(event) {
     const file = event.target.files[0];
     if (!file) return;
 
     const fileName = file.name.toLowerCase();
-    
-    if (fileName.endsWith('.qdpx')) {
-        // QDPX format
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-            try {
-                if (typeof importFromQdpx !== 'function') {
-                    throw new Error('QDPX import not available');
-                }
-                
-                if (appData.documents.length > 0 || appData.codes.length > 0) {
-                    if (!confirm('This will replace your current project. Continue?')) {
-                        return;
-                    }
-                }
-                
-                const imported = await importFromQdpx(e.target.result);
-                appData = normaliseProject(imported);
-                appData.lastSaveTime = new Date().toISOString();
-                saveData({ markUnsaved: false });
-                renderAll();
-            } catch (error) {
-                console.error('Import error:', error);
-                alert('Error importing project: ' + error.message);
-            }
-        };
-        reader.readAsArrayBuffer(file);
-    } else {
-        // Legacy JSON format
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            try {
-                const imported = JSON.parse(e.target.result);
-                
-                // Validate the imported data structure
-                if (!imported.documents || !imported.codes || !imported.segments) {
-                    throw new Error('Invalid project file format');
-                }
-
-                if (appData.documents.length > 0 || appData.codes.length > 0) {
-                    if (!confirm('This will replace your current project. Continue?')) {
-                        return;
-                    }
-                }
-
-                appData = normaliseProject(imported);
-                appData.lastSaveTime = new Date().toISOString();
-                saveData({ markUnsaved: false });
-                renderAll();
-            } catch (error) {
-                alert('Error importing project: ' + error.message);
-            }
-        };
-        reader.readAsText(file);
+    if (!fileName.endsWith('.qdpx')) {
+        alert('Unsupported project format. Please choose a .qdpx file.');
+        event.target.value = '';
+        return;
     }
+
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            if (typeof importFromQdpx !== 'function') {
+                throw new Error('QDPX import not available');
+            }
+            
+            if (appData.documents.length > 0 || appData.codes.length > 0) {
+                if (!confirm('This will replace your current project. Continue?')) {
+                    return;
+                }
+            }
+            
+            const imported = await importFromQdpx(e.target.result);
+            appData = normaliseProject(imported);
+            appData.lastSaveTime = new Date().toISOString();
+            saveData({ markUnsaved: false });
+            renderAll();
+        } catch (error) {
+            console.error('Import error:', error);
+            alert('Error importing project: ' + error.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
     event.target.value = ''; // Reset file input
 }
 
@@ -158,19 +77,16 @@ async function importProjectNative() {
                 if (!confirm('This will replace your current project. Continue?')) return;
             }
             
-            if (res.kind === 'qdpx') {
-                // QDPX format - data is base64-encoded
-                if (typeof importFromQdpx !== 'function') {
-                    throw new Error('QDPX import not available');
-                }
-                const buffer = base64ToArrayBuffer(res.data);
-                const imported = await importFromQdpx(buffer);
-                appData = normaliseProject(imported);
-            } else {
-                // Legacy JSON format
-                const imported = JSON.parse(res.data);
-                appData = normaliseProject(imported);
+            if (res.kind !== 'qdpx') {
+                throw new Error('Unsupported project format. Please choose a .qdpx file.');
             }
+            // QDPX format - data is base64-encoded
+            if (typeof importFromQdpx !== 'function') {
+                throw new Error('QDPX import not available');
+            }
+            const buffer = base64ToArrayBuffer(res.data);
+            const imported = await importFromQdpx(buffer);
+            appData = normaliseProject(imported);
             
             appData.lastSaveTime = new Date().toISOString();
             saveData({ markUnsaved: false });
@@ -184,31 +100,6 @@ async function importProjectNative() {
     }
     const inp = document.getElementById('importProjectInput');
     if (inp) inp.click();
-}
-
-// Electron helper: apply a parsed project object (used by native Open Project).
-function applyImportedProject(imported) {
-    try {
-        if (!imported || typeof imported !== 'object') {
-            throw new Error('Invalid project file format');
-        }
-
-        const previousTheme = appData?.theme || 'light';
-
-        appData = normaliseProject(imported);
-        appData.theme = appData.theme || previousTheme;
-
-        appData.hasUnsavedChanges = false;
-        appData.lastSaveTime = new Date().toISOString();
-
-        if (typeof rebuildIndexes === 'function') rebuildIndexes();
-        if (typeof renderAll === 'function') renderAll();
-        if (typeof updateSaveStatus === 'function') updateSaveStatus();
-
-    } catch (error) {
-        console.error('Error importing project:', error);
-        alert('Error importing project: ' + error.message);
-    }
 }
 
 // Electron helper: apply a QDPX project (used by native Open Project with QDPX files)

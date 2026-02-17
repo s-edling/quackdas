@@ -15,9 +15,28 @@ function renderAll() {
 function renderDocuments() {
     const allList = document.getElementById('documentsList');
     const recentList = document.getElementById('recentDocumentsList');
+    const ROOT_KEY = '__root__';
+    const folderChildrenByParent = new Map();
+    const docsByFolder = new Map();
+    const docTitleCompare = (a, b) => String(a?.title || '').localeCompare(String(b?.title || ''), undefined, { sensitivity: 'base' });
+    const folderIconSvg = `<svg class="toolbar-icon folder-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-1.2 8a2 2 0 0 1-2 1.7H6.2a2 2 0 0 1-2-1.7z"/></svg>`;
+
+    for (const folder of appData.folders) {
+        const parentKey = folder.parentId || ROOT_KEY;
+        if (!folderChildrenByParent.has(parentKey)) folderChildrenByParent.set(parentKey, []);
+        folderChildrenByParent.get(parentKey).push(folder);
+    }
+    for (const doc of appData.documents) {
+        const folderKey = doc.folderId || ROOT_KEY;
+        if (!docsByFolder.has(folderKey)) docsByFolder.set(folderKey, []);
+        docsByFolder.get(folderKey).push(doc);
+    }
+    docsByFolder.forEach((docs) => docs.sort(docTitleCompare));
     
     // Helper to render a document item (draggable)
     const renderDocItem = (doc, indent = 0) => {
+        const safeDocIdJs = escapeJsForSingleQuotedString(doc.id);
+        const safeDocIdAttr = escapeHtmlAttrValue(doc.id);
         const memoCount = getMemoCountForTarget('document', doc.id);
         const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭${memoCount}</span>` : '';
         const metaPreview = doc.metadata?.participantId ? ` • ID: ${escapeHtml(doc.metadata.participantId)}` : '';
@@ -31,14 +50,14 @@ function renderDocuments() {
             <div class="document-item ${doc.id === appData.currentDocId ? 'active' : ''} ${isSelected ? 'selected' : ''}" 
                  ${indentStyle} 
                  draggable="true"
-                 data-doc-id="${doc.id}"
-                 ondragstart="handleDocDragStart(event, '${doc.id}')"
+                 data-doc-id="${safeDocIdAttr}"
+                 ondragstart="handleDocDragStart(event, '${safeDocIdJs}')"
                  ondragend="handleDocDragEnd(event)"
-                onclick="selectDocumentFromList(event, '${doc.id}')" 
-                oncontextmenu="openDocumentContextMenu('${doc.id}', event)">
+                onclick="selectDocumentFromList(event, '${safeDocIdJs}')" 
+                oncontextmenu="openDocumentContextMenu('${safeDocIdJs}', event)">
                 <div class="document-item-title">
                     ${typeIndicator}${escapeHtml(doc.title)}${memoIndicator}
-                    <button class="code-action-btn" onclick="openDocumentMetadata('${doc.id}', event)" title="Edit metadata" style="float: right;"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+                    <button class="code-action-btn" onclick="openDocumentMetadata('${safeDocIdJs}', event)" title="Edit metadata" style="float: right;"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
                 </div>
                 <div class="document-item-meta">${contentInfo} • ${getDocSegmentCountFast(doc.id)} codes${metaPreview}</div>
             </div>
@@ -47,21 +66,26 @@ function renderDocuments() {
     
     // Helper to render a folder item (with drop zone for documents)
     const renderFolderItem = (folder, indent = 0) => {
+        const safeFolderIdJs = escapeJsForSingleQuotedString(folder.id);
+        const safeFolderIdAttr = escapeHtmlAttrValue(folder.id);
         const isExpanded = folder.expanded !== false;
         const expandIcon = isExpanded ? '▼' : '▶';
         const indentStyle = indent > 0 ? `padding-left: ${12 + indent * 16}px;` : '';
         
         return `
             <div class="folder-item" style="${indentStyle}" 
-                 data-folder-id="${folder.id}"
+                 data-folder-id="${safeFolderIdAttr}"
+                 draggable="true"
+                 ondragstart="handleFolderItemDragStart(event, '${safeFolderIdJs}')"
+                 ondragend="handleFolderItemDragEnd(event)"
                  ondragover="handleFolderDragOver(event)" 
                  ondragleave="handleFolderDragLeave(event)" 
-                 ondrop="handleDocumentDropOnFolder(event, '${folder.id}')"
-                 oncontextmenu="openFolderContextMenu('${folder.id}', event)">
-                <span class="folder-expand" onclick="toggleFolderExpanded('${folder.id}', event)">${expandIcon}</span>
-                <span class="folder-icon">📁</span>
+                 ondrop="handleDocumentDropOnFolder(event, '${safeFolderIdJs}')"
+                 oncontextmenu="openFolderContextMenu('${safeFolderIdJs}', event)">
+                <span class="folder-expand" onclick="toggleFolderExpanded('${safeFolderIdJs}', event)">${expandIcon}</span>
+                <span class="folder-icon">${folderIconSvg}</span>
                 <span class="folder-name">${escapeHtml(folder.name)}</span>
-                <button class="folder-settings-btn" onclick="openFolderInfo('${folder.id}', event)" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+                <button class="folder-settings-btn" onclick="openFolderInfo('${safeFolderIdJs}', event)" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
             </div>
         `;
     };
@@ -75,7 +99,7 @@ function renderDocuments() {
         let html = '';
         
         // Get folders at this level
-        const folders = appData.folders.filter(f => f.parentId === parentId);
+        const folders = folderChildrenByParent.get(parentId || ROOT_KEY) || [];
         folders.forEach(folder => {
             // Skip if already visited (cycle detection)
             if (visited.has(folder.id)) return;
@@ -85,7 +109,7 @@ function renderDocuments() {
             
             if (folder.expanded !== false) {
                 // Render documents in this folder
-                const docsInFolder = appData.documents.filter(d => d.folderId === folder.id);
+                const docsInFolder = docsByFolder.get(folder.id) || [];
                 docsInFolder.forEach(doc => {
                     html += renderDocItem(doc, indent + 1);
                 });
@@ -113,7 +137,7 @@ function renderDocuments() {
     allHtml += renderFolderTree(null, 0);
     
     // Render root-level documents (no folder)
-    const rootDocs = appData.documents.filter(d => !d.folderId);
+    const rootDocs = docsByFolder.get(ROOT_KEY) || [];
     if (appData.folders.length > 0 && rootDocs.length > 0) {
         allHtml += '<div class="root-doc-separator"></div>';
     }
@@ -181,7 +205,7 @@ function renderCodes() {
     // Update parent select
     parentSelect.innerHTML = '<option value="">None (Top-level code)</option>' + 
         appData.codes.filter(c => !c.parentId).map(c => 
-            `<option value="${c.id}">${c.name}</option>`
+            `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`
         ).join('');
 
     // Render code tree sorted by sortOrder (user-defined via drag-and-drop)
@@ -202,6 +226,8 @@ function renderCodes() {
 }
 
 function renderCodeItem(code, isChild = false, index = 0) {
+    const safeCodeIdJs = escapeJsForSingleQuotedString(code.id);
+    const safeCodeIdAttr = escapeHtmlAttrValue(code.id);
     const count = getCodeSegmentCountFast(code.id);
     const children = appData.codes.filter(c => c.parentId === code.id);
     const isSelected = appData.filterCodeId === code.id;
@@ -209,16 +235,16 @@ function renderCodeItem(code, isChild = false, index = 0) {
     const memoCount = getMemoCountForTarget('code', code.id);
     const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭</span>` : '';
     const titleAttr = code.description ? `title="${escapeHtml(code.description)}"` : '';
-    const dragAttr = !isChild ? `draggable="true" data-code-id="${code.id}" data-sort-index="${index}"` : '';
+    const dragAttr = !isChild ? `draggable="true" data-code-id="${safeCodeIdAttr}" data-sort-index="${index}"` : '';
     
     let html = `
-        <div class="code-item ${isChild ? 'child' : 'draggable-code'} ${isSelected ? 'selected' : ''}" onclick="filterByCode('${code.id}', event)" oncontextmenu="openCodeContextMenu('${code.id}', event)" ${titleAttr} ${dragAttr}>
+        <div class="code-item ${isChild ? 'child' : 'draggable-code'} ${isSelected ? 'selected' : ''}" onclick="filterByCode('${safeCodeIdJs}', event)" oncontextmenu="openCodeContextMenu('${safeCodeIdJs}', event)" ${titleAttr} ${dragAttr}>
             ${!isChild ? '<span class="drag-handle" title="Drag to reorder">⠿</span>' : ''}
             <div class="code-color" style="background: ${escapeHtml(code.color)};"></div>
             <div class="code-name">${escapeHtml(code.name)}${shortcutBadge}${memoIndicator}</div>
             <div class="code-count">${count}</div>
             <div class="code-actions">
-                <button class="code-action-btn" onclick="deleteCode('${code.id}', event)" title="Delete">×</button>
+                <button class="code-action-btn" onclick="deleteCode('${safeCodeIdJs}', event)" title="Delete">×</button>
             </div>
         </div>
     `;
@@ -440,10 +466,12 @@ function renderCodedSpan(text, activeSegments) {
     }
     
     const segmentIds = activeSegments.map(s => s.id).join(',');
+    const safeSegmentIdsJs = escapeJsForSingleQuotedString(segmentIds);
+    const safeFirstSegmentIdJs = escapeJsForSingleQuotedString(activeSegments[0]?.id || '');
     const segmentMemoCount = activeSegments.reduce((sum, s) => sum + getMemoCountForTarget('segment', s.id), 0);
-    const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${activeSegments[0].id}', event)" title="${segmentMemoCount} annotation(s)">💭</span>` : '';
+    const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${safeFirstSegmentIdJs}', event)" title="${segmentMemoCount} annotation(s)">💭</span>` : '';
     
-    return `<span class="coded-segment" style="${borderStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" onclick="showSegmentMenu('${segmentIds}', event)" oncontextmenu="showSegmentContextMenu('${segmentIds}', event)">${escapeHtml(text)}</span>${segmentMemoIndicator}`;
+    return `<span class="coded-segment" style="${borderStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)">${escapeHtml(text)}</span>${segmentMemoIndicator}`;
 }
 
 const codeViewUiState = {
@@ -454,6 +482,7 @@ const codeViewUiState = {
     annotationDateRange: 'all',
     segmentsDocId: '',
     segmentsMemoFilter: 'all',
+    segmentsIncludeSubcodes: false,
     segmentsSort: 'document',
     presetsExpanded: false
 };
@@ -509,6 +538,7 @@ function getCodeViewPresetState() {
         annotationDateRange: codeViewUiState.annotationDateRange,
         segmentsDocId: codeViewUiState.segmentsDocId,
         segmentsMemoFilter: codeViewUiState.segmentsMemoFilter,
+        segmentsIncludeSubcodes: !!codeViewUiState.segmentsIncludeSubcodes,
         segmentsSort: codeViewUiState.segmentsSort
     };
 }
@@ -557,8 +587,41 @@ function applyCodeViewPreset(presetId) {
     codeViewUiState.annotationDateRange = String(state.annotationDateRange || 'all');
     codeViewUiState.segmentsDocId = String(state.segmentsDocId || '');
     codeViewUiState.segmentsMemoFilter = String(state.segmentsMemoFilter || 'all');
+    codeViewUiState.segmentsIncludeSubcodes = !!state.segmentsIncludeSubcodes;
     codeViewUiState.segmentsSort = String(state.segmentsSort || 'document');
     renderAll();
+}
+
+function getDescendantCodeIds(codeId) {
+    const descendants = [];
+    const queue = [codeId];
+    const seen = new Set([codeId]);
+    while (queue.length > 0) {
+        const current = queue.shift();
+        const children = appData.codes.filter(c => c.parentId === current);
+        children.forEach((child) => {
+            if (seen.has(child.id)) return;
+            seen.add(child.id);
+            descendants.push(child.id);
+            queue.push(child.id);
+        });
+    }
+    return descendants;
+}
+
+function goToParentCodeFromCodeView() {
+    const current = appData.codes.find(c => c.id === appData.filterCodeId);
+    if (!current || !current.parentId) return;
+    const parent = appData.codes.find(c => c.id === current.parentId);
+    if (!parent) return;
+    appData.filterCodeId = parent.id;
+    codeViewUiState.segmentsIncludeSubcodes = false;
+    renderAll();
+}
+
+function toggleCodeViewSubcodes() {
+    codeViewUiState.segmentsIncludeSubcodes = !codeViewUiState.segmentsIncludeSubcodes;
+    renderCurrentDocument();
 }
 
 function segmentSourceLabel(segment) {
@@ -625,11 +688,11 @@ function renderCodeInspector() {
             </div>
             <div class="inspector-add-row">
                 <textarea id="inspectorMemoInput" class="form-textarea inspector-memo-input" rows="2" placeholder="Add annotation..."></textarea>
-                <button type="button" class="btn btn-primary" onclick="addInspectorSegmentMemo('${segment.id}')">Save</button>
+                <button type="button" class="btn btn-primary" onclick="addInspectorSegmentMemo('${escapeJsForSingleQuotedString(segment.id)}')">Save</button>
             </div>
         </div>
         <div class="inspector-actions">
-            <button type="button" class="btn btn-secondary" onclick="goToSegmentLocation('${segment.docId}', '${segment.id}')">Go to source</button>
+            <button type="button" class="btn btn-secondary" onclick="goToSegmentLocation('${escapeJsForSingleQuotedString(segment.docId)}', '${escapeJsForSingleQuotedString(segment.id)}')">Go to source</button>
         </div>
     `;
 }
@@ -937,8 +1000,18 @@ function renderFilteredView() {
     const code = appData.codes.find(c => c.id === appData.filterCodeId);
     if (!code) return;
     
-    // Get all segments with this code across all documents (using index)
-    const rawSegments = getSegmentsForCode(appData.filterCodeId);
+    const childCodes = appData.codes.filter(c => c.parentId === code.id);
+    const hasChildren = childCodes.length > 0;
+    const parentCode = code.parentId ? appData.codes.find(c => c.id === code.parentId) : null;
+    const includedCodeIds = [code.id];
+    if (hasChildren && codeViewUiState.segmentsIncludeSubcodes) {
+        includedCodeIds.push(...getDescendantCodeIds(code.id));
+    }
+    const rawSegments = Array.from(new Map(
+        includedCodeIds
+            .flatMap((id) => getSegmentsForCode(id))
+            .map((segment) => [segment.id, segment])
+    ).values());
     const allSegments = rawSegments
         .filter(segment => !codeViewUiState.segmentsDocId || segment.docId === codeViewUiState.segmentsDocId)
         .filter(segment => {
@@ -982,39 +1055,50 @@ function renderFilteredView() {
     const docCount = sortedDocs.length;
     
     // Shortcut display
-    const shortcutDisplay = code.shortcut ? ` [${escapeHtml(code.shortcut)}]` : '';
     const shortcutAction = code.shortcut 
-        ? `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
-        : `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to assign shortcut">Assign shortcut</span>`;
+        ? `<span class="filter-shortcut" onclick="assignShortcut('${escapeJsForSingleQuotedString(code.id)}')" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
+        : `<span class="filter-shortcut" onclick="assignShortcut('${escapeJsForSingleQuotedString(code.id)}')" title="Click to assign shortcut">Assign shortcut</span>`;
+    const includeSubcodesControl = hasChildren ? `
+        <span class="filter-shortcut" onclick="toggleCodeViewSubcodes()" title="Include codings from all descendant subcodes">
+            ${codeViewUiState.segmentsIncludeSubcodes ? 'Hide subcodes' : 'Show subcodes'}
+        </span>
+    ` : '';
+    const goToParentControl = parentCode ? `
+        <span class="filter-shortcut" onclick="goToParentCodeFromCodeView()" title="Switch to parent code">
+            Go to parent code
+        </span>
+    ` : '';
     const hasDescription = !!(code.description && code.description.trim());
     const descriptionText = hasDescription ? escapeHtml(code.description) : 'No description yet.';
     const descriptionHtml = hasDescription
         ? `<div class="filter-code-description">
                 <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
                 <span class="filter-code-description-text">${preserveLineBreaks(descriptionText)}</span>
-                <button class="filter-description-btn" onclick="editFilterCodeDescription('${code.id}')">Edit</button>
+                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Edit</button>
             </div>`
         : `<div class="filter-code-description empty">
                 <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
                 <span class="filter-code-description-text">${descriptionText}</span>
-                <button class="filter-description-btn" onclick="editFilterCodeDescription('${code.id}')">Add description</button>
+                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Add description</button>
             </div>`;
     
     if (!codeViewUiState.annotationCodeId) {
         codeViewUiState.annotationCodeId = code?.id || '';
     }
     const presets = ensureCodeViewPresetsStore();
-    const presetOptions = presets.map(p => `<option value="${p.id}">${escapeHtml(p.name || 'Preset')}</option>`).join('');
+    const presetOptions = presets.map(p => `<option value="${escapeHtmlAttrValue(p.id)}">${escapeHtml(p.name || 'Preset')}</option>`).join('');
     const docOptions = appData.documents
         .filter(d => segmentsByDoc[d.id] || codeViewUiState.segmentsDocId === d.id)
-        .map(d => `<option value="${d.id}" ${d.id === codeViewUiState.segmentsDocId ? 'selected' : ''}>${escapeHtml(d.title)}</option>`)
+        .map(d => `<option value="${escapeHtmlAttrValue(d.id)}" ${d.id === codeViewUiState.segmentsDocId ? 'selected' : ''}>${escapeHtml(d.title)}</option>`)
         .join('');
 
     let html = `
         <div class="code-view-banner code-view-banner-main">
-            <span class="filter-title"><strong>Code: ${escapeHtml(code.name)}${shortcutDisplay}</strong></span>
+            <span class="filter-title"><strong>Code: ${escapeHtml(code.name)}</strong></span>
             <span class="filter-meta">${totalSegments} segment${totalSegments !== 1 ? 's' : ''} · ${docCount} document${docCount !== 1 ? 's' : ''}</span>
             ${shortcutAction}
+            ${includeSubcodesControl}
+            ${goToParentControl}
         </div>
         ${descriptionHtml}
         <div class="code-view-banner code-view-presets">
@@ -1100,10 +1184,10 @@ function renderFilteredView() {
                 <input type="text" class="form-input annotation-search-input" value="${escapeHtml(codeViewUiState.annotationQuery)}"
                     placeholder="Search annotations..." oninput="updateAnnotationViewFilter('annotationQuery', this.value)">
                 <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationCodeId', this.value)">
-                    ${codeOptions.map(opt => `<option value="${opt.id}" ${opt.id === codeViewUiState.annotationCodeId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+                    ${codeOptions.map(opt => `<option value="${escapeHtmlAttrValue(opt.id)}" ${opt.id === codeViewUiState.annotationCodeId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
                 </select>
                 <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDocId', this.value)">
-                    ${docOptions.map(opt => `<option value="${opt.id}" ${opt.id === codeViewUiState.annotationDocId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+                    ${docOptions.map(opt => `<option value="${escapeHtmlAttrValue(opt.id)}" ${opt.id === codeViewUiState.annotationDocId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
                 </select>
                 <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDateRange', this.value)">
                     <option value="all" ${codeViewUiState.annotationDateRange === 'all' ? 'selected' : ''}>All dates</option>
@@ -1176,7 +1260,7 @@ function renderFilteredView() {
                 const typeLabel = memo.type === 'segment' ? 'Snippet' : (memo.type === 'document' ? 'Document' : 'Code');
                 const location = getMemoLocation(memo);
                 return `
-                    <div class="annotation-item" onclick="goToAnnotationSource('${memo.id}')">
+                    <div class="annotation-item" data-memo-id="${escapeHtmlAttrValue(memo.id)}">
                         <div class="annotation-item-head">
                             <span class="annotation-item-type">${typeLabel}</span>
                             <span class="annotation-item-date">${escapeHtml(new Date(updated).toLocaleString())}</span>
@@ -1205,7 +1289,7 @@ function renderFilteredView() {
                 const linkedDoc = appData.documents.find(d => d.id === docId);
                 const group = groupsByDoc[docId] || [];
                 group.sort(sortByDocumentLocation);
-                html += `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${docId}')" title="Click to open document">${escapeHtml(linkedDoc?.title || 'Document')}<span class="filter-doc-meta">(${group.length} annotation${group.length !== 1 ? 's' : ''})</span></div>`;
+                html += `<div class="filter-doc-header" data-doc-id="${escapeHtmlAttrValue(docId)}" title="Click to open document">${escapeHtml(linkedDoc?.title || 'Document')}<span class="filter-doc-meta">(${group.length} annotation${group.length !== 1 ? 's' : ''})</span></div>`;
                 html += group.map(renderMemoCard).join('');
             });
 
@@ -1238,7 +1322,7 @@ function renderFilteredView() {
             const segmentCount = docSegments.length;
             rows.push({
                 type: 'header',
-                html: `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${doc.id}')" title="Click to open document">${escapeHtml(doc.title)}<span class="filter-doc-meta">(${segmentCount} segment${segmentCount !== 1 ? 's' : ''})</span></div>`
+                html: `<div class="filter-doc-header" data-doc-id="${escapeHtmlAttrValue(doc.id)}" title="Click to open document">${escapeHtml(doc.title)}<span class="filter-doc-meta">(${segmentCount} segment${segmentCount !== 1 ? 's' : ''})</span></div>`
             });
             
             docSegments.forEach((segment) => {
@@ -1254,7 +1338,7 @@ function renderFilteredView() {
                     : '';
                 const previewHtml = segment.pdfRegion
                     ? `<div class="filter-pdf-row">
-                            <div class="filter-pdf-preview" data-segment-id="${segment.id}" data-doc-id="${doc.id}">
+                            <div class="filter-pdf-preview" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">
                                 <div class="filter-pdf-preview-loading">Loading region preview...</div>
                             </div>
                             <div class="filter-pdf-side">${memoHtml}</div>
@@ -1266,10 +1350,10 @@ function renderFilteredView() {
                     text: snippetText,
                     hasMemo: memos.length > 0,
                     memoText: memos[0]?.content || '',
-                    html: `<div class="filter-snippet ${segment.pdfRegion ? 'pdf-snippet' : ''} ${codeInspectorState.segmentId === segment.id ? 'inspector-selected' : ''}" data-segment-id="${segment.id}" onclick="selectSegmentInCodeView('${segment.id}', '${doc.id}', event)" oncontextmenu="showFilterSnippetContextMenu('${segment.id}', '${doc.id}', event)">
+                    html: `<div class="filter-snippet ${segment.pdfRegion ? 'pdf-snippet' : ''} ${codeInspectorState.segmentId === segment.id ? 'inspector-selected' : ''}" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">
                         ${previewHtml}
                         <div class="filter-snippet-main">
-                            <span class="coded-segment" style="border-color: ${code.color};">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span>
+                            <span class="coded-segment" style="border-color: ${escapeHtml(code.color || '')};">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span>
                         </div>
                     </div>`
                 });
@@ -1331,8 +1415,8 @@ async function hydrateFilterPdfRegionPreviews(rootEl = document) {
                 }
                 if (!el.isConnected) return;
                 if (el.dataset.segmentId !== segmentId || el.dataset.docId !== docId) return;
-                el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" onclick="openPdfRegionPreviewModal('${segment.id}', '${doc.id}', event)" title="Open full-size preview">
-                    <img src="${dataUrl}" alt="PDF region preview" class="filter-pdf-preview-img" onload="handleFilterPreviewImageLoaded()">
+                el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}" title="Open full-size preview">
+                    <img src="${escapeHtmlAttrValue(dataUrl)}" alt="PDF region preview" class="filter-pdf-preview-img" onload="handleFilterPreviewImageLoaded()">
                 </button>`;
                 el.dataset.hydrated = '1';
                 scheduleFilterVirtualRender(true);
@@ -1408,7 +1492,7 @@ async function openPdfRegionPreviewModal(segmentId, docId, event) {
             imageWrap.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
             return;
         }
-        imageWrap.innerHTML = `<img src="${dataUrl}" alt="PDF region full preview" class="pdf-region-preview-image">`;
+        imageWrap.innerHTML = `<img src="${escapeHtmlAttrValue(dataUrl)}" alt="PDF region full preview" class="pdf-region-preview-image">`;
     } catch (_) {
         imageWrap.innerHTML = '<div class="filter-pdf-preview-note">Preview unavailable.</div>';
     }
@@ -1417,6 +1501,51 @@ async function openPdfRegionPreviewModal(segmentId, docId, event) {
 function closePdfRegionPreviewModal() {
     const modal = document.getElementById('pdfRegionPreviewModal');
     if (modal) modal.classList.remove('show');
+}
+
+let codeViewDelegationBound = false;
+function initCodeViewDelegatedHandlers() {
+    if (codeViewDelegationBound) return;
+    const content = document.getElementById('documentContent');
+    if (!content) return;
+
+    content.addEventListener('click', (event) => {
+        const previewBtn = event.target.closest('.filter-pdf-preview-btn[data-segment-id][data-doc-id]');
+        if (previewBtn) {
+            event.preventDefault();
+            event.stopPropagation();
+            openPdfRegionPreviewModal(previewBtn.dataset.segmentId, previewBtn.dataset.docId, event);
+            return;
+        }
+
+        const memoItem = event.target.closest('.annotation-item[data-memo-id]');
+        if (memoItem) {
+            event.preventDefault();
+            goToAnnotationSource(memoItem.dataset.memoId);
+            return;
+        }
+
+        const header = event.target.closest('.filter-doc-header[data-doc-id]');
+        if (header) {
+            event.preventDefault();
+            goToDocumentFromFilter(header.dataset.docId);
+            return;
+        }
+
+        const snippet = event.target.closest('.filter-snippet[data-segment-id][data-doc-id]');
+        if (snippet) {
+            if (event.target.closest('.filter-pdf-preview-btn')) return;
+            selectSegmentInCodeView(snippet.dataset.segmentId, snippet.dataset.docId, event);
+        }
+    });
+
+    content.addEventListener('contextmenu', (event) => {
+        const snippet = event.target.closest('.filter-snippet[data-segment-id][data-doc-id]');
+        if (!snippet) return;
+        showFilterSnippetContextMenu(snippet.dataset.segmentId, snippet.dataset.docId, event);
+    });
+
+    codeViewDelegationBound = true;
 }
 
 function escapeHtml(text) {

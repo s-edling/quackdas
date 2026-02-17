@@ -92,43 +92,37 @@ function applyMetadataValue(doc, key, value) {
     return true;
 }
 
-function setQdpxReport(direction, report) {
-    if (typeof window === 'undefined' || !window) return;
-    if (direction === 'export') window.lastQdpxExportReport = report;
-    if (direction === 'import') window.lastQdpxImportReport = report;
-}
+function buildUniqueSourceFileName(title, extension, usedNames, uniqueSeed) {
+    const safeBase = String(title || 'untitled')
+        .replace(/[<>:"/\\|?*]/g, '_')
+        .trim() || 'untitled';
+    const ext = String(extension || '').replace(/^\./, '').toLowerCase();
+    const normalizedExt = ext || 'txt';
+    const seed = String(uniqueSeed || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
 
-function summarizeQdpxCompatibilityReport(report) {
-    if (!report || typeof report !== 'object') return '';
-    const lines = [];
-    const label = report.direction === 'export' ? 'QDPX export' : 'QDPX import';
-    lines.push(`${label} summary:`);
-
-    if (report.direction === 'export') {
-        lines.push(`- Plain-text selections exported: ${report.exportedPlainTextSelections || 0}`);
-        if ((report.exportedPdfRegionSelections || 0) > 0) {
-            lines.push(`- PDF region codings preserved via Quackdas extension: ${report.exportedPdfRegionSelections}`);
-        }
-        if ((report.exportedMetadataFields || 0) > 0) {
-            lines.push(`- Document metadata fields preserved via Quackdas extension: ${report.exportedMetadataFields}`);
-        }
-    } else {
-        lines.push(`- Sources imported: ${report.importedSources || 0}`);
-        lines.push(`- Selections imported: ${report.importedPlainTextSelections || 0}`);
-        if ((report.importedPdfRegionSelections || 0) > 0) {
-            lines.push(`- PDF region codings restored from Quackdas extension: ${report.importedPdfRegionSelections}`);
-        }
-        if ((report.importedMetadataFields || 0) > 0) {
-            lines.push(`- Metadata fields mapped/imported: ${report.importedMetadataFields}`);
-        }
+    let candidate = `${safeBase}.${normalizedExt}`;
+    if (!usedNames.has(candidate.toLowerCase())) {
+        usedNames.add(candidate.toLowerCase());
+        return candidate;
     }
 
-    if (Array.isArray(report.warnings) && report.warnings.length > 0) {
-        lines.push('');
-        lines.push('Compatibility notes:');
-        report.warnings.slice(0, 5).forEach(w => lines.push(`- ${w}`));
+    const suffixBase = seed || Math.random().toString(36).slice(2, 8);
+    candidate = `${safeBase}_${suffixBase}.${normalizedExt}`;
+    if (!usedNames.has(candidate.toLowerCase())) {
+        usedNames.add(candidate.toLowerCase());
+        return candidate;
     }
-    return lines.join('\n');
+
+    let n = 2;
+    while (true) {
+        candidate = `${safeBase}_${suffixBase}_${n}.${normalizedExt}`;
+        const key = candidate.toLowerCase();
+        if (!usedNames.has(key)) {
+            usedNames.add(key);
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /**
@@ -142,6 +136,7 @@ async function exportToQdpx() {
     
     const zip = new JSZip();
     const sourcesFolder = zip.folder('Sources');
+    const usedSourceNames = new Set();
     
     // Reset GUID mappings
     idToGuid = {};
@@ -157,23 +152,14 @@ async function exportToQdpx() {
     appData.memos.forEach(memo => getOrCreateGuid(memo.id));
     appData.folders.forEach(folder => getOrCreateGuid(folder.id));
     
-    const exportReport = {
-        direction: 'export',
-        exportedPlainTextSelections: 0,
-        exportedPdfRegionSelections: 0,
-        exportedMetadataFields: 0,
-        warnings: []
-    };
-
     // Add source files and build source list
     const sources = [];
     for (const doc of appData.documents) {
         const guid = getOrCreateGuid(doc.id);
-        const safeFileName = doc.title.replace(/[<>:"/\\|?*]/g, '_');
         
         if (doc.type === 'pdf' && doc.pdfData) {
             // PDF document - store original PDF
-            const fileName = `${safeFileName}.pdf`;
+            const fileName = buildUniqueSourceFileName(doc.title, 'pdf', usedSourceNames, doc.id);
             const pdfBinary = base64ToArrayBuffer(doc.pdfData);
             sourcesFolder.file(fileName, pdfBinary);
             
@@ -188,7 +174,7 @@ async function exportToQdpx() {
             });
         } else {
             // Text document - store as plain text
-            const fileName = `${safeFileName}.txt`;
+            const fileName = buildUniqueSourceFileName(doc.title, 'txt', usedSourceNames, doc.id);
             sourcesFolder.file(fileName, doc.content || '');
             
             sources.push({
@@ -323,7 +309,6 @@ async function exportToQdpx() {
         });
         
         xml += '    </PlainTextSelection>\n';
-        exportReport.exportedPlainTextSelections += 1;
     });
     xml += '  </Selections>\n';
     
@@ -370,6 +355,17 @@ async function exportToQdpx() {
     // Quackdas-specific extensions (portable for Quackdas round-trip, ignored by other tools)
     xml += '  <QuackdasExtensions version="1">\n';
 
+    xml += '    <FolderHierarchy>\n';
+    appData.folders.forEach(folder => {
+        const folderGuid = getOrCreateGuid(folder.id);
+        const parentGuid = folder.parentId ? getOrCreateGuid(folder.parentId) : '';
+        xml += `      <Folder guid="${folderGuid}" `;
+        if (parentGuid) xml += `parentGUID="${parentGuid}" `;
+        if (folder.created) xml += `created="${escapeXml(String(folder.created))}" `;
+        xml += `expanded="${folder.expanded === false ? 'false' : 'true'}"/>\n`;
+    });
+    xml += '    </FolderHierarchy>\n';
+
     xml += '    <PdfRegionSelections>\n';
     appData.segments.forEach(segment => {
         if (!segment || !segment.pdfRegion) return;
@@ -393,7 +389,6 @@ async function exportToQdpx() {
             xml += `        <Coding guid="${generateGUID()}" codeGUID="${codeGuid}"/>\n`;
         });
         xml += '      </PdfRegionSelection>\n';
-        exportReport.exportedPdfRegionSelections += 1;
     });
     xml += '    </PdfRegionSelections>\n';
 
@@ -406,7 +401,6 @@ async function exportToQdpx() {
         xml += `      <DocumentMeta sourceGUID="${sourceGuid}">\n`;
         entries.forEach(([key, value]) => {
             xml += `        <Field key="${escapeXml(key)}" value="${escapeXml(String(value))}"/>\n`;
-            exportReport.exportedMetadataFields += 1;
         });
         xml += '      </DocumentMeta>\n';
     });
@@ -427,13 +421,6 @@ async function exportToQdpx() {
 
     xml += '  </QuackdasExtensions>\n';
 
-    if (exportReport.exportedPdfRegionSelections > 0) {
-        exportReport.warnings.push('Some tools may ignore Quackdas PDF region extensions and only import plain-text selections.');
-    }
-    if (exportReport.exportedMetadataFields > 0) {
-        exportReport.warnings.push('Document metadata is preserved in a Quackdas extension block for round-trip fidelity.');
-    }
-    
     xml += '</Project>\n';
     
     // Add project.qde to zip
@@ -445,7 +432,6 @@ async function exportToQdpx() {
         compression: 'DEFLATE',
         compressionOptions: { level: 6 }
     });
-    setQdpxReport('export', exportReport);
     return blob;
 }
 
@@ -491,14 +477,6 @@ async function importFromQdpx(qdpxData) {
     // Build new project
     const project = makeEmptyProject();
     project.projectName = projectEl.getAttribute('name') || 'Imported Project';
-    const importReport = {
-        direction: 'import',
-        importedSources: 0,
-        importedPlainTextSelections: 0,
-        importedPdfRegionSelections: 0,
-        importedMetadataFields: 0,
-        warnings: []
-    };
     const docsByGuid = {};
     
     // Parse codes
@@ -610,12 +588,10 @@ async function importFromQdpx(qdpxData) {
         Array.from(sourceEl.attributes || []).forEach(attr => {
             if (!attr || sourceAttributeExclusions.has(attr.name)) return;
             if (applyMetadataValue(doc, attr.name, attr.value)) {
-                importReport.importedMetadataFields += 1;
             }
         });
         const sourceDescEl = sourceEl.querySelector(':scope > Description');
         if (sourceDescEl && applyMetadataValue(doc, 'notes', sourceDescEl.textContent)) {
-            importReport.importedMetadataFields += 1;
         }
         
         if (isPdf && pdfData) {
@@ -627,7 +603,6 @@ async function importFromQdpx(qdpxData) {
         
         project.documents.push(doc);
         docsByGuid[guid] = doc;
-        importReport.importedSources += 1;
     }
 
     // Parse variables/cases/attributes (best effort for cross-tool imports)
@@ -661,7 +636,7 @@ async function importFromQdpx(qdpxData) {
             memberGuids.forEach(sourceGuid => {
                 const doc = docsByGuid[sourceGuid];
                 if (!doc) return;
-                if (applyMetadataValue(doc, key, value)) importReport.importedMetadataFields += 1;
+                applyMetadataValue(doc, key, value);
             });
         });
     });
@@ -675,7 +650,7 @@ async function importFromQdpx(qdpxData) {
             const key = getAttrFirst(fieldEl, ['key', 'name']);
             const value = getAttrFirst(fieldEl, ['value']) || (fieldEl.textContent || '').trim();
             if (!key || !value) return;
-            if (applyMetadataValue(doc, key, value)) importReport.importedMetadataFields += 1;
+            applyMetadataValue(doc, key, value);
         });
     });
 
@@ -736,7 +711,6 @@ async function importFromQdpx(qdpxData) {
         };
         
         project.segments.push(segment);
-        importReport.importedPlainTextSelections += 1;
     });
 
     // Parse Quackdas PDF region extension
@@ -784,7 +758,6 @@ async function importFromQdpx(qdpxData) {
         if (Number.isFinite(endPosition)) segment.endIndex = endPosition;
 
         project.segments.push(segment);
-        importReport.importedPdfRegionSelections += 1;
     });
     
     // Parse notes (memos)
@@ -865,14 +838,30 @@ async function importFromQdpx(qdpxData) {
         });
     });
     
+    // Parse Quackdas folder hierarchy extension (parent links + metadata)
+    xmlDoc.querySelectorAll('QuackdasExtensions > FolderHierarchy > Folder').forEach(folderEl => {
+        const guid = getAttrFirst(folderEl, ['guid']);
+        const folderId = guidToId[guid];
+        if (!folderId) return;
+        const folder = project.folders.find(f => f.id === folderId);
+        if (!folder) return;
+
+        const parentGuid = getAttrFirst(folderEl, ['parentGUID']);
+        const parentId = parentGuid ? guidToId[parentGuid] : null;
+        folder.parentId = parentId || null;
+
+        const created = getAttrFirst(folderEl, ['created']);
+        if (created) folder.created = created;
+
+        const expanded = getAttrFirst(folderEl, ['expanded']);
+        if (expanded === 'true') folder.expanded = true;
+        if (expanded === 'false') folder.expanded = false;
+    });
+
     // Set current document
     if (project.documents.length > 0) {
         project.currentDocId = project.documents[0].id;
     }
-    if (importReport.importedPdfRegionSelections > 0) {
-        importReport.warnings.push('PDF region codings were restored from a Quackdas extension block and may not exist in generic QDPX files.');
-    }
-    setQdpxReport('import', importReport);
     return project;
 }
 
@@ -966,19 +955,4 @@ function base64ToArrayBuffer(base64) {
         bytes[i] = binary.charCodeAt(i);
     }
     return bytes.buffer;
-}
-
-/**
- * Check if a file is a legacy JSON project
- */
-function isLegacyJsonProject(data) {
-    try {
-        if (typeof data === 'string') {
-            const parsed = JSON.parse(data);
-            return parsed && (parsed.documents || parsed.codes || parsed.segments);
-        }
-        return false;
-    } catch {
-        return false;
-    }
 }

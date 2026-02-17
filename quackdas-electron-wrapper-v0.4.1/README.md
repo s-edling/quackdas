@@ -30,7 +30,7 @@ A `.qdpx` file is a zip containing:
 - `project.qde` — XML file with codes, coded segments, and memos
 - `Sources/` — folder with original documents (PDFs, text files)
 
-Legacy `.json` projects can still be imported for backwards compatibility.
+Quackdas project open/save/import uses `.qdpx` only.
 
 ## Features
 - **PDF support**: Import PDFs with selectable, codable text

@@ -240,7 +240,6 @@ function renderPdfRegionOverlays(doc, pageNum, viewport) {
         box.style.borderColor = color;
         box.style.backgroundColor = color + '33';
         box.title = seg.text || `PDF region (page ${pageNum})`;
-        box.onclick = (event) => showSegmentMenu(seg.id, event);
         box.oncontextmenu = (event) => showSegmentContextMenu(seg.id, event);
         regionLayer.appendChild(box);
     }
@@ -677,7 +676,6 @@ if (!globalThis.pdfjsLib && !window.pdfjsLib) {
         pdfjsLib = lib;
         // Set worker path
         pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('js/pdfjs/pdf.worker.mjs', window.location.href).toString();
-        console.log('PDF.js initialized');
         return true;
     }
     console.warn('PDF.js not available');

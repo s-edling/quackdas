@@ -50,16 +50,16 @@ function getLastProjectPathFile() {
   return path.join(app.getPath('userData'), LAST_PROJECT_FILE);
 }
 
-function persistLastProjectPath(projectPath) {
+async function persistLastProjectPath(projectPath) {
   try {
     const payload = { path: projectPath || null, updatedAt: new Date().toISOString() };
-    fs.writeFileSync(getLastProjectPathFile(), JSON.stringify(payload), 'utf8');
+    await fs.promises.writeFile(getLastProjectPathFile(), JSON.stringify(payload), 'utf8');
   } catch (_) {}
 }
 
-function readLastProjectPath() {
+async function readLastProjectPath() {
   try {
-    const raw = fs.readFileSync(getLastProjectPathFile(), 'utf8');
+    const raw = await fs.promises.readFile(getLastProjectPathFile(), 'utf8');
     const parsed = JSON.parse(raw);
     const p = parsed && typeof parsed.path === 'string' ? parsed.path : null;
     return p || null;
@@ -256,7 +256,7 @@ async function openProject() {
     title: 'Open Quackdas project',
     properties: ['openFile'],
     filters: [
-      { name: 'Quackdas Project', extensions: ['qdpx', 'json'] }
+      { name: 'Quackdas Project', extensions: ['qdpx'] }
     ]
   });
 
@@ -264,20 +264,16 @@ async function openProject() {
 
   const filePath = filePaths[0];
   const ext = path.extname(filePath).toLowerCase();
-  
-  if (ext === '.qdpx') {
-    // QDPX file - read as binary and send to renderer
-    const buffer = fs.readFileSync(filePath);
-    currentProjectPath = filePath;
-    persistLastProjectPath(currentProjectPath);
-    win.webContents.send('project:openQdpx', buffer);
-  } else {
-    // Legacy JSON file
-    const jsonText = fs.readFileSync(filePath, 'utf-8');
-    currentProjectPath = filePath;
-    persistLastProjectPath(currentProjectPath);
-    win.webContents.send('project:openData', jsonText);
+  if (ext !== '.qdpx') {
+    dialog.showErrorBox('Unsupported project format', 'Quackdas now supports QDPX projects only. Please open a .qdpx file.');
+    return;
   }
+
+  // QDPX file - read as binary and send to renderer
+  const buffer = await fs.promises.readFile(filePath);
+  currentProjectPath = filePath;
+  await persistLastProjectPath(currentProjectPath);
+  win.webContents.send('project:openQdpx', buffer);
 }
 
 ipcMain.handle('project:open', async () => {
@@ -287,7 +283,7 @@ ipcMain.handle('project:open', async () => {
 
 ipcMain.handle('project:clearHandle', async () => {
   currentProjectPath = null;
-  persistLastProjectPath(null);
+  await persistLastProjectPath(null);
   return { ok: true };
 });
 
@@ -297,9 +293,8 @@ ipcMain.handle('project:hasHandle', async () => {
 
 
 
-ipcMain.handle('project:save', async (_evt, data, opts) => {
-  const saveAs = !!opts.saveAs;
-  const isQdpx = !!opts.isQdpx;
+ipcMain.handle('project:save', async (_evt, payload, opts) => {
+  const saveAs = !!(opts && opts.saveAs);
 
   try {
     if (!currentProjectPath || saveAs) {
@@ -307,26 +302,31 @@ ipcMain.handle('project:save', async (_evt, data, opts) => {
         title: 'Save Quackdas project',
         defaultPath: currentProjectPath || `quackdas-project.qdpx`,
         filters: [
-          { name: 'Quackdas Project', extensions: ['qdpx'] },
-          { name: 'Legacy JSON', extensions: ['json'] }
+          { name: 'Quackdas Project', extensions: ['qdpx'] }
         ]
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
       currentProjectPath = filePath;
     }
 
-    // Determine format based on extension
-    const ext = path.extname(currentProjectPath).toLowerCase();
-    
-    if (ext === '.qdpx' || isQdpx) {
-      // QDPX format - data is a base64-encoded zip
-      const buffer = Buffer.from(data, 'base64');
-      fs.writeFileSync(currentProjectPath, buffer);
-    } else {
-      // Legacy JSON format
-      fs.writeFileSync(currentProjectPath, data, 'utf-8');
+    const qdpxBase64 = (payload && typeof payload === 'object')
+      ? String(payload.qdpxBase64 || '')
+      : String(payload || '');
+    // QDPX-only save path.
+    let ext = path.extname(currentProjectPath).toLowerCase();
+    if (!ext) {
+      ext = '.qdpx';
+      currentProjectPath = currentProjectPath + ext;
     }
-    persistLastProjectPath(currentProjectPath);
+    if (ext !== '.qdpx') {
+      throw new Error('Quackdas now saves projects in QDPX format only (.qdpx).');
+    }
+    if (!qdpxBase64) {
+      throw new Error('Could not save QDPX: binary payload is missing.');
+    }
+    const buffer = Buffer.from(qdpxBase64, 'base64');
+    await fs.promises.writeFile(currentProjectPath, buffer);
+    await persistLastProjectPath(currentProjectPath);
 
     return { ok: true, path: currentProjectPath };
   } catch (err) {
@@ -337,23 +337,25 @@ ipcMain.handle('project:save', async (_evt, data, opts) => {
 
 ipcMain.handle('project:openLastUsed', async () => {
   try {
-    const rememberedPath = readLastProjectPath();
+    const rememberedPath = await readLastProjectPath();
     if (!rememberedPath) return { ok: false, reason: 'none' };
-    if (!fs.existsSync(rememberedPath)) {
-      persistLastProjectPath(null);
+    try {
+      await fs.promises.access(rememberedPath, fs.constants.F_OK);
+    } catch (_) {
+      await persistLastProjectPath(null);
       return { ok: false, reason: 'missing' };
     }
 
     const ext = path.extname(rememberedPath).toLowerCase();
     currentProjectPath = rememberedPath;
-    persistLastProjectPath(currentProjectPath);
+    await persistLastProjectPath(currentProjectPath);
 
-    if (ext === '.qdpx') {
-      const buffer = fs.readFileSync(rememberedPath);
-      return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
+    if (ext !== '.qdpx') {
+      await persistLastProjectPath(null);
+      return { ok: false, reason: 'unsupported' };
     }
-    const jsonText = fs.readFileSync(rememberedPath, 'utf-8');
-    return { ok: true, kind: 'json', data: jsonText };
+    const buffer = await fs.promises.readFile(rememberedPath);
+    return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
@@ -415,7 +417,7 @@ ipcMain.handle('file:openProjectFile', async () => {
     title: 'Import Quackdas project',
     properties: ['openFile'],
     filters: [
-      { name: 'Quackdas Project', extensions: ['qdpx', 'json'] }
+      { name: 'Quackdas Project', extensions: ['qdpx'] }
     ]
   });
   if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
@@ -423,15 +425,13 @@ ipcMain.handle('file:openProjectFile', async () => {
     const filePath = filePaths[0];
     const ext = path.extname(filePath).toLowerCase();
     currentProjectPath = filePath;
-    persistLastProjectPath(currentProjectPath);
+    await persistLastProjectPath(currentProjectPath);
     
-    if (ext === '.qdpx') {
-      const buffer = fs.readFileSync(filePath);
-      return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
-    } else {
-      const jsonText = fs.readFileSync(filePath, 'utf-8');
-      return { ok: true, kind: 'json', data: jsonText };
+    if (ext !== '.qdpx') {
+      return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
     }
+    const buffer = await fs.promises.readFile(filePath);
+    return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
@@ -452,13 +452,13 @@ ipcMain.handle('file:openDocumentFile', async () => {
   const name = path.basename(p);
   try {
     if (ext === 'docx') {
-      const buf = fs.readFileSync(p);
+      const buf = await fs.promises.readFile(p);
       return { ok: true, kind: 'docx', name, data: buf.toString('base64') };
     } else if (ext === 'pdf') {
-      const buf = fs.readFileSync(p);
+      const buf = await fs.promises.readFile(p);
       return { ok: true, kind: 'pdf', name, data: buf.toString('base64') };
     } else {
-      const text = fs.readFileSync(p, 'utf-8');
+      const text = await fs.promises.readFile(p, 'utf-8');
       return { ok: true, kind: 'text', name, data: text };
     }
   } catch (err) {

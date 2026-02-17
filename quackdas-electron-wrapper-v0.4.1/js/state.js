@@ -111,6 +111,23 @@ function normalizePdfRegionShape(region) {
     };
 }
 
+// Escape for HTML attribute values.
+function escapeHtmlAttrValue(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+}
+
+// Escape for single-quoted JS string literals embedded in HTML attributes.
+function escapeJsForSingleQuotedString(text) {
+    return String(text == null ? '' : text)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/</g, '\\x3C');
+}
+
 // Global state
 let appData = makeEmptyProject();
 let appDataRevision = 0;
@@ -196,9 +213,6 @@ function getDocSegmentCountFast(docId) {
 function getCodeSegmentCountFast(codeId) {
     return indexes.segmentCountByCodeId[codeId] || 0;
 }
-
-// File System Access API handle for overwriting saves (not persisted)
-let projectFileHandle = null;
 
 // Undo/Redo history
 let history = {
@@ -288,7 +302,7 @@ function loadData() {
 
 // Save data to storage
 // In browser mode, a localStorage snapshot is used as fallback persistence.
-// In Electron mode, this updates in-memory state only; explicit save writes QDPX/JSON files.
+// In Electron mode, this updates in-memory state only; explicit save writes QDPX files.
 function saveData(options = {}) {
     const markUnsaved = (Object.prototype.hasOwnProperty.call(options, 'markUnsaved'))
         ? options.markUnsaved

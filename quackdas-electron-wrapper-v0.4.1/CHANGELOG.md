@@ -1,5 +1,228 @@
 # Quackdas Changelog
 
+## Version 0.4.3-build-2026-02-17bk
+Date: 2026-02-17
+
+What changed:
+- Replaced folder emoji icon with a stylized SVG folder icon in:
+  - document/folder sidebar tree,
+  - move-to-folder modal list.
+- Added folder drag-and-drop support:
+  - folders can now be dragged onto folders to become subfolders,
+  - folders can be dragged to root drop zone to move back to root,
+  - includes safety checks for self-drop, cyclic nesting, and max folder depth.
+- Code view header cleanup:
+  - removed shortcut text in brackets after code name in `Code: ...` row,
+  - kept the existing `Shortcut:` control/action on the same row.
+
+Why (one line):
+- To improve icon consistency, make folder organization more direct, and reduce duplicate shortcut labeling in Code view.
+
+Files touched:
+- `js/render.js`
+- `js/documents.js`
+- `js/ui.js`
+- `styles.css`
+
+## Version 0.4.3-build-2026-02-17bj
+Date: 2026-02-17
+
+What changed:
+- Updated Code view subcode control styling/behavior:
+  - removed checkbox UI, now a text toggle that flips between `Show subcodes` and `Hide subcodes`.
+- Fixed click-to-code + shortcut selection behavior:
+  - click-applied coding now clears text selection (no reselect after apply),
+  - shortcut-applied coding already clears selection and now also clears stored selection state reliably,
+  - multi-code modal close now clears stored selection state too.
+
+Why (one line):
+- To keep coding interactions predictable: applying a code always deselects text and subcode toggling uses cleaner text controls.
+
+Files touched:
+- `js/render.js`
+- `js/coding.js`
+- `js/codes.js`
+
+## Version 0.4.3-build-2026-02-17bi
+Date: 2026-02-17
+
+What changed:
+- Code view subcode toggle UI changed from checkbox to text action:
+  - now shows `Show subcodes` or `Hide subcodes` and toggles on click.
+- Fixed stale hidden text-selection state after shortcut coding:
+  - shortcut coding now clears both native browser selection and stored `appData.selectedText`.
+  - code-click apply path now ignores stale stored text selections when no live native selection exists.
+
+Why (one line):
+- To make the subcode control visually cleaner and ensure click-to-code only uses real/visible text selections.
+
+Files touched:
+- `js/render.js`
+- `js/codes.js`
+- `js/coding.js`
+
+## Version 0.4.3-build-2026-02-17bh
+Date: 2026-02-17
+
+What changed:
+- Removed automatic parent-code propagation when applying a subcode:
+  - click-to-code (`applyCodeToStoredSelection`),
+  - multi-code apply (`applySelectedCodes`),
+  - shortcut coding (`quickApplyCode`).
+- Added Code view controls for hierarchical navigation:
+  - `Show subcodes` toggle (includes descendant subcode segments in parent code view),
+  - `Go to parent code` action when viewing a subcode.
+- Included the `Show subcodes` flag in retrieval preset save/load state.
+- Sorted documents alphabetically by title within each folder and for root-level documents in:
+  - sidebar rendering,
+  - visible document order used for shift-range selection.
+
+Why (one line):
+- To make code application behavior explicit (no implicit parent coding) and improve navigation/order consistency in daily coding workflows.
+
+Files touched:
+- `js/coding.js`
+- `js/codes.js`
+- `js/render.js`
+- `js/documents.js`
+
+## Version 0.4.3-build-2026-02-17bg
+Date: 2026-02-17
+
+What changed:
+- Started Set 6 code-quality/clutter cleanup (behavior-preserving).
+- Removed a redundant Escape key listener in `setupContextMenuDismissal()` and kept centralized Escape closing via `closeUiOnEscape()`.
+- Removed dead `projectFileHandle` remnants from renderer state/reset path.
+- Removed a leftover PDF initialization debug log line.
+
+Why (one line):
+- To reduce event wiring duplication and dead state noise without changing user-visible behavior.
+
+Files touched:
+- `js/app.js`
+- `js/state.js`
+- `js/export.js`
+- `js/pdf.js`
+
+## Version 0.4.3-build-2026-02-17bf
+Date: 2026-02-17
+
+What changed:
+- Started Set 5 performance pass.
+- Replaced synchronous file I/O with async `fs.promises` in main project open/save/import paths:
+  - open project (`openProject`, `file:openProjectFile`),
+  - save project (`project:save`),
+  - reopen last used project (`project:openLastUsed`),
+  - document import (`file:openDocumentFile`),
+  - persisted last-project metadata read/write helpers.
+- Optimized document/folder tree rendering in `renderDocuments()` by pre-grouping:
+  - folders by parent id,
+  - documents by folder id,
+  then reusing these maps during recursive render instead of repeated `.filter(...)` calls.
+
+Why (one line):
+- To reduce main-process blocking during file operations and improve document panel responsiveness on larger projects.
+
+Files touched:
+- `main.js`
+- `js/render.js`
+
+## Version 0.4.3-build-2026-02-17be
+Date: 2026-02-17
+
+What changed:
+- Continued Set 4 hardening for static UI wiring in `index.html`.
+- Removed remaining static inline event handlers from markup and replaced them with `data-action` attributes.
+- Added centralized delegated bindings in `js/app.js` (`setupStaticActionBindings`) for:
+  - header actions and toolbar actions,
+  - modal button actions,
+  - form submit handlers,
+  - select/input change handlers.
+- Replaced inline PDF.js bootstrap module script with external `js/pdfjs-bootstrap.js`.
+- Verified all `data-action` values in `index.html` are mapped in `js/app.js`.
+
+Why (one line):
+- To further reduce inline-script exposure and make UI event wiring auditable in one place without changing user behavior.
+
+Files touched:
+- `index.html`
+- `js/app.js`
+- `js/pdfjs-bootstrap.js`
+
+## Version 0.4.3-build-2026-02-17bd
+Date: 2026-02-17
+
+What changed:
+- Started Set 4 hardening (incremental, low-break-risk):
+  - Added stricter CSP directives without removing inline allowances yet:
+    - `object-src 'none'`
+    - `base-uri 'self'`
+    - `frame-ancestors 'none'`
+    - `form-action 'self'`
+- Replaced high-risk dynamic inline click handlers with delegated listeners in key views:
+  - Code view results area (`#documentContent`) for:
+    - document-group header open,
+    - segment row select/context menu,
+    - annotation-card jump,
+    - PDF preview button open.
+  - Global search results list (`#searchResultsList`) for result activation.
+  - Co-occurrence matrix/overlaps for pair selection and jump-to-location.
+- Removed inline `onkeydown` from the search summary input and bound it programmatically.
+
+Why (one line):
+- To reduce CSP/inline-handler risk in the highest-exposure dynamic views while preserving current UI behavior.
+
+Files touched:
+- `index.html`
+- `js/app.js`
+- `js/render.js`
+- `js/search.js`
+- `js/ui.js`
+
+## Version 0.4.3-build-2026-02-17bc
+Date: 2026-02-17
+
+What changed:
+- Completed a broader Set 3 UI sanitization sweep for dynamic HTML rendering paths.
+- Added shared escaping helpers for:
+  - HTML attribute values (`escapeHtmlAttrValue`)
+  - single-quoted inline JS string arguments (`escapeJsForSingleQuotedString`)
+- Applied escaping to remaining high-risk inline-handler/attribute interpolations across:
+  - document/folder/code list rendering,
+  - code view filters/options and snippet actions,
+  - co-occurrence matrix/overlap rows,
+  - global search result click targets,
+  - annotation modal/edit actions,
+  - code-selection modal values/styles,
+  - PDF preview image `src` assignment in HTML templates.
+
+Why (one line):
+- To reduce residual XSS/injection surface in `innerHTML` templates while preserving existing behavior and UI structure.
+
+Files touched:
+- `js/state.js`
+- `js/render.js`
+- `js/ui.js`
+- `js/search.js`
+- `js/memos.js`
+- `js/coding.js`
+
+## Version 0.4.3-build-2026-02-17bb
+Date: 2026-02-17
+
+What changed:
+- Removed residual QDPX compatibility-report plumbing from `js/qdpx.js` (no export/import summary state retained in `window`).
+- Removed now-unused QDPX summary helper functions from `js/qdpx.js`.
+- Kept Save/Save As behavior as native QDPX-only persistence path.
+- Updated stale persistence comment to reflect QDPX-only save format.
+
+Why (one line):
+- To fully retire legacy export-summary behavior and reduce dead compatibility code paths.
+
+Files touched:
+- `js/qdpx.js`
+- `js/state.js`
+
 ## Version 0.4.2
 Date: 2026-02-17
 
@@ -1069,4 +1292,134 @@ Files touched:
 - `js/render.js`
 - `styles.css`
 - `js/app.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ax
+Date: 2026-02-17
+
+What changed:
+- Hardened Electron save format handling to prevent extension/content mismatches:
+  - `project:save` now enforces `.json` -> JSON text writes and `.qdpx` -> binary QDPX writes.
+  - save payload now supports structured data (`{ qdpxBase64, jsonText }`) and validates JSON before writing.
+  - extensionless save paths are normalized using the requested format hint.
+- Updated manual save and autosave callers to send both QDPX and JSON payloads so legacy `.json` projects remain valid on save/autosave.
+- Fixed QDPX export source-file collision risk:
+  - added unique source filename generation per document (case-insensitive collision tracking),
+  - prevents duplicate-titled documents from overwriting each other inside `Sources/`.
+
+Why (one line):
+- To eliminate a high-risk data corruption path during save/autosave and prevent silent data loss in QDPX exports with duplicate document titles.
+
+Files touched:
+- `preload.js`
+- `main.js`
+- `js/ui.js`
+- `js/app.js`
+- `js/qdpx.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ay
+Date: 2026-02-17
+
+What changed:
+- Removed legacy JSON project compatibility and made project I/O QDPX-only:
+  - Open project dialogs now accept `.qdpx` only.
+  - Save/Save As now writes `.qdpx` only and rejects non-QDPX project extensions.
+  - Startup reopen now only restores `.qdpx` paths; unsupported remembered paths are cleared.
+  - Native project import now accepts `.qdpx` only.
+- Removed renderer-side JSON project import/export branches and old helper code:
+  - removed legacy JSON branch in hidden-file-input project import.
+  - removed native import JSON fallback branch.
+  - removed unused legacy JSON project detection helper.
+  - removed legacy JSON open IPC bridge hook (`project:openData` listener).
+- Updated project file input accept filter and README to reflect QDPX-only behavior.
+
+Why (one line):
+- To simplify and harden project persistence around a single canonical format, reducing complexity and risk of format regressions.
+
+Files touched:
+- `main.js`
+- `preload.js`
+- `js/app.js`
+- `js/ui.js`
+- `js/export.js`
+- `js/qdpx.js`
+- `index.html`
+- `README.md`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17az
+Date: 2026-02-17
+
+What changed:
+- Removed the old export-style Save As flow and popup summary:
+  - header dropdown “Save as…” now calls native `manualSave(true)` directly,
+  - removed obsolete `exportProject()` and compatibility-summary alert helpers.
+- Removed remaining browser JSON fallback in `manualSave()`:
+  - browser fallback is now QDPX-only and errors clearly if QDPX export is unavailable.
+
+Why (one line):
+- To make Save As behavior consistent (native Save As only) and eliminate leftover export UI that looked like a separate export function.
+
+Files touched:
+- `index.html`
+- `js/export.js`
+- `js/ui.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17ba
+Date: 2026-02-17
+
+What changed:
+- Applied targeted XSS-hardening to remaining high-risk UI interpolation points:
+  - escaped document titles in Statistics chart rendering before `innerHTML` injection,
+  - escaped code IDs and names when rendering `<option>` nodes in code-related selects,
+  - escaped code color values used in inline `style` attributes for Code view snippets.
+
+Why (one line):
+- To reduce injection risk from imported/project data while keeping UI behavior unchanged.
+
+Files touched:
+- `js/ui.js`
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bb
+Date: 2026-02-17
+
+What changed:
+- Improved document drag/drop behavior for multi-selection:
+  - dragging a selected document now carries the full multi-selection,
+  - dropping onto a folder moves all selected documents together in one operation.
+- Added Enter-to-save behavior in segment annotation modal:
+  - in “Annotations for Segment”, pressing `Enter` saves the annotation,
+  - `Shift+Enter` still inserts a new line.
+
+Why (one line):
+- To speed up high-volume coding workflows by reducing repetitive folder moves and annotation clicks.
+
+Files touched:
+- `js/documents.js`
+- `js/memos.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bc
+Date: 2026-02-17
+
+What changed:
+- Fixed subfolder persistence in project save/open:
+  - added a Quackdas folder-hierarchy extension in QDPX export,
+  - restore folder parent links/metadata from that extension during QDPX import.
+- Updated segment interaction behavior:
+  - removed left-click Segment Options modal for coded text/PDF regions,
+  - added `Edit boundaries` to segment right-click menu (non-PDF segments).
+
+Why (one line):
+- To preserve folder structure reliably across project reloads and streamline coded-segment interactions around right-click actions only.
+
+Files touched:
+- `js/qdpx.js`
+- `js/render.js`
+- `js/pdf.js`
+- `js/coding.js`
 - `CHANGELOG.md`

@@ -155,6 +155,9 @@ function filterByCode(codeId, e) {
         appData.filterCodeId = null;
     } else {
         appData.filterCodeId = codeId;
+        if (typeof codeViewUiState === 'object' && codeViewUiState) {
+            codeViewUiState.segmentsIncludeSubcodes = false;
+        }
     }
     renderAll();
 

@@ -126,22 +126,38 @@ function toggleFolderExpanded(folderId, event) {
 }
 
 function moveDocumentToFolder(docId, folderId) {
-    const doc = appData.documents.find(d => d.id === docId);
-    if (!doc) return;
-    
+    moveDocumentsToFolder([docId], folderId);
+}
+
+function moveDocumentsToFolder(docIds, folderId) {
+    const targetFolderId = folderId || null;
+    const uniqueDocIds = Array.from(new Set((docIds || []).filter(Boolean)));
+    const docsToMove = uniqueDocIds
+        .map(id => appData.documents.find(d => d.id === id))
+        .filter(doc => doc && (doc.folderId || null) !== targetFolderId);
+    if (docsToMove.length === 0) return;
+
     saveHistory();
-    doc.folderId = folderId || null;
+    docsToMove.forEach(doc => {
+        doc.folderId = targetFolderId;
+    });
     saveData();
     renderAll();
 }
 
 // Document drag-and-drop to folders
 let draggedDocId = null;
+let draggedDocIds = [];
+let draggedFolderId = null;
 
 function handleDocDragStart(event, docId) {
     draggedDocId = docId;
+    const selectedIds = Array.isArray(appData.selectedDocIds) ? appData.selectedDocIds.filter(id => appData.documents.some(d => d.id === id)) : [];
+    draggedDocIds = (selectedIds.length > 1 && selectedIds.includes(docId)) ? selectedIds : [docId];
+    draggedFolderId = null;
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', docId);
+    event.dataTransfer.setData('application/x-quackdas-doc-id', docId);
+    event.dataTransfer.setData('application/x-quackdas-doc-ids', JSON.stringify(draggedDocIds));
     event.currentTarget.classList.add('dragging');
     document.body.classList.add('dragging-document');
 }
@@ -149,9 +165,67 @@ function handleDocDragStart(event, docId) {
 function handleDocDragEnd(event) {
     event.currentTarget.classList.remove('dragging');
     draggedDocId = null;
+    draggedDocIds = [];
+    draggedFolderId = null;
     document.body.classList.remove('dragging-document');
+    document.body.classList.remove('dragging-folder');
     // Remove any lingering drag-over states
     document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function handleFolderItemDragStart(event, folderId) {
+    const target = event.target;
+    if (target && (target.closest('.folder-expand') || target.closest('.folder-settings-btn'))) {
+        event.preventDefault();
+        return;
+    }
+    draggedFolderId = folderId;
+    draggedDocId = null;
+    draggedDocIds = [];
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-quackdas-folder-id', folderId);
+    event.currentTarget.classList.add('dragging');
+    document.body.classList.add('dragging-folder');
+}
+
+function handleFolderItemDragEnd(event) {
+    event.currentTarget.classList.remove('dragging');
+    draggedFolderId = null;
+    draggedDocId = null;
+    draggedDocIds = [];
+    document.body.classList.remove('dragging-folder');
+    document.body.classList.remove('dragging-document');
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function getFolderSubtreeLevels(folderId, visited = new Set()) {
+    if (!folderId || visited.has(folderId)) return 1;
+    visited.add(folderId);
+    const children = appData.folders.filter(f => f.parentId === folderId);
+    if (children.length === 0) return 1;
+    const childDepth = Math.max(...children.map(child => getFolderSubtreeLevels(child.id, visited)));
+    return 1 + childDepth;
+}
+
+function moveFolderToParent(folderId, parentId) {
+    const folder = appData.folders.find(f => f.id === folderId);
+    if (!folder) return;
+
+    if (folderId === parentId) return;
+    if (parentId && getAllChildFolders(folderId).includes(parentId)) return;
+    if (folder.parentId === (parentId || null)) return;
+
+    const newDepth = parentId ? (getFolderDepth(parentId) + 1) : 1;
+    const subtreeLevels = getFolderSubtreeLevels(folderId);
+    if ((newDepth + subtreeLevels - 1) > MAX_FOLDER_DEPTH) {
+        alert(`Move would exceed maximum folder depth of ${MAX_FOLDER_DEPTH} levels.`);
+        return;
+    }
+
+    saveHistory();
+    folder.parentId = parentId || null;
+    saveData();
+    renderAll();
 }
 
 function handleFolderDragOver(event) {
@@ -167,17 +241,29 @@ function handleFolderDragLeave(event) {
 function handleDocumentDropOnFolder(event, folderId) {
     event.preventDefault();
     event.currentTarget.classList.remove('drag-over');
-    
-    const docId = draggedDocId || event.dataTransfer.getData('text/plain');
-    if (!docId) return;
-    
-    const doc = appData.documents.find(d => d.id === docId);
-    if (!doc) return;
-    
-    // Don't do anything if dropping into the same folder
-    if (doc.folderId === folderId) return;
-    
-    moveDocumentToFolder(docId, folderId);
+
+    const folderDragId = draggedFolderId || event.dataTransfer.getData('application/x-quackdas-folder-id');
+    if (folderDragId) {
+        moveFolderToParent(folderDragId, folderId || null);
+        return;
+    }
+
+    const payloadDocIds = event.dataTransfer.getData('application/x-quackdas-doc-ids');
+    const parsedDocIds = payloadDocIds ? (() => {
+        try {
+            const ids = JSON.parse(payloadDocIds);
+            return Array.isArray(ids) ? ids : [];
+        } catch (err) {
+            return [];
+        }
+    })() : [];
+    const fallbackDocId = draggedDocId || event.dataTransfer.getData('application/x-quackdas-doc-id') || event.dataTransfer.getData('text/plain');
+    const docIds = (draggedDocIds && draggedDocIds.length > 0)
+        ? draggedDocIds
+        : (parsedDocIds.length > 0 ? parsedDocIds : (fallbackDocId ? [fallbackDocId] : []));
+    if (docIds.length === 0) return;
+
+    moveDocumentsToFolder(docIds, folderId);
 }
 
 function openFolderContextMenu(folderId, event) {
@@ -250,6 +336,7 @@ function saveFolderInfo(e) {
 function getVisibleDocumentOrder() {
     const orderedIds = [];
     const visitedFolders = new Set();
+    const docTitleCompare = (a, b) => String(a?.title || '').localeCompare(String(b?.title || ''), undefined, { sensitivity: 'base' });
 
     const walkFolders = (parentId) => {
         const folders = appData.folders.filter(f => f.parentId === parentId);
@@ -259,6 +346,7 @@ function getVisibleDocumentOrder() {
 
             appData.documents
                 .filter(d => d.folderId === folder.id)
+                .sort(docTitleCompare)
                 .forEach(doc => orderedIds.push(doc.id));
 
             if (folder.expanded !== false) {
@@ -268,7 +356,10 @@ function getVisibleDocumentOrder() {
     };
 
     walkFolders(null);
-    appData.documents.filter(d => !d.folderId).forEach(doc => orderedIds.push(doc.id));
+    appData.documents
+        .filter(d => !d.folderId)
+        .sort(docTitleCompare)
+        .forEach(doc => orderedIds.push(doc.id));
     return orderedIds;
 }
 

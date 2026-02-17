@@ -30,13 +30,8 @@ document.addEventListener('DOMContentLoaded', async function() {
                 const result = await window.electronAPI.openLastUsedProject();
                 if (result && result.ok && result.data) {
                     reopenedLastProject = true;
-                    if (result.kind === 'qdpx') {
-                        const buffer = decodeBase64ToArrayBuffer(result.data);
-                        await applyImportedQdpx(buffer);
-                    } else if (result.kind === 'json') {
-                        const imported = JSON.parse(result.data);
-                        applyImportedProject(imported);
-                    }
+                    const buffer = decodeBase64ToArrayBuffer(result.data);
+                    await applyImportedQdpx(buffer);
                 }
             } catch (err) {
                 console.warn('Could not reopen last project on startup:', err);
@@ -49,6 +44,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateHistoryButtons();
         updateSaveStatus();
         applyPlatformShortcutTooltips();
+        if (typeof initCodeViewDelegatedHandlers === 'function') initCodeViewDelegatedHandlers();
+        if (typeof initSearchResultsDelegatedHandlers === 'function') initSearchResultsDelegatedHandlers();
+        if (typeof initCooccurrenceDelegatedHandlers === 'function') initCooccurrenceDelegatedHandlers();
         
         // Initialize PDF.js if available
         if (typeof initPdfJs === 'function') {
@@ -66,6 +64,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         // Setup context menu dismissal
         setupContextMenuDismissal();
+        setupStaticActionBindings();
         if (typeof startProjectBackupScheduler === 'function') {
             startProjectBackupScheduler();
         }
@@ -140,7 +139,6 @@ function setupFileInputs() {
 
 function setupContextMenuDismissal() {
     window.addEventListener('click', () => hideContextMenu());
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideContextMenu(); });
     // Capture-phase fallback: close open overlays/modals even when focused controls consume key events.
     window.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
@@ -149,6 +147,90 @@ function setupContextMenuDismissal() {
         e.stopPropagation();
     }, true);
     window.addEventListener('scroll', () => hideContextMenu(), true);
+}
+
+function setupStaticActionBindings() {
+    document.addEventListener('click', (event) => {
+        const el = event.target.closest('[data-action]');
+        if (!el) return;
+        switch (el.dataset.action) {
+            case 'openSearchModal': openSearchModal(); break;
+            case 'handleHeaderPrimaryAction': handleHeaderPrimaryAction(); break;
+            case 'manualSave': manualSave(); break;
+            case 'toggleHeaderDropdown': toggleHeaderDropdown(event); break;
+            case 'newProjectAndCloseHeaderDropdown': newProject(); closeHeaderDropdown(); break;
+            case 'importProjectNativeAndCloseHeaderDropdown': importProjectNative(); closeHeaderDropdown(); break;
+            case 'manualSaveAsAndCloseHeaderDropdown': manualSave(true); closeHeaderDropdown(); break;
+            case 'openStatsModalAndCloseHeaderDropdown': openStatsModal(); closeHeaderDropdown(); break;
+            case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
+            case 'openCooccurrenceModalAndCloseHeaderDropdown': openCooccurrenceModal(); closeHeaderDropdown(); break;
+            case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
+            case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
+            case 'openCodeModal': openCodeModal(); break;
+            case 'undo': undo(); break;
+            case 'redo': redo(); break;
+            case 'pdfPrevPage': pdfPrevPage(); break;
+            case 'pdfNextPage': pdfNextPage(); break;
+            case 'adjustZoomOut': adjustZoom(-10); break;
+            case 'adjustZoomIn': adjustZoom(10); break;
+            case 'openImportModal': openImportModal(); break;
+            case 'openPasteModal': openPasteModal(); break;
+            case 'createFolder': createFolder(); break;
+            case 'closeMemoModal': closeMemoModal(); break;
+            case 'closeRestoreBackupModal': closeRestoreBackupModal(); break;
+            case 'updateBoundaryPreview': updateBoundaryPreview(); break;
+            case 'closeEditBoundariesModal': closeEditBoundariesModal(); break;
+            case 'saveBoundaryEdit': saveBoundaryEdit(); break;
+            case 'closeMetadataModal': closeMetadataModal(); break;
+            case 'closeStatsModal': closeStatsModal(); break;
+            case 'closeHealthCheckModal': closeHealthCheckModal(); break;
+            case 'applySelectedHealthFixes': applySelectedHealthFixes(); break;
+            case 'closeCooccurrenceModal': closeCooccurrenceModal(); break;
+            case 'closeSearchResults': closeSearchResults(); break;
+            case 'inPageSearchPrev': inPageSearchPrev(); break;
+            case 'inPageSearchNext': inPageSearchNext(); break;
+            case 'closeInPageSearch': closeInPageSearch(); break;
+            case 'segmentActionChoiceMemo': segmentActionChoice('memo'); break;
+            case 'segmentActionChoiceEdit': segmentActionChoice('edit'); break;
+            case 'segmentActionChoiceRemove': segmentActionChoice('remove'); break;
+            case 'closeSegmentActionModal': closeSegmentActionModal(); break;
+            case 'closeCodeModal': closeCodeModal(); break;
+            case 'closeImportModal': closeImportModal(); break;
+            case 'closePasteModal': closePasteModal(); break;
+            case 'closeCodeSelectionModal': closeCodeSelectionModal(); break;
+            case 'applySelectedCodes': applySelectedCodes(); break;
+            case 'closeMoveToFolderModal': closeMoveToFolderModal(); break;
+            case 'closeFolderInfoModal': closeFolderInfoModal(); break;
+            case 'closeTextPromptCancel': closeTextPrompt(false); break;
+            case 'closeTextPromptOk': closeTextPrompt(true); break;
+            case 'closeOcrHelpModal': closeOcrHelpModal(); break;
+            case 'closePdfRegionPreviewModal': closePdfRegionPreviewModal(); break;
+            default: break;
+        }
+    });
+
+    document.addEventListener('change', (event) => {
+        const el = event.target.closest('[data-action]');
+        if (!el) return;
+        switch (el.dataset.action) {
+            case 'importProjectChange': importProject(event); break;
+            case 'renderCooccurrenceOverlaps': renderCooccurrenceOverlaps(); break;
+            default: break;
+        }
+    });
+
+    [
+        ['memoForm', saveMemo],
+        ['metadataForm', saveMetadata],
+        ['codeForm', saveCode],
+        ['importForm', importDocument],
+        ['pasteForm', pasteDocument],
+        ['folderInfoForm', saveFolderInfo]
+    ].forEach(([id, handler]) => {
+        const form = document.getElementById(id);
+        if (!form || typeof handler !== 'function') return;
+        form.addEventListener('submit', (event) => handler(event));
+    });
 }
 
 function isModalOpen(modalId) {
@@ -355,19 +437,6 @@ window.addEventListener('beforeunload', function(e) {
 // Update save status every minute
 setInterval(updateSaveStatus, 60000);
 
-// Electron: listen for menu-driven "Open Project" events (legacy JSON)
-if (window.electronAPI && window.electronAPI.onOpenProject) {
-    window.electronAPI.onOpenProject((jsonText) => {
-        try {
-            const imported = JSON.parse(jsonText);
-            applyImportedProject(imported);
-        } catch (e) {
-            console.error('Failed to parse opened project JSON:', e);
-            alert('Could not open project: invalid JSON');
-        }
-    });
-}
-
 // Electron: listen for QDPX file open events
 if (window.electronAPI && window.electronAPI.onOpenQdpx) {
     window.electronAPI.onOpenQdpx(async (buffer) => {
@@ -411,7 +480,9 @@ if (window.electronAPI && window.electronAPI.hasProjectHandle) {
                     const blob = await exportToQdpx();
                     const arrayBuffer = await blob.arrayBuffer();
                     const base64 = arrayBufferToBase64(arrayBuffer);
-                    await window.electronAPI.saveProject(base64, { saveAs: false, silent: true, isQdpx: true });
+                    await window.electronAPI.saveProject({
+                        qdpxBase64: base64
+                    }, { saveAs: false, silent: true, format: 'qdpx' });
                     appData.lastSaveTime = new Date().toISOString();
                     appData.hasUnsavedChanges = false;
                     if (typeof updateSaveStatus === 'function') updateSaveStatus();

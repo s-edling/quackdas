@@ -40,8 +40,8 @@ function renderExistingMemos(type, targetId) {
                     <div class="memo-item-header">
                         <span>${escapeHtml(formatMemoDate(memo.created))}${memo.edited && memo.edited !== memo.created ? ` · edited ${escapeHtml(formatMemoDate(memo.edited))}` : ''}</span>
                         <span>
-                            <button class="memo-delete-btn" onclick="editMemo('${memo.id}')" title="Edit annotation">✎</button>
-                            <button class="memo-delete-btn" onclick="deleteMemo('${memo.id}')" title="Delete annotation">×</button>
+                            <button class="memo-delete-btn" onclick="editMemo('${escapeJsForSingleQuotedString(memo.id)}')" title="Edit annotation">✎</button>
+                            <button class="memo-delete-btn" onclick="deleteMemo('${escapeJsForSingleQuotedString(memo.id)}')" title="Delete annotation">×</button>
                         </span>
                     </div>
                     ${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}
@@ -137,3 +137,24 @@ function deleteMemo(memoId) {
     // Refresh the modal
     renderExistingMemos(currentMemoTarget.type, currentMemoTarget.id);
 }
+
+function initMemoModalEnterToSave() {
+    const input = document.getElementById('memoContent');
+    if (!input || input.dataset.enterSaveInit === '1') return;
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        if (currentMemoTarget.type !== 'segment') return;
+        e.preventDefault();
+        const form = document.getElementById('memoForm');
+        if (form && typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+        } else if (form) {
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+    });
+
+    input.dataset.enterSaveInit = '1';
+}
+
+document.addEventListener('DOMContentLoaded', initMemoModalEnterToSave);

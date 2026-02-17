@@ -8,6 +8,28 @@ let _textPromptResolve = null;
 let projectBackupTimer = null;
 let projectBackupInFlight = false;
 let lastBackedUpRevision = 0;
+let cooccurrenceDelegationBound = false;
+
+function initCooccurrenceDelegatedHandlers() {
+    if (cooccurrenceDelegationBound) return;
+    const matrix = document.getElementById('cooccurrenceMatrix');
+    const overlaps = document.getElementById('cooccurrenceOverlaps');
+    if (matrix) {
+        matrix.addEventListener('click', (event) => {
+            const cell = event.target.closest('.cooc-cell[data-code-a][data-code-b]');
+            if (!cell) return;
+            selectCooccurrencePair(cell.dataset.codeA, cell.dataset.codeB);
+        });
+    }
+    if (overlaps) {
+        overlaps.addEventListener('click', (event) => {
+            const item = event.target.closest('.cooc-overlap-item[data-doc-id][data-segment-id]');
+            if (!item) return;
+            goToSegmentLocation(item.dataset.docId, item.dataset.segmentId);
+        });
+    }
+    cooccurrenceDelegationBound = true;
+}
 
 function hasAnyProjectData() {
     return (appData.documents.length + appData.codes.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
@@ -179,7 +201,7 @@ async function openRestoreBackupModal() {
                         <div class="backup-item-time">${escapeHtml(dt.toLocaleString())}</div>
                         <div class="backup-item-meta">${escapeHtml(backup.reason || 'auto backup')} · ${sizeMb} MB</div>
                     </div>
-                    <button class="btn btn-secondary backup-restore-btn" onclick="restoreBackupById('${escapeHtml(String(backup.id))}')">Restore</button>
+                    <button class="btn btn-secondary backup-restore-btn" onclick="restoreBackupById('${escapeJsForSingleQuotedString(backup.id)}')">Restore</button>
                 </div>
             `;
         }).join('');
@@ -339,8 +361,9 @@ function openMoveToFolderModal(docId) {
     const list = document.getElementById('folderSelectionList');
     
     // Build folder tree
+    const folderIconSvg = `<svg class="toolbar-icon folder-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-1.2 8a2 2 0 0 1-2 1.7H6.2a2 2 0 0 1-2-1.7z"/></svg>`;
     let html = `<div class="folder-selection-item ${!doc.folderId ? 'selected' : ''}" onclick="selectFolderForMove(null)">
-        <span class="folder-icon">📁</span> Root (no folder)
+        <span class="folder-icon">${folderIconSvg}</span> Root (no folder)
     </div>`;
     
     html += renderFolderSelectionTree(null, 0, doc.folderId);
@@ -353,12 +376,13 @@ function renderFolderSelectionTree(parentId, depth, currentFolderId) {
     const folders = appData.folders.filter(f => f.parentId === parentId);
     if (folders.length === 0) return '';
     
+    const folderIconSvg = `<svg class="toolbar-icon folder-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-1.2 8a2 2 0 0 1-2 1.7H6.2a2 2 0 0 1-2-1.7z"/></svg>`;
     let html = '';
     folders.forEach(folder => {
         const isSelected = folder.id === currentFolderId;
         const indent = depth * 20;
-        html += `<div class="folder-selection-item ${isSelected ? 'selected' : ''}" style="padding-left: ${16 + indent}px;" onclick="selectFolderForMove('${folder.id}')">
-            <span class="folder-icon">📁</span> ${escapeHtml(folder.name)}
+        html += `<div class="folder-selection-item ${isSelected ? 'selected' : ''}" style="padding-left: ${16 + indent}px;" onclick="selectFolderForMove('${escapeJsForSingleQuotedString(folder.id)}')">
+            <span class="folder-icon">${folderIconSvg}</span> ${escapeHtml(folder.name)}
         </div>`;
         html += renderFolderSelectionTree(folder.id, depth + 1, currentFolderId);
     });
@@ -472,7 +496,9 @@ async function manualSave(saveAs = false) {
             const arrayBuffer = await blob.arrayBuffer();
             const base64 = arrayBufferToBase64(arrayBuffer);
             
-            const result = await window.electronAPI.saveProject(base64, { saveAs, isQdpx: true });
+            const result = await window.electronAPI.saveProject({
+                qdpxBase64: base64
+            }, { saveAs, format: 'qdpx' });
             if (result && result.ok) {
                 appData.lastSaveTime = new Date().toISOString();
                 appData.hasUnsavedChanges = false;
@@ -494,18 +520,7 @@ async function manualSave(saveAs = false) {
     // Browser fallback: download as QDPX
     try {
         if (typeof exportToQdpx !== 'function') {
-            // Fall back to JSON if QDPX not available
-            const dataStr = JSON.stringify(appData, null, 2);
-            const dataBlob = new Blob([dataStr], { type: 'application/json' });
-            const url = URL.createObjectURL(dataBlob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `quackdas-project-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-            return;
+            throw new Error('QDPX export is not available in this build.');
         }
         
         const blob = await exportToQdpx();
@@ -597,7 +612,7 @@ function renderStatistics() {
     const documentChart = document.getElementById('documentChart');
     documentChart.innerHTML = docProgress.map(doc => `
         <div class="chart-bar">
-            <div class="chart-label">${doc.name}</div>
+            <div class="chart-label">${escapeHtml(doc.name)}</div>
             <div class="chart-bar-bg">
                 <div class="chart-bar-fill" style="width: ${(doc.count / maxDocCount * 100)}%"></div>
                 <div class="chart-value">${doc.count}</div>
@@ -881,7 +896,7 @@ function renderCooccurrenceMatrix() {
     }
 
     const codeOptions = '<option value="">Select code</option>' + codes
-        .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+        .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
         .join('');
     selectA.innerHTML = codeOptions;
     selectB.innerHTML = codeOptions;
@@ -912,7 +927,7 @@ function renderCooccurrenceMatrix() {
                 html += '<td>—</td>';
             } else {
                 const v = matrix[i][j];
-                html += `<td class="cooc-cell" onclick="selectCooccurrencePair('${rowCode.id}', '${codes[j].id}')" title="Find overlaps">${v}</td>`;
+                html += `<td class="cooc-cell" data-code-a="${escapeHtmlAttrValue(rowCode.id)}" data-code-b="${escapeHtmlAttrValue(codes[j].id)}" title="Find overlaps">${v}</td>`;
             }
         }
         html += '</tr>';
@@ -967,7 +982,7 @@ function renderCooccurrenceOverlaps() {
             const doc = appData.documents.find(d => d.id === seg.docId);
             const loc = seg.pdfRegion ? `Page ${seg.pdfRegion.pageNum || '?'}` : `Char ${seg.startIndex || 0}`;
             const snippet = escapeHtml(String(seg.text || '').slice(0, 220));
-            return `<div class="cooc-overlap-item" onclick="goToSegmentLocation('${seg.docId}', '${seg.id}')">
+            return `<div class="cooc-overlap-item" data-doc-id="${escapeHtmlAttrValue(seg.docId)}" data-segment-id="${escapeHtmlAttrValue(seg.id)}">
                 <div><strong>${escapeHtml(doc?.title || 'Document')}</strong> · ${escapeHtml(loc)}</div>
                 <div>${snippet}${snippet.length >= 220 ? '…' : ''}</div>
             </div>`;

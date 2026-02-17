@@ -7,6 +7,24 @@ const globalSearchIndex = {
     dirty: true,
     entries: new Map() // key -> { kind, kindLabel, primaryId, docId, title, searchText }
 };
+let searchResultsDelegationBound = false;
+
+function initSearchResultsDelegatedHandlers() {
+    if (searchResultsDelegationBound) return;
+    const list = document.getElementById('searchResultsList');
+    if (!list) return;
+    list.addEventListener('click', (event) => {
+        const item = event.target.closest('.search-result-item[data-kind][data-primary-id][data-doc-id][data-query]');
+        if (!item) return;
+        goToSearchResult(
+            item.dataset.kind,
+            item.dataset.primaryId,
+            item.dataset.docId,
+            item.dataset.query
+        );
+    });
+    searchResultsDelegationBound = true;
+}
 
 function markSearchIndexDirty() {
     globalSearchIndex.dirty = true;
@@ -336,12 +354,12 @@ function showSearchResults(query, results) {
     const parsed = parseSearchQuery(query);
     const highlightPatterns = parsed.terms.join('|');
     
-    // Create search bar in summary (using inline handler to avoid listener accumulation)
+    // Create search bar in summary.
     summary.innerHTML = `
         <span class="search-summary-label">Found ${results.length} result${results.length !== 1 ? 's' : ''} for</span>
         <div class="search-summary-input-wrapper">
             <svg class="toolbar-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" class="search-summary-input" id="modalSearchInput" value="${escapeHtml(query)}" placeholder="Refine search..." onkeydown="handleSearchInputKeydown(event)">
+            <input type="text" class="search-summary-input" id="modalSearchInput" value="${escapeHtml(query)}" placeholder="Refine search...">
         </div>
     `;
     
@@ -349,6 +367,7 @@ function showSearchResults(query, results) {
     setTimeout(() => {
         const input = document.getElementById('modalSearchInput');
         if (input) {
+            input.onkeydown = handleSearchInputKeydown;
             input.focus();
             input.select();
         }
@@ -368,7 +387,11 @@ function showSearchResults(query, results) {
             }).join('<br>');
             
             return `
-                <div class="search-result-item" onclick="goToSearchResult('${result.kind}', '${result.primaryId}', '${result.docId || ''}', '${encodeURIComponent(query)}')">
+                <div class="search-result-item"
+                     data-kind="${escapeHtmlAttrValue(result.kind)}"
+                     data-primary-id="${escapeHtmlAttrValue(result.primaryId)}"
+                     data-doc-id="${escapeHtmlAttrValue(result.docId || '')}"
+                     data-query="${escapeHtmlAttrValue(encodeURIComponent(query))}">
                     <div class="search-result-title">
                         ${escapeHtml(result.title)}
                         <span class="search-result-count">${result.kindLabel} · ${result.matchCount} match${result.matchCount !== 1 ? 'es' : ''}</span>
