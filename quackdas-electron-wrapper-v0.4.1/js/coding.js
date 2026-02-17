@@ -413,7 +413,7 @@ function openCodeSelectionModal() {
         <label class="code-checkbox">
             <input type="checkbox" value="${code.id}">
             <div class="code-color" style="background: ${code.color};"></div>
-            <span>${code.name}</span>
+            <span>${escapeHtml(code.name)}</span>
         </label>
     `).join('');
     

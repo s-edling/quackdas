@@ -26,6 +26,13 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Setup context menu dismissal
     setupContextMenuDismissal();
+
+    // Flush lightweight doc access metadata before app/tab closes.
+    window.addEventListener('beforeunload', () => {
+        if (typeof flushDocumentAccessMetaSave === 'function') {
+            flushDocumentAccessMetaSave();
+        }
+    });
 });
 
 // Drag and drop file handling

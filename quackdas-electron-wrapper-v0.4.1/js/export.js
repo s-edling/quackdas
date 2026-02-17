@@ -98,7 +98,8 @@ function importProject(event) {
                 
                 const imported = await importFromQdpx(e.target.result);
                 appData = normaliseProject(imported);
-                saveData();
+                appData.lastSaveTime = new Date().toISOString();
+                saveData({ markUnsaved: false });
                 renderAll();
             } catch (error) {
                 console.error('Import error:', error);
@@ -125,7 +126,8 @@ function importProject(event) {
                 }
 
                 appData = normaliseProject(imported);
-                saveData();
+                appData.lastSaveTime = new Date().toISOString();
+                saveData({ markUnsaved: false });
                 renderAll();
             } catch (error) {
                 alert('Error importing project: ' + error.message);
@@ -161,7 +163,8 @@ async function importProjectNative() {
                 appData = normaliseProject(imported);
             }
             
-            saveData();
+            appData.lastSaveTime = new Date().toISOString();
+            saveData({ markUnsaved: false });
             renderAll();
             return;
         } catch (e) {

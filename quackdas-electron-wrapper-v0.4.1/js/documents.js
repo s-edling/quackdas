@@ -323,7 +323,9 @@ function selectDocument(docId, options = {}) {
     const doc = appData.documents.find(d => d.id === docId);
     if (doc) {
         doc.lastAccessed = new Date().toISOString();
-        saveData();
+        if (typeof scheduleDocumentAccessMetaSave === 'function') {
+            scheduleDocumentAccessMetaSave();
+        }
     }
     
     updateDocumentSelection(docId, options);

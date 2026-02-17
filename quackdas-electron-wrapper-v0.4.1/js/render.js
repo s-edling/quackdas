@@ -434,7 +434,7 @@ function renderFilteredView() {
     const docCount = sortedDocs.length;
     
     // Shortcut display
-    const shortcutDisplay = code.shortcut ? ` [${code.shortcut}]` : '';
+    const shortcutDisplay = code.shortcut ? ` [${escapeHtml(code.shortcut)}]` : '';
     const shortcutAction = code.shortcut 
         ? `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
         : `<span class="filter-shortcut" onclick="assignShortcut('${code.id}')" title="Click to assign shortcut">Assign shortcut</span>`;
@@ -454,7 +454,7 @@ function renderFilteredView() {
     
     let html = `
         <div class="code-view-banner">
-            <span class="filter-title"><strong>Code: ${code.name}${shortcutDisplay}</strong></span>
+            <span class="filter-title"><strong>Code: ${escapeHtml(code.name)}${shortcutDisplay}</strong></span>
             <span class="filter-meta">${totalSegments} segment${totalSegments !== 1 ? 's' : ''} · ${docCount} document${docCount !== 1 ? 's' : ''}</span>
             ${shortcutAction}
         </div>

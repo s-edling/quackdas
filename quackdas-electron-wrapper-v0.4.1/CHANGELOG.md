@@ -106,3 +106,82 @@ Why (one line):
 Files touched:
 - `js/qdpx.js`
 - `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17e
+Date: 2026-02-17
+
+What changed:
+- Fixed XSS-prone code-name rendering points by escaping code names before HTML insertion in:
+  - code selection modal
+  - code-view banner title
+  - statistics chart labels
+- Tightened CSP by removing `unsafe-eval` from `script-src`.
+- Refactored OCR process invocation in Electron main process from synchronous to asynchronous (`execFile` + Promise), reducing UI blocking risk.
+- Added guaranteed OCR temp directory cleanup in a `finally` block so temp files are removed on both success and failure.
+
+Why (one line):
+- To reduce script-injection risk, harden renderer policy, and improve OCR runtime stability/responsiveness.
+
+Files touched:
+- `index.html`
+- `main.js`
+- `js/coding.js`
+- `js/render.js`
+- `js/ui.js`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17f
+Date: 2026-02-17
+
+What changed:
+- Improved scanned-PDF OCR failure diagnostics.
+- OCR IPC now returns structured error details for common causes:
+  - Tesseract missing (`ENOENT`)
+  - language model missing
+  - OCR timeout
+- PDF viewer now shows the concrete OCR failure reason instead of a generic fallback message.
+- OCR failure notice rendering now uses safe text nodes (no HTML injection surface from error strings).
+
+Why (one line):
+- To make OCR failures actionable for users and reduce false ambiguity when scanned PDFs cannot be text-recognized.
+
+Files touched:
+- `main.js`
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17g
+Date: 2026-02-17
+
+What changed:
+- Added an in-app OCR setup help modal with platform-aware install guidance.
+- Added `OCR setup help` to the header `More` dropdown for manual access at any time.
+- Added an `OCR setup help` button in scanned-PDF OCR failure notices in the PDF viewer.
+
+Why (one line):
+- To make OCR dependency setup self-serve for end users when scanned PDF text extraction is unavailable.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.4.2-build-2026-02-17h
+Date: 2026-02-17
+
+What changed:
+- Fixed import/open project flows so they no longer appear unsaved immediately after loading.
+- Added `saveData({ markUnsaved: false })` support and applied it in import paths.
+- Added lightweight, debounced persistence for document `lastAccessed` metadata in a separate localStorage key.
+- Removed full snapshot writes on each document click and flush access metadata on window unload.
+
+Why (one line):
+- To prevent false dirty-state signals on freshly imported projects and reduce unnecessary large localStorage writes during document navigation.
+
+Files touched:
+- `js/state.js`
+- `js/export.js`
+- `js/documents.js`
+- `js/app.js`
+- `CHANGELOG.md`

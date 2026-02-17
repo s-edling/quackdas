@@ -436,15 +436,20 @@ async function getPdfRegionThumbnail(doc, region, opts = {}) {
 }
 
 async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
-    if (!window.electronAPI || typeof window.electronAPI.ocrImage !== 'function') return false;
-    if (!currentPdfState.pdfDoc) return false;
-    if (doc._ocrReady) return true;
+    if (!window.electronAPI || typeof window.electronAPI.ocrImage !== 'function') {
+        return { ok: false, error: 'OCR bridge is unavailable in this build.' };
+    }
+    if (!currentPdfState.pdfDoc) return { ok: false, error: 'PDF document is not ready for OCR.' };
+    if (doc._ocrReady) return { ok: true, error: '' };
     if (currentPdfState.ocrPromise) return currentPdfState.ocrPromise;
 
     const run = (async () => {
         const pdfDoc = currentPdfState.pdfDoc;
         const total = pdfDoc.numPages;
         const ocrPages = [];
+        let bestError = '';
+        let bestHint = '';
+        let wordCount = 0;
         const status = document.createElement('div');
         status.className = 'pdf-error';
         status.id = 'pdfOcrStatus';
@@ -453,7 +458,9 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
 
         try {
             for (let pageNum = 1; pageNum <= total; pageNum++) {
-                if (expectedToken !== currentPdfState.renderToken) return false;
+                if (expectedToken !== currentPdfState.renderToken) {
+                    return { ok: false, error: 'OCR was cancelled because the document changed.' };
+                }
                 status.textContent = `Running OCR on scanned PDF (page ${pageNum}/${total})...`;
 
                 const page = await pdfDoc.getPage(pageNum);
@@ -468,10 +475,15 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
                 const ocrResult = await window.electronAPI.ocrImage(dataUrl, { lang: 'swe+eng', psm: 6 });
                 if (!ocrResult || !ocrResult.ok) {
                     console.warn('OCR failed for page', pageNum, ocrResult?.error || 'unknown error');
+                    if (!bestError) {
+                        bestError = ocrResult?.error || 'OCR failed on this machine.';
+                        bestHint = ocrResult?.hint || '';
+                    }
                 }
 
                 const baseViewport = page.getViewport({ scale: 1.0 });
                 const words = normaliseOcrWords(ocrResult?.words || [], canvas.width, canvas.height);
+                wordCount += words.length;
                 ocrPages.push({
                     pageNum,
                     width: baseViewport.width,
@@ -483,10 +495,15 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
             const rebuilt = buildDocumentTextFromOcrPages(ocrPages);
             doc.pdfPages = rebuilt.pages;
             doc.content = rebuilt.fullText;
-            doc._ocrReady = true;
+            doc._ocrReady = wordCount > 0;
             doc._ocrGeneratedAt = new Date().toISOString();
             saveData();
-            return true;
+            if (wordCount > 0) {
+                return { ok: true, error: '' };
+            }
+            const emptyReason = bestError || 'OCR completed, but no readable text was detected.';
+            const emptyHint = bestHint || 'If this is an image-heavy scan, try a clearer source PDF or manual region coding.';
+            return { ok: false, error: emptyReason + (emptyHint ? ` ${emptyHint}` : '') };
         } finally {
             status.remove();
         }
@@ -742,12 +759,27 @@ async function renderPdfDocument(doc, container) {
     updatePdfToolbarState();
 
     if (isLikelyImageOnlyPdf(doc, pdfDoc.numPages)) {
-        const ocrReady = await ensureOcrForImageOnlyPdf(doc, renderToken, container.querySelector('.pdf-viewer'));
-        if (!ocrReady && !doc._ocrReady) {
+        const ocrResult = await ensureOcrForImageOnlyPdf(doc, renderToken, container.querySelector('.pdf-viewer'));
+        if ((!ocrResult || !ocrResult.ok) && !doc._ocrReady) {
             const ocrNotice = document.createElement('div');
             ocrNotice.className = 'pdf-error';
             ocrNotice.id = 'pdfOcrUnavailable';
-            ocrNotice.innerHTML = '<p>This appears to be a scanned PDF without a text layer.</p><p>OCR fallback was not available in this build or failed on this machine.</p>';
+            const reason = (ocrResult && ocrResult.error) ? ocrResult.error : 'OCR fallback failed on this machine.';
+            const p1 = document.createElement('p');
+            p1.textContent = 'This appears to be a scanned PDF without a text layer.';
+            const p2 = document.createElement('p');
+            p2.textContent = reason;
+            const helpBtn = document.createElement('button');
+            helpBtn.className = 'btn btn-secondary';
+            helpBtn.type = 'button';
+            helpBtn.style.marginTop = '8px';
+            helpBtn.textContent = 'OCR setup help';
+            helpBtn.addEventListener('click', () => {
+                if (typeof openOcrHelpModal === 'function') openOcrHelpModal();
+            });
+            ocrNotice.appendChild(p1);
+            ocrNotice.appendChild(p2);
+            ocrNotice.appendChild(helpBtn);
             container.querySelector('.pdf-viewer')?.appendChild(ocrNotice);
         } else {
             const staleNotice = document.getElementById('pdfOcrUnavailable');

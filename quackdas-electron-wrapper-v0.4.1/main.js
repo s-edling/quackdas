@@ -1,6 +1,6 @@
 
 const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
-const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -273,6 +273,42 @@ ipcMain.handle('file:openDocumentFile', async () => {
 
 // OCR helper for scanned/image-only PDFs (renderer sends page image as data URL).
 ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
+  let tmpDir = null;
+  const formatOcrError = (err, stderrText = '') => {
+    const stderr = String(stderrText || '').trim();
+    const raw = String(err?.message || err || 'Unknown OCR error');
+
+    if (err && err.code === 'ENOENT') {
+      return {
+        code: 'ENOENT',
+        error: 'Tesseract OCR was not found on this machine.',
+        hint: 'Install Tesseract and restart Quackdas. On macOS: brew install tesseract tesseract-lang'
+      };
+    }
+
+    if (stderr.includes('Failed loading language')) {
+      return {
+        code: 'LANG_MISSING',
+        error: 'Tesseract could not load one or more OCR language models.',
+        hint: 'Install language data (for Swedish+English on macOS: brew install tesseract-lang).'
+      };
+    }
+
+    if (err && (err.killed || err.signal === 'SIGTERM')) {
+      return {
+        code: 'TIMEOUT',
+        error: 'OCR timed out while processing this page.',
+        hint: 'Try a lower-resolution scan or fewer pages at a time.'
+      };
+    }
+
+    return {
+      code: err?.code || 'OCR_FAILED',
+      error: raw,
+      hint: stderr ? `Tesseract details: ${stderr.slice(0, 240)}` : ''
+    };
+  };
+
   try {
     const dataUrl = String(payload.dataUrl || '');
     const lang = String(payload.lang || 'eng');
@@ -285,23 +321,34 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
     const imageBase64 = dataUrl.substring('data:image/png;base64,'.length);
     const imageBuffer = Buffer.from(imageBase64, 'base64');
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-ocr-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-ocr-'));
     const imgPath = path.join(tmpDir, 'page.png');
     const outBase = path.join(tmpDir, 'ocr');
     const tsvPath = outBase + '.tsv';
     fs.writeFileSync(imgPath, imageBuffer);
 
     const runTesseract = (useLang) => {
-      execFileSync('tesseract', [imgPath, outBase, '-l', useLang, '--psm', psm, 'tsv'], {
-        stdio: ['ignore', 'pipe', 'pipe']
+      return new Promise((resolve, reject) => {
+        execFile('tesseract', [imgPath, outBase, '-l', useLang, '--psm', psm, 'tsv'], {
+          windowsHide: true,
+          timeout: 120000,
+          maxBuffer: 16 * 1024 * 1024
+        }, (error, _stdout, stderr) => {
+          if (error) {
+            const formatted = formatOcrError(error, stderr);
+            reject(Object.assign(error, { __ocr: formatted }));
+            return;
+          }
+          resolve();
+        });
       });
     };
 
     try {
-      runTesseract(lang);
+      await runTesseract(lang);
     } catch (e) {
       // Fallback language for systems without Swedish model installed.
-      if (lang !== 'eng') runTesseract('eng');
+      if (lang !== 'eng') await runTesseract('eng');
       else throw e;
     }
 
@@ -332,13 +379,21 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
       fullText += (fullText ? ' ' : '') + text;
     }
 
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch (_) {}
-
     return { ok: true, words, text: fullText };
   } catch (err) {
-    return { ok: false, error: err.message || String(err) };
+    const normalized = err?.__ocr || formatOcrError(err);
+    return {
+      ok: false,
+      error: normalized.error,
+      code: normalized.code,
+      hint: normalized.hint || ''
+    };
+  } finally {
+    if (tmpDir) {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
   }
 });
 

@@ -160,6 +160,9 @@ let history = {
     maxLength: 50
 };
 
+const DOC_ACCESS_META_KEY = 'quackdas-doc-access';
+let docAccessSaveTimer = null;
+
 // Code colors
 const codeColors = ['#7c9885', '#b67d8f', '#8b8daa', '#c8956f', '#8aa4b5', '#a68d7c', '#9a8d9e', '#7d9e9c'];
 let colorIndex = 0;
@@ -183,6 +186,19 @@ function loadData() {
                 if (!code.shortcut) code.shortcut = '';
                 if (!code.lastUsed) code.lastUsed = code.created || new Date().toISOString();
             });
+
+            // Overlay lightweight document access metadata (kept separate to avoid full-state writes on doc click).
+            try {
+                const rawAccess = localStorage.getItem(DOC_ACCESS_META_KEY);
+                if (rawAccess) {
+                    const accessMap = JSON.parse(rawAccess);
+                    appData.documents.forEach(doc => {
+                        if (accessMap && typeof accessMap[doc.id] === 'string') {
+                            doc.lastAccessed = accessMap[doc.id];
+                        }
+                    });
+                }
+            } catch (_) {}
         }
         rebuildIndexes();
     } catch (e) {
@@ -197,8 +213,12 @@ function loadData() {
 // Save data to localStorage
 // Note: PDF binary data (pdfData) is excluded to stay within localStorage limits
 // Full PDF data is only saved in QDPX project files
-function saveData() {
-    appData.hasUnsavedChanges = true;
+function saveData(options = {}) {
+    const markUnsaved = (Object.prototype.hasOwnProperty.call(options, 'markUnsaved'))
+        ? options.markUnsaved
+        : true;
+    if (markUnsaved === true) appData.hasUnsavedChanges = true;
+    if (markUnsaved === false) appData.hasUnsavedChanges = false;
     
     // Create a copy without large binary data for localStorage
     const storageData = JSON.parse(JSON.stringify(appData));
@@ -218,6 +238,30 @@ function saveData() {
     localStorage.setItem('quackdas-data', JSON.stringify(storageData));
     rebuildIndexes();
     if (typeof updateSaveStatus === 'function') updateSaveStatus();
+}
+
+function scheduleDocumentAccessMetaSave() {
+    if (docAccessSaveTimer) clearTimeout(docAccessSaveTimer);
+    docAccessSaveTimer = setTimeout(() => {
+        docAccessSaveTimer = null;
+        flushDocumentAccessMetaSave();
+    }, 1500);
+}
+
+function flushDocumentAccessMetaSave() {
+    if (docAccessSaveTimer) {
+        clearTimeout(docAccessSaveTimer);
+        docAccessSaveTimer = null;
+    }
+    try {
+        const accessMap = {};
+        appData.documents.forEach(doc => {
+            if (doc && doc.id && doc.lastAccessed) {
+                accessMap[doc.id] = doc.lastAccessed;
+            }
+        });
+        localStorage.setItem(DOC_ACCESS_META_KEY, JSON.stringify(accessMap));
+    } catch (_) {}
 }
 
 // Undo/Redo support

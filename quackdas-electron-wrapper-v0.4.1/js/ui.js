@@ -57,6 +57,32 @@ function handleHeaderPrimaryAction() {
     importProjectNative();
 }
 
+function openOcrHelpModal() {
+    const modal = document.getElementById('ocrHelpModal');
+    const osHint = document.getElementById('ocrHelpOsHint');
+    const installCmd = document.getElementById('ocrHelpInstallCommand');
+    if (!modal) return;
+
+    const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
+    if (platform.includes('mac')) {
+        if (osHint) osHint.textContent = 'macOS (Homebrew)';
+        if (installCmd) installCmd.textContent = 'brew install tesseract tesseract-lang';
+    } else if (platform.includes('win')) {
+        if (osHint) osHint.textContent = 'Windows';
+        if (installCmd) installCmd.textContent = 'Install Tesseract OCR, then add tesseract.exe to PATH.';
+    } else {
+        if (osHint) osHint.textContent = 'Linux';
+        if (installCmd) installCmd.textContent = 'sudo apt install tesseract-ocr tesseract-ocr-all';
+    }
+
+    modal.classList.add('show');
+}
+
+function closeOcrHelpModal() {
+    const modal = document.getElementById('ocrHelpModal');
+    if (modal) modal.classList.remove('show');
+}
+
 // Context menu functions
 function showContextMenu(items, x, y) {
     const menu = document.getElementById('contextMenu');
@@ -414,7 +440,7 @@ function renderStatistics() {
     const codeChart = document.getElementById('codeChart');
     codeChart.innerHTML = codeCounts.map(code => `
         <div class="chart-bar">
-            <div class="chart-label">${code.name}</div>
+            <div class="chart-label">${escapeHtml(code.name)}</div>
             <div class="chart-bar-bg">
                 <div class="chart-bar-fill" style="width: ${(code.count / maxCodeCount * 100)}%"></div>
                 <div class="chart-value">${code.count}</div>

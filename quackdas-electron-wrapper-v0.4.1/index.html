@@ -37,7 +37,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:;">
     <title>Quackdas - Qualitative Coding</title>
     <script src="js/mammoth.browser.min.js"></script>
     <link rel="stylesheet" href="styles.css">
@@ -516,6 +516,25 @@
     </div>
   </div>
 </div>
+
+    <!-- OCR Setup Help Modal -->
+    <div id="ocrHelpModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3>OCR setup help</h3>
+            </div>
+            <div class="modal-body">
+                <p>Quackdas can OCR scan PDFs if Tesseract is installed on the machine and available on the system path.</p>
+                <p><strong>Detected platform:</strong> <span id="ocrHelpOsHint">Your system</span></p>
+                <p><strong>Install command:</strong></p>
+                <pre style="background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 0 0 12px; overflow-x: auto;"><code id="ocrHelpInstallCommand">brew install tesseract tesseract-lang</code></pre>
+                <p style="margin: 0;">After installation, restart Quackdas and re-open the PDF.</p>
+            </div>
+            <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeOcrHelpModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- PDF Region Preview Modal -->
     <div id="pdfRegionPreviewModal" class="modal">
