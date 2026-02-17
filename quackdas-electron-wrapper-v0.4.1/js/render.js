@@ -8,6 +8,7 @@ function renderAll() {
     renderCodes();
     renderCurrentDocument();
     applyZoom();
+    if (typeof refreshInPageSearchAfterRender === 'function') refreshInPageSearchAfterRender();
     if (typeof updateHeaderPrimaryAction === 'function') updateHeaderPrimaryAction();
 }
 
@@ -18,7 +19,7 @@ function renderDocuments() {
     // Helper to render a document item (draggable)
     const renderDocItem = (doc, indent = 0) => {
         const memoCount = getMemoCountForTarget('document', doc.id);
-        const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} memo(s)">💭${memoCount}</span>` : '';
+        const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭${memoCount}</span>` : '';
         const metaPreview = doc.metadata?.participantId ? ` • ID: ${escapeHtml(doc.metadata.participantId)}` : '';
         const indentStyle = indent > 0 ? `style="padding-left: ${12 + indent * 16}px;"` : '';
         const isPdf = doc.type === 'pdf';
@@ -185,7 +186,7 @@ function renderCodeItem(code, isChild = false, index = 0) {
     const isSelected = appData.filterCodeId === code.id;
     const shortcutBadge = code.shortcut ? `<span style="font-size: 11px; opacity: 0.6; margin-left: 4px;">[${escapeHtml(code.shortcut)}]</span>` : '';
     const memoCount = getMemoCountForTarget('code', code.id);
-    const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} memo(s)">💭</span>` : '';
+    const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭</span>` : '';
     const titleAttr = code.description ? `title="${escapeHtml(code.description)}"` : '';
     const dragAttr = !isChild ? `draggable="true" data-code-id="${code.id}" data-sort-index="${index}"` : '';
     
@@ -233,12 +234,19 @@ function setDocumentViewMode(isPdf) {
     }
 }
 
+function setZoomControlsVisible(visible) {
+    const zoom = document.getElementById('docZoomControls');
+    if (!zoom) return;
+    zoom.style.display = visible ? 'inline-flex' : 'none';
+}
+
 function renderCurrentDocument() {
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     
     // If in filtered view, we show all documents regardless of current selection
     if (appData.filterCodeId) {
         setDocumentViewMode(false);
+        setZoomControlsVisible(false);
         const code = appData.codes.find(c => c.id === appData.filterCodeId);
         document.getElementById('documentTitle').textContent = `All documents · ${code ? code.name : 'Code'}`;
         renderFilteredView();
@@ -247,6 +255,7 @@ function renderCurrentDocument() {
     
     if (!doc) {
         setDocumentViewMode(false);
+        setZoomControlsVisible(true);
         // Show empty state if no document selected
         const content = document.getElementById('documentContent');
         content.innerHTML = `
@@ -271,6 +280,7 @@ function renderCurrentDocument() {
     // Check if this is a PDF document
     if (doc.type === 'pdf') {
         setDocumentViewMode(true);
+        setZoomControlsVisible(true);
         const content = document.getElementById('documentContent');
         if (!doc.pdfData) {
             content.innerHTML = `
@@ -297,6 +307,7 @@ function renderCurrentDocument() {
     
     // Clean up PDF state when switching to non-PDF document
     setDocumentViewMode(false);
+    setZoomControlsVisible(true);
     if (typeof cleanupPdfState === 'function') cleanupPdfState();
     
     renderFullDocument(doc);
@@ -394,9 +405,107 @@ function renderCodedSpan(text, activeSegments) {
     
     const segmentIds = activeSegments.map(s => s.id).join(',');
     const segmentMemoCount = activeSegments.reduce((sum, s) => sum + getMemoCountForTarget('segment', s.id), 0);
-    const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${activeSegments[0].id}', event)" title="${segmentMemoCount} memo(s)">💭</span>` : '';
+    const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${activeSegments[0].id}', event)" title="${segmentMemoCount} annotation(s)">💭</span>` : '';
     
     return `<span class="coded-segment" style="${borderStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" onclick="showSegmentMenu('${segmentIds}', event)" oncontextmenu="showSegmentContextMenu('${segmentIds}', event)">${escapeHtml(text)}</span>${segmentMemoIndicator}`;
+}
+
+const codeViewUiState = {
+    mode: 'segments',
+    annotationQuery: '',
+    annotationCodeId: '',
+    annotationDocId: '',
+    annotationDateRange: 'all'
+};
+
+function setCodeViewMode(mode) {
+    codeViewUiState.mode = (mode === 'annotations') ? 'annotations' : 'segments';
+    renderCurrentDocument();
+}
+
+function updateAnnotationViewFilter(key, value) {
+    if (!Object.prototype.hasOwnProperty.call(codeViewUiState, key)) return;
+    codeViewUiState[key] = value;
+    renderCurrentDocument();
+}
+
+function memoTimeForSort(memo) {
+    const t = memo.edited || memo.created;
+    const ms = new Date(t || 0).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+function getMemoLinkedDocId(memo) {
+    if (!memo) return null;
+    if (memo.type === 'document') return memo.targetId || null;
+    if (memo.type === 'segment') {
+        const seg = appData.segments.find(s => s.id === memo.targetId);
+        return seg?.docId || null;
+    }
+    return null;
+}
+
+function getMemoLinkedCodeIds(memo) {
+    if (!memo) return [];
+    if (memo.type === 'code' && memo.targetId) return [memo.targetId];
+    if (memo.type === 'segment') {
+        const seg = appData.segments.find(s => s.id === memo.targetId);
+        return Array.isArray(seg?.codeIds) ? seg.codeIds : [];
+    }
+    return [];
+}
+
+function getAnnotationSearchText(memo) {
+    const parts = [memo.content || '', memo.tag || ''];
+    if (memo.type === 'document') {
+        const doc = appData.documents.find(d => d.id === memo.targetId);
+        if (doc) parts.push(doc.title || '');
+    }
+    if (memo.type === 'code') {
+        const code = appData.codes.find(c => c.id === memo.targetId);
+        if (code) parts.push(code.name || '');
+    }
+    if (memo.type === 'segment') {
+        const seg = appData.segments.find(s => s.id === memo.targetId);
+        const doc = seg ? appData.documents.find(d => d.id === seg.docId) : null;
+        if (doc) parts.push(doc.title || '');
+    }
+    return parts.join(' ').toLowerCase();
+}
+
+function memoMatchesDateRange(memo, range) {
+    if (!range || range === 'all') return true;
+    const t = memoTimeForSort(memo);
+    if (!t) return false;
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    if (range === 'today') return (now - t) <= dayMs;
+    if (range === '7d') return (now - t) <= (7 * dayMs);
+    if (range === '30d') return (now - t) <= (30 * dayMs);
+    return true;
+}
+
+function goToAnnotationSource(memoId) {
+    const memo = appData.memos.find(m => m.id === memoId);
+    if (!memo) return;
+
+    if (memo.type === 'code' && memo.targetId && appData.codes.some(c => c.id === memo.targetId)) {
+        appData.filterCodeId = memo.targetId;
+        codeViewUiState.mode = 'segments';
+        renderAll();
+        return;
+    }
+    if (memo.type === 'document' && memo.targetId && appData.documents.some(d => d.id === memo.targetId)) {
+        appData.filterCodeId = null;
+        selectDocument(memo.targetId);
+        return;
+    }
+    if (memo.type === 'segment' && memo.targetId) {
+        const segment = appData.segments.find(s => s.id === memo.targetId);
+        if (segment && segment.docId) {
+            goToSegmentLocation(segment.docId, segment.id);
+        }
+    }
 }
 
 // Helper escapeHtml and preserveLineBreaks below
@@ -452,17 +561,184 @@ function renderFilteredView() {
                 <button class="filter-description-btn" onclick="editFilterCodeDescription('${code.id}')">Add description</button>
             </div>`;
     
+    if (!codeViewUiState.annotationCodeId) {
+        codeViewUiState.annotationCodeId = code?.id || '';
+    }
+
     let html = `
-        <div class="code-view-banner">
+        <div class="code-view-banner code-view-banner-main">
             <span class="filter-title"><strong>Code: ${escapeHtml(code.name)}${shortcutDisplay}</strong></span>
             <span class="filter-meta">${totalSegments} segment${totalSegments !== 1 ? 's' : ''} · ${docCount} document${docCount !== 1 ? 's' : ''}</span>
             ${shortcutAction}
         </div>
+        <div class="code-view-banner code-view-banner-switch">
+            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'segments' ? 'active' : ''}" onclick="setCodeViewMode('segments')">Segments</button>
+            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'annotations' ? 'active' : ''}" onclick="setCodeViewMode('annotations')">Annotations</button>
+        </div>
         ${descriptionHtml}
         <div class="document-text">
     `;
-    
-    if (sortedDocs.length === 0) {
+
+    if (codeViewUiState.mode === 'annotations') {
+        const codeOptions = [{ id: '', name: 'All codes' }]
+            .concat(appData.codes.map(c => ({ id: c.id, name: c.name })));
+        const docsWithAnnotations = Array.from(new Set(appData.memos.map(getMemoLinkedDocId).filter(Boolean)));
+        const docOptions = [{ id: '', name: 'All documents' }]
+            .concat(docsWithAnnotations.map(id => {
+                const d = appData.documents.find(doc => doc.id === id);
+                return d ? { id: d.id, name: d.title } : null;
+            }).filter(Boolean));
+
+        if (!codeOptions.some(opt => opt.id === codeViewUiState.annotationCodeId)) {
+            codeViewUiState.annotationCodeId = code?.id || '';
+        }
+        if (!docOptions.some(opt => opt.id === codeViewUiState.annotationDocId)) {
+            codeViewUiState.annotationDocId = '';
+        }
+
+        const filteredMemos = appData.memos
+            .filter(m => m && m.content && String(m.content).trim().length > 0)
+            .filter(m => {
+                if (codeViewUiState.annotationCodeId) {
+                    const linked = getMemoLinkedCodeIds(m);
+                    if (!linked.includes(codeViewUiState.annotationCodeId)) return false;
+                }
+                return true;
+            })
+            .filter(m => {
+                if (!codeViewUiState.annotationDocId) return true;
+                return getMemoLinkedDocId(m) === codeViewUiState.annotationDocId;
+            })
+            .filter(m => memoMatchesDateRange(m, codeViewUiState.annotationDateRange))
+            .filter(m => {
+                const q = (codeViewUiState.annotationQuery || '').trim().toLowerCase();
+                if (!q) return true;
+                return getAnnotationSearchText(m).includes(q);
+            })
+            .sort((a, b) => memoTimeForSort(b) - memoTimeForSort(a));
+
+        html += `
+            <div class="annotation-filters">
+                <input type="text" class="form-input annotation-search-input" value="${escapeHtml(codeViewUiState.annotationQuery)}"
+                    placeholder="Search annotations..." oninput="updateAnnotationViewFilter('annotationQuery', this.value)">
+                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationCodeId', this.value)">
+                    ${codeOptions.map(opt => `<option value="${opt.id}" ${opt.id === codeViewUiState.annotationCodeId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+                </select>
+                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDocId', this.value)">
+                    ${docOptions.map(opt => `<option value="${opt.id}" ${opt.id === codeViewUiState.annotationDocId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+                </select>
+                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDateRange', this.value)">
+                    <option value="all" ${codeViewUiState.annotationDateRange === 'all' ? 'selected' : ''}>All dates</option>
+                    <option value="today" ${codeViewUiState.annotationDateRange === 'today' ? 'selected' : ''}>Today</option>
+                    <option value="7d" ${codeViewUiState.annotationDateRange === '7d' ? 'selected' : ''}>Last 7 days</option>
+                    <option value="30d" ${codeViewUiState.annotationDateRange === '30d' ? 'selected' : ''}>Last 30 days</option>
+                </select>
+            </div>
+            <div class="annotation-list">
+        `;
+
+        if (filteredMemos.length === 0) {
+            html += '<p style="color: var(--text-secondary);">No annotations match these filters.</p>';
+        } else {
+            const docOrder = appData.documents
+                .slice()
+                .sort((a, b) => new Date(a.created) - new Date(b.created))
+                .map(doc => doc.id);
+            const docOrderMap = new Map(docOrder.map((id, idx) => [id, idx]));
+
+            const getMemoLocation = (memo) => {
+                if (memo.type === 'segment') {
+                    const seg = appData.segments.find(s => s.id === memo.targetId);
+                    if (!seg) return { rank: 3, a: Number.MAX_SAFE_INTEGER, b: 0, label: 'Snippet' };
+                    if (seg.pdfRegion) {
+                        return {
+                            rank: 2,
+                            a: seg.pdfRegion.pageNum || 0,
+                            b: seg.pdfRegion.yNorm || 0,
+                            label: `Page ${seg.pdfRegion.pageNum || '?'}`
+                        };
+                    }
+                    return {
+                        rank: 1,
+                        a: Number(seg.startIndex || 0),
+                        b: 0,
+                        label: `Char ${Number(seg.startIndex || 0)}`
+                    };
+                }
+                if (memo.type === 'document') {
+                    return { rank: 0, a: 0, b: 0, label: 'Document note' };
+                }
+                return { rank: 4, a: Number.MAX_SAFE_INTEGER, b: 0, label: 'Code note' };
+            };
+
+            const groupsByDoc = {};
+            const otherGroup = [];
+            filteredMemos.forEach((memo) => {
+                const linkedDocId = getMemoLinkedDocId(memo);
+                if (linkedDocId) {
+                    if (!groupsByDoc[linkedDocId]) groupsByDoc[linkedDocId] = [];
+                    groupsByDoc[linkedDocId].push(memo);
+                } else {
+                    otherGroup.push(memo);
+                }
+            });
+
+            const orderedDocIds = Object.keys(groupsByDoc).sort((a, b) => {
+                const ai = docOrderMap.has(a) ? docOrderMap.get(a) : Number.MAX_SAFE_INTEGER;
+                const bi = docOrderMap.has(b) ? docOrderMap.get(b) : Number.MAX_SAFE_INTEGER;
+                return ai - bi;
+            });
+
+            const renderMemoCard = (memo) => {
+                const linkedDocId = getMemoLinkedDocId(memo);
+                const linkedDoc = linkedDocId ? appData.documents.find(d => d.id === linkedDocId) : null;
+                const linkedCodeIds = getMemoLinkedCodeIds(memo);
+                const linkedCodes = linkedCodeIds.map(id => appData.codes.find(c => c.id === id)?.name).filter(Boolean);
+                const updated = memo.edited || memo.created;
+                const typeLabel = memo.type === 'segment' ? 'Snippet' : (memo.type === 'document' ? 'Document' : 'Code');
+                const location = getMemoLocation(memo);
+                return `
+                    <div class="annotation-item" onclick="goToAnnotationSource('${memo.id}')">
+                        <div class="annotation-item-head">
+                            <span class="annotation-item-type">${typeLabel}</span>
+                            <span class="annotation-item-date">${escapeHtml(new Date(updated).toLocaleString())}</span>
+                        </div>
+                        <div class="annotation-item-text">${preserveLineBreaks(escapeHtml(memo.content || ''))}</div>
+                        <div class="annotation-item-meta">
+                            ${memo.tag ? `<span class="memo-tag-badge">${escapeHtml(memo.tag)}</span>` : ''}
+                            <span>${escapeHtml(location.label)}</span>
+                            ${linkedDoc ? `<span>${escapeHtml(linkedDoc.title)}</span>` : ''}
+                            ${linkedCodes.length > 0 ? `<span>${escapeHtml(linkedCodes.slice(0, 3).join(', '))}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            };
+
+            const sortByDocumentLocation = (a, b) => {
+                const la = getMemoLocation(a);
+                const lb = getMemoLocation(b);
+                if (la.rank !== lb.rank) return la.rank - lb.rank;
+                if (la.a !== lb.a) return la.a - lb.a;
+                if (la.b !== lb.b) return la.b - lb.b;
+                return memoTimeForSort(a) - memoTimeForSort(b);
+            };
+
+            orderedDocIds.forEach((docId) => {
+                const linkedDoc = appData.documents.find(d => d.id === docId);
+                const group = groupsByDoc[docId] || [];
+                group.sort(sortByDocumentLocation);
+                html += `<div class="filter-doc-header" onclick="goToDocumentFromFilter('${docId}')" title="Click to open document">${escapeHtml(linkedDoc?.title || 'Document')}<span class="filter-doc-meta">(${group.length} annotation${group.length !== 1 ? 's' : ''})</span></div>`;
+                html += group.map(renderMemoCard).join('');
+            });
+
+            if (otherGroup.length > 0) {
+                otherGroup.sort((a, b) => memoTimeForSort(b) - memoTimeForSort(a));
+                html += `<div class="filter-doc-header">Project / code annotations<span class="filter-doc-meta">(${otherGroup.length})</span></div>`;
+                html += otherGroup.map(renderMemoCard).join('');
+            }
+        }
+        html += '</div>';
+    } else if (sortedDocs.length === 0) {
         html += '<p style="color: var(--text-secondary);">No segments found for this code.</p>';
     } else {
         sortedDocs.forEach(doc => {
@@ -485,7 +761,7 @@ function renderFilteredView() {
                     : segment.text;
                 const memos = getMemosForTarget('segment', segment.id);
                 const memoHtml = memos.length > 0
-                    ? `<div class="filter-snippet-memo">💭 ${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
+                    ? `<div class="filter-snippet-memo">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
                     : '<div class="filter-snippet-memo empty">No annotation.</div>';
                 const menuBtnHtml = memos.length > 0
                     ? `<button class="filter-snippet-menu-btn" onclick="openSegmentMemoFromFilter('${segment.id}', event)" title="Annotations">⋯</button>`
@@ -515,7 +791,9 @@ function renderFilteredView() {
     
     html += '</div>';
     content.innerHTML = html;
-    hydrateFilterPdfRegionPreviews();
+    if (codeViewUiState.mode === 'segments') {
+        hydrateFilterPdfRegionPreviews();
+    }
 }
 
 async function hydrateFilterPdfRegionPreviews() {
@@ -601,7 +879,7 @@ async function openPdfRegionPreviewModal(segmentId, docId, event) {
     } else {
         notesEl.innerHTML = memos.map((memo, idx) => `
             <div class="pdf-region-preview-note-item">
-                <div class="pdf-region-preview-note-head">Note ${idx + 1}</div>
+                <div class="pdf-region-preview-note-head">Annotation ${idx + 1}</div>
                 <div>${preserveLineBreaks(escapeHtml(memo.content || ''))}</div>
             </div>
         `).join('');
@@ -645,9 +923,21 @@ function showFilterSnippetContextMenu(segmentId, docId, event) {
     
     showContextMenu([
         { label: 'Annotations', onClick: () => openMemoModal('segment', segmentId) },
+        { label: 'Remove coding', onClick: () => deleteCodingFromFilter(segmentId), danger: true },
         { type: 'sep' },
         { label: `Go to location in "${docName}"`, onClick: () => goToSegmentLocation(docId, segmentId) }
     ], event.clientX, event.clientY);
+}
+
+function deleteCodingFromFilter(segmentId) {
+    const segment = appData.segments.find(s => s.id === segmentId);
+    if (!segment) return;
+    if (!confirm('Delete this coding?')) return;
+
+    saveHistory();
+    appData.segments = appData.segments.filter(s => s.id !== segmentId);
+    saveData();
+    renderAll();
 }
 
 function goToSegmentLocation(docId, segmentId) {

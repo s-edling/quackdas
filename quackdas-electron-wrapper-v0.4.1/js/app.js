@@ -3,36 +3,82 @@
  * Initialization, event listeners, keyboard shortcuts
  */
 
-// Initialize application
-document.addEventListener('DOMContentLoaded', function() {
-    loadData();
-    renderAll();
-    updateHistoryButtons();
-    updateSaveStatus();
-    
-    // Initialize PDF.js if available
-    if (typeof initPdfJs === 'function') {
-        initPdfJs();
-    }
-    
-    // Setup drag and drop
-    setupDragAndDrop();
-    
-    // Setup modal close on background click
-    setupModalBackgrounds();
-    
-    // Setup file input label updates
-    setupFileInputs();
-    
-    // Setup context menu dismissal
-    setupContextMenuDismissal();
+function decodeBase64ToArrayBuffer(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
 
-    // Flush lightweight doc access metadata before app/tab closes.
-    window.addEventListener('beforeunload', () => {
-        if (typeof flushDocumentAccessMetaSave === 'function') {
-            flushDocumentAccessMetaSave();
+function applyPlatformShortcutTooltips() {
+    const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || '');
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if (undoBtn) undoBtn.title = isMac ? 'Undo (Cmd+Z)' : 'Undo (Ctrl+Z)';
+    if (redoBtn) redoBtn.title = isMac ? 'Redo (Cmd+Shift+Z)' : 'Redo (Ctrl+Y)';
+}
+
+// Initialize application
+document.addEventListener('DOMContentLoaded', async function() {
+    window.__startupProjectRestoreInProgress = true;
+    try {
+        loadData();
+
+        let reopenedLastProject = false;
+        if (window.electronAPI && typeof window.electronAPI.openLastUsedProject === 'function') {
+            try {
+                const result = await window.electronAPI.openLastUsedProject();
+                if (result && result.ok && result.data) {
+                    reopenedLastProject = true;
+                    if (result.kind === 'qdpx') {
+                        const buffer = decodeBase64ToArrayBuffer(result.data);
+                        await applyImportedQdpx(buffer);
+                    } else if (result.kind === 'json') {
+                        const imported = JSON.parse(result.data);
+                        applyImportedProject(imported);
+                    }
+                }
+            } catch (err) {
+                console.warn('Could not reopen last project on startup:', err);
+            }
         }
-    });
+
+        if (!reopenedLastProject) {
+            renderAll();
+        }
+        updateHistoryButtons();
+        updateSaveStatus();
+        applyPlatformShortcutTooltips();
+        
+        // Initialize PDF.js if available
+        if (typeof initPdfJs === 'function') {
+            initPdfJs();
+        }
+        
+        // Setup drag and drop
+        setupDragAndDrop();
+        
+        // Setup modal close on background click
+        setupModalBackgrounds();
+        
+        // Setup file input label updates
+        setupFileInputs();
+        
+        // Setup context menu dismissal
+        setupContextMenuDismissal();
+        if (typeof startProjectBackupScheduler === 'function') {
+            startProjectBackupScheduler();
+        }
+
+        // Flush lightweight doc access metadata before app/tab closes.
+        window.addEventListener('beforeunload', () => {
+            if (typeof flushDocumentAccessMetaSave === 'function') {
+                flushDocumentAccessMetaSave();
+            }
+        });
+    } finally {
+        window.__startupProjectRestoreInProgress = false;
+    }
 });
 
 // Drag and drop file handling
@@ -132,10 +178,32 @@ document.addEventListener('keydown', function(e) {
         }
     }
 
-    // Ctrl/Cmd + F for search
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    // Ctrl/Cmd + Shift + F for global search
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
         e.preventDefault();
         openSearchModal();
+        return;
+    }
+    // Ctrl/Cmd + F for in-page find
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        if (typeof openInPageSearch === 'function') openInPageSearch();
+        return;
+    }
+    // Escape closes in-page find bar
+    if (e.key === 'Escape') {
+        const bar = document.getElementById('inPageSearchBar');
+        if (bar && bar.classList.contains('show')) {
+            e.preventDefault();
+            if (typeof closeInPageSearch === 'function') closeInPageSearch();
+            return;
+        }
+        const previewModal = document.getElementById('pdfRegionPreviewModal');
+        if (previewModal && previewModal.classList.contains('show')) {
+            e.preventDefault();
+            if (typeof closePdfRegionPreviewModal === 'function') closePdfRegionPreviewModal();
+            return;
+        }
     }
     // Ctrl/Cmd + S for save
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -259,6 +327,9 @@ if (window.electronAPI && window.electronAPI.hasProjectHandle) {
                     appData.lastSaveTime = new Date().toISOString();
                     appData.hasUnsavedChanges = false;
                     if (typeof updateSaveStatus === 'function') updateSaveStatus();
+                    if (typeof createProjectBackup === 'function') {
+                        createProjectBackup('autosave', { force: true, base64 }).catch(() => {});
+                    }
                 }
             }
         } catch (e) {

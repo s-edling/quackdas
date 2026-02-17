@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   saveProject: (data, opts) => ipcRenderer.invoke('project:save', data, opts || {}),
+  openLastUsedProject: () => ipcRenderer.invoke('project:openLastUsed'),
+  createProjectBackup: (data, opts) => ipcRenderer.invoke('project:createBackup', data, opts || {}),
+  listProjectBackups: (opts) => ipcRenderer.invoke('project:listBackups', opts || {}),
+  restoreProjectBackup: (backupId, opts) => ipcRenderer.invoke('project:restoreBackup', backupId, opts || {}),
   hasProjectHandle: () => ipcRenderer.invoke('project:hasHandle'),
   clearProjectHandle: () => ipcRenderer.invoke('project:clearHandle'),
   onOpenProject: (cb) => ipcRenderer.on('project:openData', (_evt, jsonText) => cb(jsonText)),

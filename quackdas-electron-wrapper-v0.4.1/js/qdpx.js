@@ -70,6 +70,67 @@ function parseColor(qdpxColor) {
     return '#' + color.toLowerCase();
 }
 
+function buildQdpxId(prefix) {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function getAttrFirst(el, names) {
+    if (!el || !names) return '';
+    for (const name of names) {
+        const value = el.getAttribute(name);
+        if (value !== null && value !== undefined && value !== '') return value;
+    }
+    return '';
+}
+
+function applyMetadataValue(doc, key, value) {
+    if (!doc || !key) return false;
+    const v = (value === null || value === undefined) ? '' : String(value).trim();
+    if (!v) return false;
+    if (!doc.metadata || typeof doc.metadata !== 'object') doc.metadata = {};
+    doc.metadata[String(key)] = v;
+    return true;
+}
+
+function setQdpxReport(direction, report) {
+    if (typeof window === 'undefined' || !window) return;
+    if (direction === 'export') window.lastQdpxExportReport = report;
+    if (direction === 'import') window.lastQdpxImportReport = report;
+}
+
+function summarizeQdpxCompatibilityReport(report) {
+    if (!report || typeof report !== 'object') return '';
+    const lines = [];
+    const label = report.direction === 'export' ? 'QDPX export' : 'QDPX import';
+    lines.push(`${label} summary:`);
+
+    if (report.direction === 'export') {
+        lines.push(`- Plain-text selections exported: ${report.exportedPlainTextSelections || 0}`);
+        if ((report.exportedPdfRegionSelections || 0) > 0) {
+            lines.push(`- PDF region codings preserved via Quackdas extension: ${report.exportedPdfRegionSelections}`);
+        }
+        if ((report.exportedMetadataFields || 0) > 0) {
+            lines.push(`- Document metadata fields preserved via Quackdas extension: ${report.exportedMetadataFields}`);
+        }
+    } else {
+        lines.push(`- Sources imported: ${report.importedSources || 0}`);
+        lines.push(`- Selections imported: ${report.importedPlainTextSelections || 0}`);
+        if ((report.importedPdfRegionSelections || 0) > 0) {
+            lines.push(`- PDF region codings restored from Quackdas extension: ${report.importedPdfRegionSelections}`);
+        }
+        if ((report.importedMetadataFields || 0) > 0) {
+            lines.push(`- Metadata fields mapped/imported: ${report.importedMetadataFields}`);
+        }
+    }
+
+    if (Array.isArray(report.warnings) && report.warnings.length > 0) {
+        lines.push('');
+        lines.push('Compatibility notes:');
+        report.warnings.slice(0, 5).forEach(w => lines.push(`- ${w}`));
+    }
+    return lines.join('\n');
+}
+
 /**
  * Export project to QDPX format
  * @returns {Promise<Blob>} - QDPX file as a Blob
@@ -96,6 +157,14 @@ async function exportToQdpx() {
     appData.memos.forEach(memo => getOrCreateGuid(memo.id));
     appData.folders.forEach(folder => getOrCreateGuid(folder.id));
     
+    const exportReport = {
+        direction: 'export',
+        exportedPlainTextSelections: 0,
+        exportedPdfRegionSelections: 0,
+        exportedMetadataFields: 0,
+        warnings: []
+    };
+
     // Add source files and build source list
     const sources = [];
     for (const doc of appData.documents) {
@@ -216,22 +285,27 @@ async function exportToQdpx() {
     });
     xml += '  </Sources>\n';
     
-    // Variables (document metadata as variables)
+    // Variables (document metadata keys as variable definitions)
     xml += '  <Variables>\n';
-    const hasMetadata = appData.documents.some(d => d.metadata && Object.keys(d.metadata).length > 0);
-    if (hasMetadata) {
-        // Define variable types
-        const varTypes = ['participantId', 'date', 'location', 'age', 'gender', 'custom1', 'notes'];
-        varTypes.forEach((varName, idx) => {
-            xml += `    <Variable guid="${generateGUID()}" name="${varName}" typeOfVariable="Text"/>\n`;
+    const metadataKeys = new Set();
+    appData.documents.forEach(doc => {
+        if (!doc.metadata || typeof doc.metadata !== 'object') return;
+        Object.keys(doc.metadata).forEach(key => {
+            const value = doc.metadata[key];
+            if (value !== null && value !== undefined && String(value).trim() !== '') {
+                metadataKeys.add(key);
+            }
         });
-    }
+    });
+    Array.from(metadataKeys).sort().forEach(varName => {
+        xml += `    <Variable guid="${generateGUID()}" name="${escapeXml(varName)}" typeOfVariable="Text"/>\n`;
+    });
     xml += '  </Variables>\n';
     
     // Selections (coded segments)
     xml += '  <Selections>\n';
     appData.segments.forEach(segment => {
-        if (segment.pdfRegion) return; // Region-based PDF codings are app-specific; not representable in plain-text QDPX selections.
+        if (segment.pdfRegion) return;
         if (!Number.isFinite(segment.startIndex) || !Number.isFinite(segment.endIndex) || segment.endIndex <= segment.startIndex) return;
         const segGuid = getOrCreateGuid(segment.id);
         const sourceGuid = getOrCreateGuid(segment.docId);
@@ -249,6 +323,7 @@ async function exportToQdpx() {
         });
         
         xml += '    </PlainTextSelection>\n';
+        exportReport.exportedPlainTextSelections += 1;
     });
     xml += '  </Selections>\n';
     
@@ -257,9 +332,13 @@ async function exportToQdpx() {
     appData.memos.forEach(memo => {
         const memoGuid = getOrCreateGuid(memo.id);
         const targetGuid = memo.targetId ? getOrCreateGuid(memo.targetId) : null;
+        const memoTag = String(memo.tag || '').trim();
+        const memoEdited = memo.edited || memo.created;
         
         xml += `    <Note guid="${memoGuid}" `;
         xml += `name="${escapeXml(memo.type + ' memo')}" `;
+        if (memoTag) xml += `quackdasTag="${escapeXml(memoTag)}" `;
+        if (memoEdited) xml += `quackdasEdited="${escapeXml(String(memoEdited))}" `;
         xml += `creatingUserGUID="${userGuid}" `;
         xml += `creationDateTime="${formatDateTime(memo.created)}">\n`;
         xml += `      <PlainTextContent>${escapeXml(memo.content)}</PlainTextContent>\n`;
@@ -287,6 +366,60 @@ async function exportToQdpx() {
         xml += '    </Set>\n';
     });
     xml += '  </Sets>\n';
+
+    // Quackdas-specific extensions (portable for Quackdas round-trip, ignored by other tools)
+    xml += '  <QuackdasExtensions version="1">\n';
+
+    xml += '    <PdfRegionSelections>\n';
+    appData.segments.forEach(segment => {
+        if (!segment || !segment.pdfRegion) return;
+        const sourceGuid = getOrCreateGuid(segment.docId);
+        const segGuid = getOrCreateGuid(segment.id);
+        const r = (typeof normalizePdfRegionShape === 'function')
+            ? normalizePdfRegionShape(segment.pdfRegion)
+            : (segment.pdfRegion || {});
+        xml += `      <PdfRegionSelection guid="${segGuid}" `;
+        xml += `sourceGUID="${sourceGuid}" `;
+        xml += `pageNum="${Number(r.pageNum) || 1}" `;
+        xml += `x="${Number(r.xNorm) || 0}" y="${Number(r.yNorm) || 0}" `;
+        xml += `width="${Number(r.wNorm) || 0}" height="${Number(r.hNorm) || 0}" `;
+        xml += `xNorm="${Number(r.xNorm) || 0}" yNorm="${Number(r.yNorm) || 0}" `;
+        xml += `wNorm="${Number(r.wNorm) || 0}" hNorm="${Number(r.hNorm) || 0}" `;
+        if (Number.isFinite(segment.startIndex)) xml += `startPosition="${segment.startIndex}" `;
+        if (Number.isFinite(segment.endIndex)) xml += `endPosition="${segment.endIndex}" `;
+        xml += `text="${escapeXml(segment.text || '')}">\n`;
+        segment.codeIds.forEach(codeId => {
+            const codeGuid = getOrCreateGuid(codeId);
+            xml += `        <Coding guid="${generateGUID()}" codeGUID="${codeGuid}"/>\n`;
+        });
+        xml += '      </PdfRegionSelection>\n';
+        exportReport.exportedPdfRegionSelections += 1;
+    });
+    xml += '    </PdfRegionSelections>\n';
+
+    xml += '    <DocumentMetadata>\n';
+    appData.documents.forEach(doc => {
+        if (!doc || !doc.metadata || typeof doc.metadata !== 'object') return;
+        const entries = Object.entries(doc.metadata).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '');
+        if (entries.length === 0) return;
+        const sourceGuid = getOrCreateGuid(doc.id);
+        xml += `      <DocumentMeta sourceGUID="${sourceGuid}">\n`;
+        entries.forEach(([key, value]) => {
+            xml += `        <Field key="${escapeXml(key)}" value="${escapeXml(String(value))}"/>\n`;
+            exportReport.exportedMetadataFields += 1;
+        });
+        xml += '      </DocumentMeta>\n';
+    });
+    xml += '    </DocumentMetadata>\n';
+
+    xml += '  </QuackdasExtensions>\n';
+
+    if (exportReport.exportedPdfRegionSelections > 0) {
+        exportReport.warnings.push('Some tools may ignore Quackdas PDF region extensions and only import plain-text selections.');
+    }
+    if (exportReport.exportedMetadataFields > 0) {
+        exportReport.warnings.push('Document metadata is preserved in a Quackdas extension block for round-trip fidelity.');
+    }
     
     xml += '</Project>\n';
     
@@ -299,7 +432,7 @@ async function exportToQdpx() {
         compression: 'DEFLATE',
         compressionOptions: { level: 6 }
     });
-    
+    setQdpxReport('export', exportReport);
     return blob;
 }
 
@@ -345,6 +478,15 @@ async function importFromQdpx(qdpxData) {
     // Build new project
     const project = makeEmptyProject();
     project.projectName = projectEl.getAttribute('name') || 'Imported Project';
+    const importReport = {
+        direction: 'import',
+        importedSources: 0,
+        importedPlainTextSelections: 0,
+        importedPdfRegionSelections: 0,
+        importedMetadataFields: 0,
+        warnings: []
+    };
+    const docsByGuid = {};
     
     // Parse codes
     const codeElements = xmlDoc.querySelectorAll('CodeBook > Codes > Code, CodeBook > Codes Code');
@@ -359,7 +501,7 @@ async function importFromQdpx(qdpxData) {
         const descEl = codeEl.querySelector(':scope > Description');
         const description = descEl ? descEl.textContent : '';
         
-        const codeId = 'code_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        const codeId = buildQdpxId('code');
         guidToId[guid] = codeId;
         
         const code = {
@@ -394,7 +536,7 @@ async function importFromQdpx(qdpxData) {
         const isPdf = sourceEl.tagName === 'PDFSource';
         const path = sourceEl.getAttribute('path') || sourceEl.getAttribute('plainTextPath');
         
-        const docId = 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        const docId = buildQdpxId('doc');
         guidToId[guid] = docId;
         
         let content = '';
@@ -447,6 +589,21 @@ async function importFromQdpx(qdpxData) {
             created: sourceEl.getAttribute('creationDateTime') || new Date().toISOString(),
             lastAccessed: sourceEl.getAttribute('modifiedDateTime') || new Date().toISOString()
         };
+
+        const sourceAttributeExclusions = new Set([
+            'guid', 'name', 'path', 'plainTextPath', 'creatingUserGUID',
+            'creationDateTime', 'modifyingUserGUID', 'modifiedDateTime'
+        ]);
+        Array.from(sourceEl.attributes || []).forEach(attr => {
+            if (!attr || sourceAttributeExclusions.has(attr.name)) return;
+            if (applyMetadataValue(doc, attr.name, attr.value)) {
+                importReport.importedMetadataFields += 1;
+            }
+        });
+        const sourceDescEl = sourceEl.querySelector(':scope > Description');
+        if (sourceDescEl && applyMetadataValue(doc, 'notes', sourceDescEl.textContent)) {
+            importReport.importedMetadataFields += 1;
+        }
         
         if (isPdf && pdfData) {
             doc.pdfData = pdfData;
@@ -456,7 +613,58 @@ async function importFromQdpx(qdpxData) {
         }
         
         project.documents.push(doc);
+        docsByGuid[guid] = doc;
+        importReport.importedSources += 1;
     }
+
+    // Parse variables/cases/attributes (best effort for cross-tool imports)
+    const variableNameByGuid = {};
+    xmlDoc.querySelectorAll('Variables > Variable').forEach(variableEl => {
+        const guid = getAttrFirst(variableEl, ['guid', 'id', 'variableGUID']);
+        const name = getAttrFirst(variableEl, ['name', 'label']);
+        if (guid && name) variableNameByGuid[guid] = name;
+    });
+
+    xmlDoc.querySelectorAll('Cases > Case').forEach(caseEl => {
+        const memberGuids = [];
+        caseEl.querySelectorAll(':scope > MemberSource, :scope > SourceRef, :scope > CaseSourceRef').forEach(memberEl => {
+            const sourceGuid = getAttrFirst(memberEl, ['targetGUID', 'sourceGUID', 'guid', 'id']);
+            if (sourceGuid) memberGuids.push(sourceGuid);
+        });
+
+        if (memberGuids.length === 0) {
+            const sourceGuid = getAttrFirst(caseEl, ['sourceGUID', 'targetGUID']);
+            if (sourceGuid) memberGuids.push(sourceGuid);
+        }
+
+        if (memberGuids.length === 0) return;
+
+        caseEl.querySelectorAll(':scope > VariableValue, :scope > AttributeValue, :scope > CaseVariableValue').forEach(valueEl => {
+            const variableGuid = getAttrFirst(valueEl, ['variableGUID', 'variableGuid', 'variableId']);
+            const key = variableNameByGuid[variableGuid] || getAttrFirst(valueEl, ['variableName', 'name', 'key']);
+            const value = getAttrFirst(valueEl, ['value', 'text', 'content']) || (valueEl.textContent || '').trim();
+            if (!key || !value) return;
+
+            memberGuids.forEach(sourceGuid => {
+                const doc = docsByGuid[sourceGuid];
+                if (!doc) return;
+                if (applyMetadataValue(doc, key, value)) importReport.importedMetadataFields += 1;
+            });
+        });
+    });
+
+    // Parse Quackdas document metadata extension
+    xmlDoc.querySelectorAll('QuackdasExtensions > DocumentMetadata > DocumentMeta').forEach(docMetaEl => {
+        const sourceGuid = getAttrFirst(docMetaEl, ['sourceGUID', 'targetGUID']);
+        const doc = docsByGuid[sourceGuid];
+        if (!doc) return;
+        docMetaEl.querySelectorAll(':scope > Field').forEach(fieldEl => {
+            const key = getAttrFirst(fieldEl, ['key', 'name']);
+            const value = getAttrFirst(fieldEl, ['value']) || (fieldEl.textContent || '').trim();
+            if (!key || !value) return;
+            if (applyMetadataValue(doc, key, value)) importReport.importedMetadataFields += 1;
+        });
+    });
     
     // Parse selections (coded segments)
     const selectionElements = xmlDoc.querySelectorAll('Selections > PlainTextSelection');
@@ -473,7 +681,7 @@ async function importFromQdpx(qdpxData) {
         const doc = project.documents.find(d => d.id === docId);
         if (!doc) return;
         
-        const segId = 'seg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        const segId = buildQdpxId('seg');
         guidToId[guid] = segId;
         
         // Get codes applied to this selection
@@ -500,6 +708,55 @@ async function importFromQdpx(qdpxData) {
         };
         
         project.segments.push(segment);
+        importReport.importedPlainTextSelections += 1;
+    });
+
+    // Parse Quackdas PDF region extension
+    xmlDoc.querySelectorAll('QuackdasExtensions > PdfRegionSelections > PdfRegionSelection').forEach(selEl => {
+        const guid = getAttrFirst(selEl, ['guid']);
+        const sourceGuid = getAttrFirst(selEl, ['sourceGUID']);
+        const docId = guidToId[sourceGuid];
+        if (!docId) return;
+
+        const codingElements = selEl.querySelectorAll(':scope > Coding');
+        const codeIds = [];
+        codingElements.forEach(codingEl => {
+            const codeGuid = getAttrFirst(codingEl, ['codeGUID']);
+            const codeId = guidToId[codeGuid];
+            if (codeId && !codeIds.includes(codeId)) codeIds.push(codeId);
+        });
+        if (codeIds.length === 0) return;
+
+        const segId = buildQdpxId('seg');
+        if (guid) guidToId[guid] = segId;
+
+        const startPosition = parseInt(getAttrFirst(selEl, ['startPosition']), 10);
+        const endPosition = parseInt(getAttrFirst(selEl, ['endPosition']), 10);
+        const segment = {
+            id: segId,
+            docId: docId,
+            text: getAttrFirst(selEl, ['text']) || '',
+            codeIds,
+            created: new Date().toISOString(),
+            pdfRegion: (typeof normalizePdfRegionShape === 'function' ? normalizePdfRegionShape({
+                pageNum: parseInt(getAttrFirst(selEl, ['pageNum']), 10) || 1,
+                xNorm: parseFloat(getAttrFirst(selEl, ['xNorm', 'x'])) || 0,
+                yNorm: parseFloat(getAttrFirst(selEl, ['yNorm', 'y'])) || 0,
+                wNorm: parseFloat(getAttrFirst(selEl, ['wNorm', 'width'])) || 0,
+                hNorm: parseFloat(getAttrFirst(selEl, ['hNorm', 'height'])) || 0
+            }) : {
+                pageNum: parseInt(getAttrFirst(selEl, ['pageNum']), 10) || 1,
+                xNorm: parseFloat(getAttrFirst(selEl, ['xNorm', 'x'])) || 0,
+                yNorm: parseFloat(getAttrFirst(selEl, ['yNorm', 'y'])) || 0,
+                wNorm: parseFloat(getAttrFirst(selEl, ['wNorm', 'width'])) || 0,
+                hNorm: parseFloat(getAttrFirst(selEl, ['hNorm', 'height'])) || 0
+            })
+        };
+        if (Number.isFinite(startPosition)) segment.startIndex = startPosition;
+        if (Number.isFinite(endPosition)) segment.endIndex = endPosition;
+
+        project.segments.push(segment);
+        importReport.importedPdfRegionSelections += 1;
     });
     
     // Parse notes (memos)
@@ -512,7 +769,7 @@ async function importFromQdpx(qdpxData) {
         const noteRefEl = noteEl.querySelector('NoteRef');
         const targetGuid = noteRefEl ? noteRefEl.getAttribute('targetGUID') : null;
         
-        const memoId = 'memo_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        const memoId = buildQdpxId('memo');
         
         // Determine memo type based on target
         let memoType = 'project';
@@ -535,7 +792,9 @@ async function importFromQdpx(qdpxData) {
             type: memoType,
             targetId: targetId,
             content: content,
-            created: noteEl.getAttribute('creationDateTime') || new Date().toISOString()
+            tag: noteEl.getAttribute('quackdasTag') || '',
+            created: noteEl.getAttribute('creationDateTime') || new Date().toISOString(),
+            edited: noteEl.getAttribute('quackdasEdited') || noteEl.getAttribute('creationDateTime') || new Date().toISOString()
         };
         
         project.memos.push(memo);
@@ -550,7 +809,7 @@ async function importFromQdpx(qdpxData) {
         const descEl = setEl.querySelector('Description');
         const description = descEl ? descEl.textContent : '';
         
-        const folderId = 'folder_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        const folderId = buildQdpxId('folder');
         guidToId[guid] = folderId;
         
         const folder = {
@@ -582,7 +841,10 @@ async function importFromQdpx(qdpxData) {
     if (project.documents.length > 0) {
         project.currentDocId = project.documents[0].id;
     }
-    
+    if (importReport.importedPdfRegionSelections > 0) {
+        importReport.warnings.push('PDF region codings were restored from a Quackdas extension block and may not exist in generic QDPX files.');
+    }
+    setQdpxReport('import', importReport);
     return project;
 }
 

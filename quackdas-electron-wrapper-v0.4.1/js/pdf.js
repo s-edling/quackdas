@@ -21,7 +21,8 @@ let currentPdfState = {
     textLayerRenderTask: null,
     renderToken: 0,
     ocrPromise: null,
-    pendingRegion: null
+    pendingRegion: null,
+    pendingGoToRegion: null
 };
 const pdfRegionPreviewCache = new Map();
 const pdfRegionPreviewInflight = new Map();
@@ -787,8 +788,23 @@ async function renderPdfDocument(doc, container) {
         }
     }
 
-    // Render first page
+    // Render first page.
+    // Some PDFs intermittently show a blank initial canvas on first paint in Electron;
+    // schedule one immediate retry to stabilize first-page rendering.
     await renderPdfPage(1, doc, renderToken);
+    setTimeout(() => {
+        if (renderToken !== currentPdfState.renderToken) return;
+        if (currentPdfState.docId !== doc.id) return;
+        if (currentPdfState.currentPage !== 1) return;
+        renderPdfPage(1, doc, renderToken).catch(() => {});
+    }, 0);
+
+    // If navigation was requested before the PDF renderer was ready, apply it now.
+    if (currentPdfState.pendingGoToRegion && currentPdfState.pendingGoToRegion.docId === doc.id) {
+        const pending = currentPdfState.pendingGoToRegion;
+        currentPdfState.pendingGoToRegion = null;
+        pdfGoToRegion(doc, pending.region, pending.segmentId);
+    }
 }
 
 /**
@@ -1071,17 +1087,28 @@ function pdfGoToPosition(doc, charPos) {
 
 function pdfGoToRegion(doc, region, segmentId = null) {
     if (!doc || !region || !region.pageNum) return;
-    renderPdfPage(region.pageNum, doc);
-    setTimeout(() => {
-        if (segmentId) {
-            const el = document.querySelector(`.pdf-coded-region[data-segment-id="${segmentId}"]`);
-            if (el) {
-                el.classList.add('flash');
-                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-                setTimeout(() => el.classList.remove('flash'), 900);
-            }
+    const normalizedRegion = (typeof normalizePdfRegionShape === 'function')
+        ? normalizePdfRegionShape(region)
+        : region;
+
+    if (!currentPdfState.pdfDoc || currentPdfState.docId !== doc.id) {
+        currentPdfState.pendingGoToRegion = {
+            docId: doc.id,
+            region: normalizedRegion,
+            segmentId: segmentId || null
+        };
+        return;
+    }
+
+    Promise.resolve(renderPdfPage(normalizedRegion.pageNum, doc)).then(() => {
+        if (!segmentId) return;
+        const el = document.querySelector(`.pdf-coded-region[data-segment-id="${segmentId}"]`);
+        if (el) {
+            el.classList.add('flash');
+            el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+            setTimeout(() => el.classList.remove('flash'), 900);
         }
-    }, 60);
+    }).catch(() => {});
 }
 
 /**

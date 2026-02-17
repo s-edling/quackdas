@@ -4,10 +4,16 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 
 let win;
 let currentProjectPath = null;
 let isQuitting = false;
+
+const BACKUP_MAX_RECENT = 20;
+const BACKUP_DAILY_DAYS = 14;
+const BACKUP_DIR_NAME = 'project-backups';
+const LAST_PROJECT_FILE = 'last-project-path.json';
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -31,6 +37,116 @@ let isQuitting = false;
 // Ensure macOS menus show the correct app name
 try { app.setName('Quackdas'); } catch {}
 const isMac = process.platform === 'darwin';
+
+function sanitizeName(name, fallback = 'untitled-project') {
+  return String(name || fallback)
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64) || fallback;
+}
+
+function getLastProjectPathFile() {
+  return path.join(app.getPath('userData'), LAST_PROJECT_FILE);
+}
+
+function persistLastProjectPath(projectPath) {
+  try {
+    const payload = { path: projectPath || null, updatedAt: new Date().toISOString() };
+    fs.writeFileSync(getLastProjectPathFile(), JSON.stringify(payload), 'utf8');
+  } catch (_) {}
+}
+
+function readLastProjectPath() {
+  try {
+    const raw = fs.readFileSync(getLastProjectPathFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    const p = parsed && typeof parsed.path === 'string' ? parsed.path : null;
+    return p || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getBackupRootDir() {
+  return path.join(app.getPath('userData'), BACKUP_DIR_NAME);
+}
+
+function getBackupBucket(projectName = 'untitled-project') {
+  if (currentProjectPath) {
+    const abs = path.resolve(currentProjectPath);
+    const hash = crypto.createHash('sha1').update(abs).digest('hex').slice(0, 12);
+    const base = sanitizeName(path.basename(abs, path.extname(abs)), 'project');
+    return `${hash}-${base}`;
+  }
+  return `unsaved-${sanitizeName(projectName, 'untitled-project')}`;
+}
+
+function parseBackupReason(fileName) {
+  const base = fileName.replace(/\.qdpx$/i, '');
+  const parts = base.split('__');
+  return parts[1] ? parts[1].replace(/-/g, ' ') : 'auto backup';
+}
+
+function makeBackupFileName(reason = 'auto-backup') {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const safeReason = sanitizeName(reason, 'auto-backup');
+  return `${stamp}__${safeReason}.qdpx`;
+}
+
+async function pruneBackups(backupDir) {
+  const names = await fs.promises.readdir(backupDir);
+  const qdpxNames = names.filter(n => /\.qdpx$/i.test(n));
+  const rows = await Promise.all(qdpxNames.map(async (name) => {
+    const fullPath = path.join(backupDir, name);
+    const stat = await fs.promises.stat(fullPath);
+    return { name, fullPath, mtimeMs: stat.mtimeMs };
+  }));
+  rows.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  const keep = new Set();
+  rows.slice(0, BACKUP_MAX_RECENT).forEach(r => keep.add(r.name));
+
+  const now = Date.now();
+  const maxAgeMs = BACKUP_DAILY_DAYS * 24 * 60 * 60 * 1000;
+  const keptByDay = new Set();
+
+  for (const row of rows.slice(BACKUP_MAX_RECENT)) {
+    const age = now - row.mtimeMs;
+    if (age > maxAgeMs) continue;
+    const dayKey = new Date(row.mtimeMs).toISOString().slice(0, 10);
+    if (keptByDay.has(dayKey)) continue;
+    keep.add(row.name);
+    keptByDay.add(dayKey);
+  }
+
+  const deletes = rows.filter(r => !keep.has(r.name));
+  await Promise.all(deletes.map(r => fs.promises.unlink(r.fullPath).catch(() => {})));
+}
+
+async function listBackupsForBucket(projectName) {
+  const bucket = getBackupBucket(projectName);
+  const backupDir = path.join(getBackupRootDir(), bucket);
+  let names = [];
+  try {
+    names = await fs.promises.readdir(backupDir);
+  } catch (_) {
+    return { ok: true, backups: [] };
+  }
+  const qdpxNames = names.filter(n => /\.qdpx$/i.test(n));
+  const backups = await Promise.all(qdpxNames.map(async (name) => {
+    const fullPath = path.join(backupDir, name);
+    const stat = await fs.promises.stat(fullPath);
+    return {
+      id: name,
+      createdAt: new Date(stat.mtimeMs).toISOString(),
+      sizeBytes: stat.size,
+      reason: parseBackupReason(name)
+    };
+  }));
+  backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return { ok: true, backups };
+}
 
 
 function createWindow() {
@@ -153,11 +269,13 @@ async function openProject() {
     // QDPX file - read as binary and send to renderer
     const buffer = fs.readFileSync(filePath);
     currentProjectPath = filePath;
+    persistLastProjectPath(currentProjectPath);
     win.webContents.send('project:openQdpx', buffer);
   } else {
     // Legacy JSON file
     const jsonText = fs.readFileSync(filePath, 'utf-8');
     currentProjectPath = filePath;
+    persistLastProjectPath(currentProjectPath);
     win.webContents.send('project:openData', jsonText);
   }
 }
@@ -169,6 +287,7 @@ ipcMain.handle('project:open', async () => {
 
 ipcMain.handle('project:clearHandle', async () => {
   currentProjectPath = null;
+  persistLastProjectPath(null);
   return { ok: true };
 });
 
@@ -207,10 +326,84 @@ ipcMain.handle('project:save', async (_evt, data, opts) => {
       // Legacy JSON format
       fs.writeFileSync(currentProjectPath, data, 'utf-8');
     }
+    persistLastProjectPath(currentProjectPath);
 
     return { ok: true, path: currentProjectPath };
   } catch (err) {
     dialog.showErrorBox('Save failed', err.message || String(err));
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('project:openLastUsed', async () => {
+  try {
+    const rememberedPath = readLastProjectPath();
+    if (!rememberedPath) return { ok: false, reason: 'none' };
+    if (!fs.existsSync(rememberedPath)) {
+      persistLastProjectPath(null);
+      return { ok: false, reason: 'missing' };
+    }
+
+    const ext = path.extname(rememberedPath).toLowerCase();
+    currentProjectPath = rememberedPath;
+    persistLastProjectPath(currentProjectPath);
+
+    if (ext === '.qdpx') {
+      const buffer = fs.readFileSync(rememberedPath);
+      return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
+    }
+    const jsonText = fs.readFileSync(rememberedPath, 'utf-8');
+    return { ok: true, kind: 'json', data: jsonText };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('project:createBackup', async (_evt, data, opts = {}) => {
+  try {
+    if (!data || typeof data !== 'string') {
+      return { ok: false, error: 'Invalid backup payload.' };
+    }
+    const reason = String(opts.reason || 'auto-backup');
+    const projectName = String(opts.projectName || 'untitled-project');
+    const bucket = getBackupBucket(projectName);
+    const backupDir = path.join(getBackupRootDir(), bucket);
+    await fs.promises.mkdir(backupDir, { recursive: true });
+
+    const backupName = makeBackupFileName(reason);
+    const backupPath = path.join(backupDir, backupName);
+    const buffer = Buffer.from(data, 'base64');
+    await fs.promises.writeFile(backupPath, buffer);
+    await pruneBackups(backupDir);
+
+    return { ok: true, id: backupName };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
+
+ipcMain.handle('project:listBackups', async (_evt, opts = {}) => {
+  try {
+    const projectName = String(opts.projectName || 'untitled-project');
+    return await listBackupsForBucket(projectName);
+  } catch (err) {
+    return { ok: false, error: err.message || String(err), backups: [] };
+  }
+});
+
+ipcMain.handle('project:restoreBackup', async (_evt, backupId, opts = {}) => {
+  try {
+    const projectName = String(opts.projectName || 'untitled-project');
+    const id = path.basename(String(backupId || ''));
+    if (!id || !/\.qdpx$/i.test(id)) {
+      return { ok: false, error: 'Invalid backup identifier.' };
+    }
+
+    const bucket = getBackupBucket(projectName);
+    const backupPath = path.join(getBackupRootDir(), bucket, id);
+    const data = await fs.promises.readFile(backupPath);
+    return { ok: true, kind: 'qdpx', data: data.toString('base64') };
+  } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
 });
@@ -229,6 +422,8 @@ ipcMain.handle('file:openProjectFile', async () => {
   try {
     const filePath = filePaths[0];
     const ext = path.extname(filePath).toLowerCase();
+    currentProjectPath = filePath;
+    persistLastProjectPath(currentProjectPath);
     
     if (ext === '.qdpx') {
       const buffer = fs.readFileSync(filePath);

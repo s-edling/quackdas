@@ -4,6 +4,7 @@
  */
 
 function openSearchModal() {
+    if (typeof closeInPageSearch === 'function') closeInPageSearch();
     if (appData.documents.length === 0) {
         alert('No documents to search. Import or paste a document first.');
         return;
@@ -22,7 +23,7 @@ function openSearchModal() {
         </div>
     `;
     
-    list.innerHTML = '<p style="color: var(--text-tertiary); text-align: center; padding: 40px;">Type to search across all documents</p>';
+    list.innerHTML = '<p style="color: var(--text-tertiary); text-align: center; padding: 40px;">Type to search across documents, code descriptions, and annotations</p>';
     
     // Add enter key handler
     document.getElementById('modalSearchInput').addEventListener('keydown', function(e) {
@@ -141,81 +142,129 @@ function searchAllDocuments(query) {
     // Pre-compile all regex patterns once (avoid recompilation per document)
     const notRegexes = parsed.notTerms.map(term => new RegExp(term, 'gi'));
     const termRegexes = parsed.terms.map(term => new RegExp(term, 'gi'));
-    
-    appData.documents.forEach(doc => {
+
+    const collectMatchData = (text) => {
+        const sourceText = String(text || '');
         let matches = true;
         let matchCount = 0;
-        let snippets = [];
-        
-        // Check NOT terms first - if any match, exclude this document
+        const snippets = [];
+
         for (const regex of notRegexes) {
-            regex.lastIndex = 0; // Reset for reuse
-            if (regex.test(doc.content)) {
+            regex.lastIndex = 0;
+            if (regex.test(sourceText)) {
                 matches = false;
                 break;
             }
         }
-        
-        if (!matches) return;
-        
-        // Check positive terms
+        if (!matches) return { matches: false, matchCount: 0, snippets: [] };
+
         if (parsed.type === 'AND' || parsed.type === 'SIMPLE') {
-            // All terms must match
             for (const regex of termRegexes) {
                 regex.lastIndex = 0;
-                const termMatches = doc.content.match(regex);
+                const termMatches = sourceText.match(regex);
                 if (!termMatches) {
                     matches = false;
                     break;
                 }
                 matchCount += termMatches.length;
-                
-                // Collect snippets for this term
                 regex.lastIndex = 0;
                 let match;
-                while ((match = regex.exec(doc.content)) !== null && snippets.length < 3) {
+                while ((match = regex.exec(sourceText)) !== null && snippets.length < 3) {
                     const start = Math.max(0, match.index - 50);
-                    const end = Math.min(doc.content.length, match.index + match[0].length + 50);
-                    let snippet = doc.content.substring(start, end);
+                    const end = Math.min(sourceText.length, match.index + match[0].length + 50);
+                    let snippet = sourceText.substring(start, end);
                     if (start > 0) snippet = '...' + snippet;
-                    if (end < doc.content.length) snippet = snippet + '...';
-                    snippets.push({ text: snippet, matchStart: match.index - start, matchEnd: match.index - start + match[0].length });
+                    if (end < sourceText.length) snippet += '...';
+                    snippets.push({ text: snippet });
                 }
             }
         } else if (parsed.type === 'OR') {
-            // At least one term must match
             let anyMatch = false;
             for (const regex of termRegexes) {
                 regex.lastIndex = 0;
-                const termMatches = doc.content.match(regex);
-                if (termMatches) {
-                    anyMatch = true;
-                    matchCount += termMatches.length;
-                    
-                    // Collect snippets
-                    regex.lastIndex = 0;
-                    let match;
-                    while ((match = regex.exec(doc.content)) !== null && snippets.length < 3) {
-                        const start = Math.max(0, match.index - 50);
-                        const end = Math.min(doc.content.length, match.index + match[0].length + 50);
-                        let snippet = doc.content.substring(start, end);
-                        if (start > 0) snippet = '...' + snippet;
-                        if (end < doc.content.length) snippet = snippet + '...';
-                        snippets.push({ text: snippet, matchStart: match.index - start, matchEnd: match.index - start + match[0].length });
-                    }
+                const termMatches = sourceText.match(regex);
+                if (!termMatches) continue;
+                anyMatch = true;
+                matchCount += termMatches.length;
+                regex.lastIndex = 0;
+                let match;
+                while ((match = regex.exec(sourceText)) !== null && snippets.length < 3) {
+                    const start = Math.max(0, match.index - 50);
+                    const end = Math.min(sourceText.length, match.index + match[0].length + 50);
+                    let snippet = sourceText.substring(start, end);
+                    if (start > 0) snippet = '...' + snippet;
+                    if (end < sourceText.length) snippet += '...';
+                    snippets.push({ text: snippet });
                 }
             }
             matches = anyMatch;
         }
-        
-        if (matches && (parsed.terms.length > 0 || parsed.notTerms.length > 0)) {
-            results.push({
-                docId: doc.id,
-                title: doc.title,
-                matchCount: matchCount,
-                snippets: snippets
-            });
+
+        if (!(parsed.terms.length > 0 || parsed.notTerms.length > 0)) {
+            matches = false;
         }
+        return { matches, matchCount, snippets };
+    };
+
+    appData.documents.forEach(doc => {
+        const result = collectMatchData(doc.content);
+        if (!result.matches) return;
+        results.push({
+            kind: 'document',
+            kindLabel: 'Document',
+            primaryId: doc.id,
+            docId: doc.id,
+            title: doc.title,
+            matchCount: result.matchCount,
+            snippets: result.snippets
+        });
+    });
+
+    appData.codes.forEach(code => {
+        const desc = (code.description || '').trim();
+        if (!desc) return;
+        const result = collectMatchData(desc);
+        if (!result.matches) return;
+        results.push({
+            kind: 'code',
+            kindLabel: 'Code description',
+            primaryId: code.id,
+            title: `Code: ${code.name}`,
+            matchCount: result.matchCount,
+            snippets: result.snippets
+        });
+    });
+
+    appData.memos.forEach(memo => {
+        const searchable = [memo.content || '', memo.tag || ''].join(' ');
+        const result = collectMatchData(searchable);
+        if (!result.matches) return;
+
+        let targetLabel = 'Project';
+        let docId = '';
+        if (memo.type === 'document') {
+            const doc = appData.documents.find(d => d.id === memo.targetId);
+            targetLabel = doc ? doc.title : 'Document';
+            docId = memo.targetId || '';
+        } else if (memo.type === 'code') {
+            const code = appData.codes.find(c => c.id === memo.targetId);
+            targetLabel = code ? code.name : 'Code';
+        } else if (memo.type === 'segment') {
+            const segment = appData.segments.find(s => s.id === memo.targetId);
+            const doc = segment ? appData.documents.find(d => d.id === segment.docId) : null;
+            targetLabel = doc ? doc.title : 'Segment';
+            docId = segment?.docId || '';
+        }
+
+        results.push({
+            kind: 'annotation',
+            kindLabel: 'Annotation',
+            primaryId: memo.id,
+            docId,
+            title: `Annotation${memo.tag ? ` [${memo.tag}]` : ''}: ${targetLabel}`,
+            matchCount: result.matchCount,
+            snippets: result.snippets
+        });
     });
     
     // Sort by match count descending
@@ -235,7 +284,7 @@ function showSearchResults(query, results) {
     
     // Create search bar in summary (using inline handler to avoid listener accumulation)
     summary.innerHTML = `
-        <span class="search-summary-label">Found ${results.length} document${results.length !== 1 ? 's' : ''} for</span>
+        <span class="search-summary-label">Found ${results.length} result${results.length !== 1 ? 's' : ''} for</span>
         <div class="search-summary-input-wrapper">
             <svg class="toolbar-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input type="text" class="search-summary-input" id="modalSearchInput" value="${escapeHtml(query)}" placeholder="Refine search..." onkeydown="handleSearchInputKeydown(event)">
@@ -265,10 +314,10 @@ function showSearchResults(query, results) {
             }).join('<br>');
             
             return `
-                <div class="search-result-item" onclick="goToSearchResult('${result.docId}', '${escapeHtml(query).replace(/'/g, "\\'")}')">
+                <div class="search-result-item" onclick="goToSearchResult('${result.kind}', '${result.primaryId}', '${result.docId || ''}', '${encodeURIComponent(query)}')">
                     <div class="search-result-title">
                         ${escapeHtml(result.title)}
-                        <span class="search-result-count">${result.matchCount} match${result.matchCount !== 1 ? 'es' : ''}</span>
+                        <span class="search-result-count">${result.kindLabel} · ${result.matchCount} match${result.matchCount !== 1 ? 'es' : ''}</span>
                     </div>
                     <div class="search-result-snippet">${highlightedSnippets || '<em>No preview available</em>'}</div>
                 </div>
@@ -293,97 +342,270 @@ function closeSearchResults() {
     document.getElementById('searchResultsModal').classList.remove('show');
 }
 
-function goToSearchResult(docId, query) {
-    closeSearchResults();
-    selectDocument(docId);
-    
-    // Highlight search terms by adding temporary highlight class to matching text
-    // We do this after render to preserve coded segment markup
+let inPageSearchState = {
+    query: '',
+    marks: [],
+    activeIndex: -1
+};
+
+function getInPageSearchRoot() {
+    return document.getElementById('documentContent');
+}
+
+function updateInPageSearchCount() {
+    const countEl = document.getElementById('inPageSearchCount');
+    if (!countEl) return;
+    const total = inPageSearchState.marks.length;
+    const current = total > 0 ? (inPageSearchState.activeIndex + 1) : 0;
+    countEl.textContent = `${current}/${total}`;
+}
+
+function clearInPageSearchHighlights() {
+    const root = getInPageSearchRoot();
+    if (!root) return;
+    const marks = root.querySelectorAll('mark.in-page-search-mark');
+    marks.forEach(mark => {
+        const text = document.createTextNode(mark.textContent || '');
+        mark.replaceWith(text);
+    });
+    root.normalize();
+    inPageSearchState.marks = [];
+    inPageSearchState.activeIndex = -1;
+    updateInPageSearchCount();
+}
+
+function setActiveInPageSearchMatch(index) {
+    if (!inPageSearchState.marks.length) {
+        inPageSearchState.activeIndex = -1;
+        updateInPageSearchCount();
+        return;
+    }
+    const total = inPageSearchState.marks.length;
+    inPageSearchState.activeIndex = ((index % total) + total) % total;
+    inPageSearchState.marks.forEach((mark, i) => {
+        mark.classList.toggle('active', i === inPageSearchState.activeIndex);
+    });
+    const active = inPageSearchState.marks[inPageSearchState.activeIndex];
+    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    updateInPageSearchCount();
+}
+
+function applyInPageSearch(query) {
+    const root = getInPageSearchRoot();
+    if (!root) return;
+    clearInPageSearchHighlights();
+
+    const q = String(query || '').trim();
+    inPageSearchState.query = q;
+    if (!q) return;
+
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'gi');
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+            const p = node.parentElement;
+            if (!p) return NodeFilter.FILTER_ACCEPT;
+            if (p.closest && p.closest('.code-actions, .memo-indicator')) return NodeFilter.FILTER_REJECT;
+            if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    textNodes.forEach(node => {
+        const text = node.nodeValue || '';
+        if (!text) return;
+        regex.lastIndex = 0;
+        if (!regex.test(text)) return;
+        regex.lastIndex = 0;
+
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+            if (match.index > last) {
+                frag.appendChild(document.createTextNode(text.substring(last, match.index)));
+            }
+            const mark = document.createElement('mark');
+            mark.className = 'in-page-search-mark';
+            mark.textContent = match[0];
+            frag.appendChild(mark);
+            inPageSearchState.marks.push(mark);
+            last = regex.lastIndex;
+        }
+        if (last < text.length) {
+            frag.appendChild(document.createTextNode(text.substring(last)));
+        }
+        node.parentNode.replaceChild(frag, node);
+    });
+
+    setActiveInPageSearchMatch(0);
+}
+
+function openInPageSearch() {
+    const bar = document.getElementById('inPageSearchBar');
+    const input = document.getElementById('inPageSearchInput');
+    if (!bar || !input) return;
+    bar.classList.add('show');
+
+    if (!input.dataset.bound) {
+        input.addEventListener('input', () => applyInPageSearch(input.value));
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.shiftKey) {
+                e.preventDefault();
+                inPageSearchPrev();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                inPageSearchNext();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeInPageSearch();
+            }
+        });
+        input.dataset.bound = '1';
+    }
+
+    input.focus();
+    input.select();
+    if (input.value.trim()) {
+        applyInPageSearch(input.value.trim());
+    } else {
+        updateInPageSearchCount();
+    }
+}
+
+function closeInPageSearch() {
+    const bar = document.getElementById('inPageSearchBar');
+    if (bar) bar.classList.remove('show');
+    clearInPageSearchHighlights();
+}
+
+function inPageSearchNext() {
+    if (!inPageSearchState.marks.length) return;
+    setActiveInPageSearchMatch(inPageSearchState.activeIndex + 1);
+}
+
+function inPageSearchPrev() {
+    if (!inPageSearchState.marks.length) return;
+    setActiveInPageSearchMatch(inPageSearchState.activeIndex - 1);
+}
+
+function refreshInPageSearchAfterRender() {
+    const bar = document.getElementById('inPageSearchBar');
+    const input = document.getElementById('inPageSearchInput');
+    if (!bar || !bar.classList.contains('show') || !input) return;
+    applyInPageSearch(input.value || '');
+}
+
+function highlightSearchTermsInCurrentDocument(query) {
+    const content = document.getElementById('documentContent');
+    if (!content) return;
+
+    const parsed = parseSearchQuery(query);
+    if (parsed.terms.length === 0) return;
+
+    const highlightPatterns = parsed.terms.join('|');
+    const regex = new RegExp(highlightPatterns, 'gi');
+
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+            const p = node.parentElement;
+            if (!p) return NodeFilter.FILTER_ACCEPT;
+            if (p.classList.contains('memo-indicator') || p.classList.contains('code-actions')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            if (p.closest && p.closest('.code-actions, .memo-indicator')) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+
+    const textNodes = [];
+    while (walker.nextNode()) {
+        textNodes.push(walker.currentNode);
+    }
+
+    let firstMark = null;
+    textNodes.forEach(node => {
+        const text = node.nodeValue;
+        if (!regex.test(text)) return;
+        regex.lastIndex = 0;
+
+        const frag = document.createDocumentFragment();
+        let lastIndex = 0;
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+            if (match.index > lastIndex) {
+                frag.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+            }
+            const mark = document.createElement('mark');
+            mark.style.background = '#fff3cd';
+            mark.style.padding = '1px 2px';
+            mark.style.borderRadius = '2px';
+            mark.textContent = match[0];
+            frag.appendChild(mark);
+            if (!firstMark) firstMark = mark;
+            lastIndex = regex.lastIndex;
+        }
+        if (lastIndex < text.length) {
+            frag.appendChild(document.createTextNode(text.substring(lastIndex)));
+        }
+        node.parentNode.replaceChild(frag, node);
+    });
+
+    if (firstMark) {
+        firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
     setTimeout(() => {
-        const content = document.getElementById('documentContent');
-        if (!content) return;
-        
-        const parsed = parseSearchQuery(query);
-        if (parsed.terms.length === 0) return;
-        
-        const highlightPatterns = parsed.terms.join('|');
-        const regex = new RegExp(highlightPatterns, 'gi');
-        
-        // Walk through text nodes and wrap matches in <mark> elements
-        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
-            acceptNode: (node) => {
-                const p = node.parentElement;
-                if (!p) return NodeFilter.FILTER_ACCEPT;
-                // Skip UI elements
-                if (p.classList.contains('memo-indicator') || p.classList.contains('code-actions')) {
-                    return NodeFilter.FILTER_REJECT;
-                }
-                if (p.closest && p.closest('.code-actions, .memo-indicator')) {
-                    return NodeFilter.FILTER_REJECT;
-                }
-                // Skip already-marked text
-                if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
-                return NodeFilter.FILTER_ACCEPT;
-            }
+        const marks = content.querySelectorAll('mark');
+        marks.forEach(mark => {
+            const text = document.createTextNode(mark.textContent);
+            mark.parentNode.replaceChild(text, mark);
         });
-        
-        const textNodes = [];
-        while (walker.nextNode()) {
-            textNodes.push(walker.currentNode);
+    }, 5000);
+}
+
+function goToSearchResult(kind, primaryId, docId, encodedQuery) {
+    const query = decodeURIComponent(encodedQuery || '');
+    closeSearchResults();
+
+    if (kind === 'document') {
+        selectDocument(primaryId);
+        setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+        return;
+    }
+
+    if (kind === 'code') {
+        appData.filterCodeId = primaryId;
+        renderAll();
+        return;
+    }
+
+    if (kind === 'annotation') {
+        const memo = appData.memos.find(m => m.id === primaryId);
+        if (!memo) return;
+
+        if (memo.type === 'code' && memo.targetId && appData.codes.some(c => c.id === memo.targetId)) {
+            appData.filterCodeId = memo.targetId;
+            renderAll();
+            return;
         }
-        
-        let firstMark = null;
-        
-        textNodes.forEach(node => {
-            const text = node.nodeValue;
-            if (!regex.test(text)) return;
-            
-            // Reset regex lastIndex
-            regex.lastIndex = 0;
-            
-            // Split text by matches and rebuild with <mark> elements
-            const frag = document.createDocumentFragment();
-            let lastIndex = 0;
-            let match;
-            
-            while ((match = regex.exec(text)) !== null) {
-                // Text before match
-                if (match.index > lastIndex) {
-                    frag.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
-                }
-                // The match itself
-                const mark = document.createElement('mark');
-                mark.style.background = '#fff3cd';
-                mark.style.padding = '1px 2px';
-                mark.style.borderRadius = '2px';
-                mark.textContent = match[0];
-                frag.appendChild(mark);
-                
-                if (!firstMark) firstMark = mark;
-                
-                lastIndex = regex.lastIndex;
-            }
-            
-            // Remaining text after last match
-            if (lastIndex < text.length) {
-                frag.appendChild(document.createTextNode(text.substring(lastIndex)));
-            }
-            
-            node.parentNode.replaceChild(frag, node);
-        });
-        
-        // Scroll to first match
-        if (firstMark) {
-            firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (memo.type === 'document' && memo.targetId && appData.documents.some(d => d.id === memo.targetId)) {
+            selectDocument(memo.targetId);
+            setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+            return;
         }
-        
-        // Remove highlights after 5 seconds to clean up
-        setTimeout(() => {
-            const marks = content.querySelectorAll('mark');
-            marks.forEach(mark => {
-                const text = document.createTextNode(mark.textContent);
-                mark.parentNode.replaceChild(text, mark);
-            });
-        }, 5000);
-    }, 100);
+        if (memo.type === 'segment' && memo.targetId) {
+            const segment = appData.segments.find(s => s.id === memo.targetId);
+            if (segment && segment.docId) {
+                goToSegmentLocation(segment.docId, segment.id);
+                setTimeout(() => highlightSearchTermsInCurrentDocument(query), 120);
+            }
+        }
+    }
 }

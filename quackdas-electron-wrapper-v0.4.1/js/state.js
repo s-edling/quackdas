@@ -41,6 +41,18 @@ function normaliseProject(p) {
     out.scrollPositions = (src.scrollPositions && typeof src.scrollPositions === 'object') ? src.scrollPositions : {};
     out.zoomLevel = Number.isFinite(src.zoomLevel) ? src.zoomLevel : d.zoomLevel;
 
+    out.segments.forEach(seg => {
+        if (seg && seg.pdfRegion) {
+            seg.pdfRegion = normalizePdfRegionShape(seg.pdfRegion);
+        }
+    });
+
+    out.memos.forEach(memo => {
+        if (!memo.created) memo.created = new Date().toISOString();
+        if (!memo.edited) memo.edited = memo.created;
+        if (typeof memo.tag !== 'string') memo.tag = '';
+    });
+
     // Validate currentDocId exists
     if (out.currentDocId && !out.documents.some(doc => doc.id === out.currentDocId)) {
         out.currentDocId = out.documents[0]?.id || null;
@@ -65,8 +77,41 @@ function normaliseProject(p) {
     return out;
 }
 
+function normalizePdfRegionShape(region) {
+    if (!region || typeof region !== 'object') return region;
+    const toNumber = (v, fallback = 0) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : fallback;
+    };
+    const toNorm = (v, fallback = 0) => {
+        let n = toNumber(v, fallback);
+        if (n > 1 && n <= 100) n = n / 100; // tolerate percent-style legacy values
+        return Math.max(0, Math.min(1, n));
+    };
+
+    const xNorm = toNorm(region.xNorm, toNumber(region.x, 0));
+    const yNorm = toNorm(region.yNorm, toNumber(region.y, 0));
+    const wNorm = toNorm(region.wNorm, toNumber(region.width, 0));
+    const hNorm = toNorm(region.hNorm, toNumber(region.height, 0));
+    const pageNum = Math.max(1, parseInt(region.pageNum, 10) || 1);
+
+    return {
+        pageNum,
+        xNorm,
+        yNorm,
+        wNorm,
+        hNorm,
+        // keep compatibility aliases
+        x: xNorm,
+        y: yNorm,
+        width: wNorm,
+        height: hNorm
+    };
+}
+
 // Global state
 let appData = makeEmptyProject();
+let appDataRevision = 0;
 
 // Precomputed indexes for O(1) lookups (rebuilt on state changes)
 let indexes = {
@@ -160,6 +205,7 @@ let history = {
     maxLength: 50
 };
 
+const PROJECT_CACHE_KEY = 'quackdas-data';
 const DOC_ACCESS_META_KEY = 'quackdas-doc-access';
 let docAccessSaveTimer = null;
 
@@ -167,10 +213,22 @@ let docAccessSaveTimer = null;
 const codeColors = ['#7c9885', '#b67d8f', '#8b8daa', '#c8956f', '#8aa4b5', '#a68d7c', '#9a8d9e', '#7d9e9c'];
 let colorIndex = 0;
 
-// Load data from localStorage
+function shouldUseLocalProjectCache() {
+    // In Electron we use real project files (and backups), not localStorage snapshots.
+    // localStorage is kept as a browser-only fallback.
+    return !(window && window.electronAPI);
+}
+
+// Load data from storage
 function loadData() {
+    if (!shouldUseLocalProjectCache()) {
+        appData = makeEmptyProject();
+        rebuildIndexes();
+        return;
+    }
+
     try {
-        const saved = localStorage.getItem('quackdas-data');
+        const saved = localStorage.getItem(PROJECT_CACHE_KEY);
         if (saved) {
             appData = normaliseProject(JSON.parse(saved));
             
@@ -185,6 +243,13 @@ function loadData() {
                 if (!code.description) code.description = '';
                 if (!code.shortcut) code.shortcut = '';
                 if (!code.lastUsed) code.lastUsed = code.created || new Date().toISOString();
+            });
+
+            // Normalize annotation metadata for older projects
+            appData.memos.forEach(memo => {
+                if (!memo.created) memo.created = new Date().toISOString();
+                if (!memo.edited) memo.edited = memo.created;
+                if (typeof memo.tag !== 'string') memo.tag = '';
             });
 
             // Overlay lightweight document access metadata (kept separate to avoid full-state writes on doc click).
@@ -206,41 +271,49 @@ function loadData() {
         appData = makeEmptyProject();
         rebuildIndexes();
         // Clear corrupted data
-        try { localStorage.removeItem('quackdas-data'); } catch {}
+        try { localStorage.removeItem(PROJECT_CACHE_KEY); } catch {}
     }
 }
 
-// Save data to localStorage
-// Note: PDF binary data (pdfData) is excluded to stay within localStorage limits
-// Full PDF data is only saved in QDPX project files
+// Save data to storage
+// In browser mode, a localStorage snapshot is used as fallback persistence.
+// In Electron mode, this updates in-memory state only; explicit save writes QDPX/JSON files.
 function saveData(options = {}) {
     const markUnsaved = (Object.prototype.hasOwnProperty.call(options, 'markUnsaved'))
         ? options.markUnsaved
         : true;
     if (markUnsaved === true) appData.hasUnsavedChanges = true;
     if (markUnsaved === false) appData.hasUnsavedChanges = false;
+    if (markUnsaved === true) appDataRevision += 1;
     
-    // Create a copy without large binary data for localStorage
-    const storageData = JSON.parse(JSON.stringify(appData));
-    storageData.documents.forEach(doc => {
-        if (doc.pdfData) {
-            // Keep a flag that this is a PDF, but don't store the binary
-            doc._hasPdfData = true;
-            delete doc.pdfData;
-            // Keep pdfPages for text positions, but remove if too large
-            if (doc.pdfPages && JSON.stringify(doc.pdfPages).length > 100000) {
-                doc._hasPdfPages = true;
-                delete doc.pdfPages;
+    if (shouldUseLocalProjectCache()) {
+        // Create a copy without large binary data for localStorage
+        const storageData = JSON.parse(JSON.stringify(appData));
+        storageData.documents.forEach(doc => {
+            if (doc.pdfData) {
+                // Keep a flag that this is a PDF, but don't store the binary
+                doc._hasPdfData = true;
+                delete doc.pdfData;
+                // Keep pdfPages for text positions, but remove if too large
+                if (doc.pdfPages && JSON.stringify(doc.pdfPages).length > 100000) {
+                    doc._hasPdfPages = true;
+                    delete doc.pdfPages;
+                }
             }
-        }
-    });
-    
-    localStorage.setItem('quackdas-data', JSON.stringify(storageData));
+        });
+        
+        localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(storageData));
+    }
+
     rebuildIndexes();
+    if (markUnsaved === true && typeof scheduleProjectBackup === 'function') {
+        scheduleProjectBackup('state-change');
+    }
     if (typeof updateSaveStatus === 'function') updateSaveStatus();
 }
 
 function scheduleDocumentAccessMetaSave() {
+    if (!shouldUseLocalProjectCache()) return;
     if (docAccessSaveTimer) clearTimeout(docAccessSaveTimer);
     docAccessSaveTimer = setTimeout(() => {
         docAccessSaveTimer = null;
@@ -249,6 +322,7 @@ function scheduleDocumentAccessMetaSave() {
 }
 
 function flushDocumentAccessMetaSave() {
+    if (!shouldUseLocalProjectCache()) return;
     if (docAccessSaveTimer) {
         clearTimeout(docAccessSaveTimer);
         docAccessSaveTimer = null;

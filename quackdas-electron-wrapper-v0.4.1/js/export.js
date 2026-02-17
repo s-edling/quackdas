@@ -3,6 +3,14 @@
  * Project and report export/import
  */
 
+function showQdpxCompatibilityReport(direction) {
+    if (typeof summarizeQdpxCompatibilityReport !== 'function') return;
+    const report = (direction === 'export') ? window.lastQdpxExportReport : window.lastQdpxImportReport;
+    if (!report) return;
+    const summary = summarizeQdpxCompatibilityReport(report);
+    if (summary) alert(summary);
+}
+
 function newProject() {
     if (appData.documents.length > 0 || appData.codes.length > 0) {
         if (!confirm('This will clear all current data. Continue?')) {
@@ -45,6 +53,7 @@ async function exportProject() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+        showQdpxCompatibilityReport('export');
     } catch (err) {
         console.error('Export failed:', err);
         alert('Export failed: ' + (err?.message || err));

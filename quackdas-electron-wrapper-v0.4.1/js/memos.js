@@ -5,38 +5,71 @@
 
 // Current memo target
 let currentMemoTarget = { type: null, id: null };
+let currentEditingMemoId = null;
 
-function openMemoModal(type, targetId, event) {
-    if (event) event.stopPropagation();
-    
-    currentMemoTarget = { type, id: targetId };
-    const modal = document.getElementById('memoModal');
-    const titleEl = document.getElementById('memoModalTitle');
+function normaliseMemoMetadata(memo) {
+    if (!memo || typeof memo !== 'object') return memo;
+    if (!memo.created) memo.created = new Date().toISOString();
+    if (!memo.edited) memo.edited = memo.created;
+    if (typeof memo.tag !== 'string') memo.tag = '';
+    memo.tag = memo.tag.trim().slice(0, 40);
+    return memo;
+}
+
+function formatMemoDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+}
+
+function renderExistingMemos(type, targetId) {
     const existingList = document.getElementById('existingMemosList');
-    
-    // Set title based on type
-    const targetName = type === 'code' ? appData.codes.find(c => c.id === targetId)?.name :
-                       type === 'document' ? appData.documents.find(d => d.id === targetId)?.title :
-                       'Segment';
-    titleEl.textContent = `Annotations for ${targetName}`;
-    
-    // Show existing memos
-    const memos = appData.memos.filter(m => m.type === type && m.targetId === targetId);
+    if (!existingList) return;
+
+    const memos = appData.memos
+        .filter(m => m.type === type && m.targetId === targetId)
+        .map(normaliseMemoMetadata)
+        .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+
     if (memos.length > 0) {
         existingList.style.display = 'block';
         existingList.innerHTML = '<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Existing annotations:</div>' +
             memos.map(memo => `
                 <div class="memo-item">
                     <div class="memo-item-header">
-                        <span>${new Date(memo.created).toLocaleDateString()}</span>
-                        <button class="memo-delete-btn" onclick="deleteMemo('${memo.id}')">×</button>
+                        <span>${escapeHtml(formatMemoDate(memo.created))}${memo.edited && memo.edited !== memo.created ? ` · edited ${escapeHtml(formatMemoDate(memo.edited))}` : ''}</span>
+                        <span>
+                            <button class="memo-delete-btn" onclick="editMemo('${memo.id}')" title="Edit annotation">✎</button>
+                            <button class="memo-delete-btn" onclick="deleteMemo('${memo.id}')" title="Delete annotation">×</button>
+                        </span>
                     </div>
+                    ${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}
                     <div class="memo-item-content">${escapeHtml(memo.content)}</div>
                 </div>
             `).join('');
     } else {
         existingList.style.display = 'none';
     }
+}
+
+function openMemoModal(type, targetId, event) {
+    if (event) event.stopPropagation();
+    
+    currentMemoTarget = { type, id: targetId };
+    currentEditingMemoId = null;
+    const modal = document.getElementById('memoModal');
+    const titleEl = document.getElementById('memoModalTitle');
+    
+    // Set title based on type
+    const targetName = type === 'code' ? appData.codes.find(c => c.id === targetId)?.name :
+                       type === 'document' ? appData.documents.find(d => d.id === targetId)?.title :
+                       'Segment';
+    titleEl.textContent = `Annotations for ${targetName}`;
+
+    document.getElementById('memoContent').value = '';
+    document.getElementById('memoTag').value = '';
+    renderExistingMemos(type, targetId);
     
     modal.classList.add('show');
 }
@@ -44,26 +77,51 @@ function openMemoModal(type, targetId, event) {
 function closeMemoModal() {
     document.getElementById('memoModal').classList.remove('show');
     document.getElementById('memoContent').value = '';
+    document.getElementById('memoTag').value = '';
+    currentEditingMemoId = null;
     currentMemoTarget = { type: null, id: null };
+}
+
+function editMemo(memoId) {
+    const memo = appData.memos.find(m => m.id === memoId);
+    if (!memo) return;
+    normaliseMemoMetadata(memo);
+    currentEditingMemoId = memoId;
+    document.getElementById('memoContent').value = memo.content || '';
+    document.getElementById('memoTag').value = memo.tag || '';
+    const input = document.getElementById('memoContent');
+    if (input) input.focus();
 }
 
 function saveMemo(e) {
     e.preventDefault();
     const content = document.getElementById('memoContent').value;
+    const tag = (document.getElementById('memoTag').value || '').trim().slice(0, 40);
     
     if (!content.trim()) return;
     
     saveHistory();
-    
-    const memo = {
-        id: 'memo_' + Date.now(),
-        type: currentMemoTarget.type,
-        targetId: currentMemoTarget.id,
-        content: content,
-        created: new Date().toISOString()
-    };
-    
-    appData.memos.push(memo);
+
+    if (currentEditingMemoId) {
+        const memo = appData.memos.find(m => m.id === currentEditingMemoId);
+        if (memo) {
+            normaliseMemoMetadata(memo);
+            memo.content = content;
+            memo.tag = tag;
+            memo.edited = new Date().toISOString();
+        }
+    } else {
+        const memo = normaliseMemoMetadata({
+            id: 'memo_' + Date.now(),
+            type: currentMemoTarget.type,
+            targetId: currentMemoTarget.id,
+            content: content,
+            tag: tag,
+            created: new Date().toISOString()
+        });
+        appData.memos.push(memo);
+    }
+
     saveData();
     renderAll();
     closeMemoModal();
@@ -77,5 +135,5 @@ function deleteMemo(memoId) {
     saveData();
     
     // Refresh the modal
-    openMemoModal(currentMemoTarget.type, currentMemoTarget.id);
+    renderExistingMemos(currentMemoTarget.type, currentMemoTarget.id);
 }

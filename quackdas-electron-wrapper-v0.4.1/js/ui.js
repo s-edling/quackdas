@@ -5,6 +5,64 @@
 
 // Text prompt modal state
 let _textPromptResolve = null;
+let projectBackupTimer = null;
+let projectBackupInFlight = false;
+let lastBackedUpRevision = 0;
+
+function hasAnyProjectData() {
+    return (appData.documents.length + appData.codes.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
+}
+
+function scheduleProjectBackup(reason = 'state-change') {
+    if (!(window.electronAPI && window.electronAPI.createProjectBackup)) return;
+    if (!hasAnyProjectData()) return;
+    if (projectBackupTimer) clearTimeout(projectBackupTimer);
+    projectBackupTimer = setTimeout(() => {
+        projectBackupTimer = null;
+        createProjectBackup(reason).catch(() => {});
+    }, 2500);
+}
+
+async function createProjectBackup(reason = 'auto', options = {}) {
+    const force = !!options.force;
+    if (!(window.electronAPI && window.electronAPI.createProjectBackup)) return false;
+    if (!force && !appData.hasUnsavedChanges) return false;
+    if (!force && typeof appDataRevision === 'number' && appDataRevision <= lastBackedUpRevision) return false;
+    if (!hasAnyProjectData()) return false;
+    if (projectBackupInFlight) return false;
+
+    projectBackupInFlight = true;
+    try {
+        let base64 = options.base64 || null;
+        if (!base64) {
+            if (typeof exportToQdpx !== 'function') return false;
+            const blob = await exportToQdpx();
+            const arrayBuffer = await blob.arrayBuffer();
+            base64 = arrayBufferToBase64(arrayBuffer);
+        }
+
+        const result = await window.electronAPI.createProjectBackup(base64, {
+            reason,
+            projectName: appData.projectName || 'untitled-project'
+        });
+        if (!result || !result.ok) return false;
+
+        if (typeof appDataRevision === 'number') lastBackedUpRevision = appDataRevision;
+        return true;
+    } catch (err) {
+        console.warn('Project backup failed:', err);
+        return false;
+    } finally {
+        projectBackupInFlight = false;
+    }
+}
+
+function startProjectBackupScheduler() {
+    if (!(window.electronAPI && window.electronAPI.createProjectBackup)) return;
+    setInterval(() => {
+        createProjectBackup('interval').catch(() => {});
+    }, 10 * 60 * 1000);
+}
 
 // Header dropdown functions
 function toggleHeaderDropdown(event) {
@@ -42,10 +100,14 @@ function hasProjectDataLoaded() {
 
 function updateHeaderPrimaryAction() {
     const btn = document.getElementById('headerPrimaryAction');
+    const openProjectMenuItem = document.getElementById('headerOpenProjectItem');
     if (!btn) return;
 
     const showOpen = !hasProjectDataLoaded();
     btn.style.display = showOpen ? 'inline-flex' : 'none';
+    if (openProjectMenuItem) {
+        openProjectMenuItem.style.display = showOpen ? 'none' : 'flex';
+    }
     btn.title = 'Open project';
     btn.innerHTML = `
         <svg class="toolbar-icon" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -81,6 +143,74 @@ function openOcrHelpModal() {
 function closeOcrHelpModal() {
     const modal = document.getElementById('ocrHelpModal');
     if (modal) modal.classList.remove('show');
+}
+
+async function openRestoreBackupModal() {
+    if (!(window.electronAPI && window.electronAPI.listProjectBackups && window.electronAPI.restoreProjectBackup)) {
+        alert('Backup restore is only available in the Electron app.');
+        return;
+    }
+    const modal = document.getElementById('backupRestoreModal');
+    const listEl = document.getElementById('backupRestoreList');
+    if (!modal || !listEl) return;
+
+    listEl.innerHTML = '<div class="empty-state-hint">Loading backups…</div>';
+    modal.classList.add('show');
+
+    try {
+        const result = await window.electronAPI.listProjectBackups({
+            projectName: appData.projectName || 'untitled-project'
+        });
+        if (!result || !result.ok) {
+            throw new Error(result?.error || 'Could not list backups');
+        }
+        const backups = Array.isArray(result.backups) ? result.backups : [];
+        if (backups.length === 0) {
+            listEl.innerHTML = '<div class="empty-state-hint">No backups found for this project yet.</div>';
+            return;
+        }
+
+        listEl.innerHTML = backups.map((backup) => {
+            const dt = new Date(backup.createdAt);
+            const sizeMb = (Number(backup.sizeBytes || 0) / (1024 * 1024)).toFixed(2);
+            return `
+                <div class="backup-item">
+                    <div class="backup-item-main">
+                        <div class="backup-item-time">${escapeHtml(dt.toLocaleString())}</div>
+                        <div class="backup-item-meta">${escapeHtml(backup.reason || 'auto backup')} · ${sizeMb} MB</div>
+                    </div>
+                    <button class="btn btn-secondary backup-restore-btn" onclick="restoreBackupById('${escapeHtml(String(backup.id))}')">Restore</button>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        listEl.innerHTML = `<div class="empty-state-hint">Failed to load backups: ${escapeHtml(err?.message || String(err))}</div>`;
+    }
+}
+
+function closeRestoreBackupModal() {
+    const modal = document.getElementById('backupRestoreModal');
+    if (modal) modal.classList.remove('show');
+}
+
+async function restoreBackupById(backupId) {
+    if (!backupId) return;
+    if (!confirm('Restore this backup and replace the current project in memory?')) return;
+
+    try {
+        const result = await window.electronAPI.restoreProjectBackup(backupId, {
+            projectName: appData.projectName || 'untitled-project'
+        });
+        if (!result || !result.ok || !result.data) {
+            throw new Error(result?.error || 'Backup restore failed');
+        }
+
+        const buffer = base64ToArrayBuffer(result.data);
+        await applyImportedQdpx(buffer);
+        closeRestoreBackupModal();
+    } catch (err) {
+        alert('Restore failed: ' + (err?.message || err));
+    }
 }
 
 // Context menu functions
@@ -325,6 +455,11 @@ function updateSaveStatus() {
 }
 
 async function manualSave(saveAs = false) {
+    if (window.__startupProjectRestoreInProgress) {
+        alert('Project is still loading. Please wait a moment, then try Save again.');
+        return;
+    }
+
     // If running inside Electron wrapper, use native save with QDPX format
     if (window.electronAPI && window.electronAPI.saveProject) {
         try {
@@ -342,6 +477,9 @@ async function manualSave(saveAs = false) {
                 appData.lastSaveTime = new Date().toISOString();
                 appData.hasUnsavedChanges = false;
                 updateSaveStatus();
+                if (typeof createProjectBackup === 'function') {
+                    createProjectBackup(saveAs ? 'manual-save-as' : 'manual-save', { force: true, base64 }).catch(() => {});
+                }
                 return;
             }
             // If user cancelled, do nothing.
@@ -466,4 +604,243 @@ function renderStatistics() {
             </div>
         </div>
     `).join('') || '<p style="color: var(--text-secondary);">No documents yet</p>';
+}
+
+let lastHealthCheckReport = null;
+
+function getHealthIssueReport() {
+    const docIds = new Set(appData.documents.map(doc => doc.id));
+    const codeIds = new Set(appData.codes.map(code => code.id));
+    const segmentIds = new Set(appData.segments.map(seg => seg.id));
+
+    const emptyCodes = appData.codes.filter(code => getCodeSegmentCountFast(code.id) === 0);
+    const orphanSegments = appData.segments.filter(seg => !docIds.has(seg.docId));
+    const segmentsWithoutCodes = appData.segments.filter(seg => !Array.isArray(seg.codeIds) || seg.codeIds.length === 0);
+    const segmentsWithUnknownCodes = appData.segments.filter(seg =>
+        Array.isArray(seg.codeIds) && seg.codeIds.some(codeId => !codeIds.has(codeId))
+    );
+
+    const duplicateNameGroups = {};
+    appData.codes.forEach(code => {
+        const key = String(code.name || '').trim().toLowerCase();
+        if (!key) return;
+        if (!duplicateNameGroups[key]) duplicateNameGroups[key] = [];
+        duplicateNameGroups[key].push(code.id);
+    });
+    const duplicateCodeGroups = Object.values(duplicateNameGroups).filter(group => group.length > 1);
+
+    const looseCodeNameGroups = {};
+    appData.codes.forEach(code => {
+        const loose = String(code.name || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '');
+        if (!loose) return;
+        if (!looseCodeNameGroups[loose]) looseCodeNameGroups[loose] = [];
+        looseCodeNameGroups[loose].push(code.id);
+    });
+    const nearDuplicateGroups = Object.values(looseCodeNameGroups).filter(group => {
+        if (group.length < 2) return false;
+        const strictNames = new Set(group.map(id => {
+            const code = appData.codes.find(c => c.id === id);
+            return String(code?.name || '').trim().toLowerCase();
+        }));
+        return strictNames.size > 1;
+    });
+
+    const docsMissingMetadata = appData.documents.filter(doc => {
+        const meta = doc.metadata || {};
+        return !String(meta.participantId || '').trim() &&
+            !String(meta.date || '').trim() &&
+            !String(meta.location || '').trim();
+    });
+
+    const memoTargetsMissing = appData.memos.filter(memo => {
+        if (!memo.targetId) return false;
+        if (memo.type === 'document') return !docIds.has(memo.targetId);
+        if (memo.type === 'code') return !codeIds.has(memo.targetId);
+        if (memo.type === 'segment') return !segmentIds.has(memo.targetId);
+        return false;
+    });
+
+    const invalidPdfRegions = appData.segments.filter(seg => {
+        if (!seg.pdfRegion) return false;
+        const r = seg.pdfRegion;
+        if (!Number.isFinite(Number(r.pageNum)) || Number(r.pageNum) < 1) return true;
+        const vals = [r.xNorm, r.yNorm, r.wNorm, r.hNorm, r.x, r.y, r.width, r.height];
+        return vals.some(v => v !== undefined && !Number.isFinite(Number(v)));
+    });
+
+    const memosMissingEdited = appData.memos.filter(memo => !memo.edited);
+
+    const findings = [];
+    if (emptyCodes.length) findings.push({ label: 'Empty codes', count: emptyCodes.length });
+    if (orphanSegments.length) findings.push({ label: 'Orphan segments (missing document)', count: orphanSegments.length });
+    if (segmentsWithoutCodes.length) findings.push({ label: 'Segments with no codes', count: segmentsWithoutCodes.length });
+    if (segmentsWithUnknownCodes.length) findings.push({ label: 'Segments referencing unknown/deleted codes', count: segmentsWithUnknownCodes.length });
+    if (duplicateCodeGroups.length) findings.push({ label: 'Duplicate code-name groups (case-insensitive)', count: duplicateCodeGroups.length });
+    if (nearDuplicateGroups.length) findings.push({ label: 'Near-duplicate code-name groups (punctuation/spacing)', count: nearDuplicateGroups.length });
+    if (docsMissingMetadata.length) findings.push({ label: 'Documents missing core metadata (ID/date/location)', count: docsMissingMetadata.length });
+    if (memoTargetsMissing.length) findings.push({ label: 'Annotations linked to missing targets', count: memoTargetsMissing.length });
+    if (invalidPdfRegions.length) findings.push({ label: 'Segments with invalid PDF region data', count: invalidPdfRegions.length });
+    if (memosMissingEdited.length) findings.push({ label: 'Annotations missing edited timestamp', count: memosMissingEdited.length });
+
+    const fixes = [];
+    if (orphanSegments.length) fixes.push({ id: 'remove-orphan-segments', label: `Remove orphan segments (${orphanSegments.length})` });
+    if (segmentsWithoutCodes.length) fixes.push({ id: 'remove-empty-segments', label: `Remove segments with no codes (${segmentsWithoutCodes.length})` });
+    if (segmentsWithUnknownCodes.length) fixes.push({ id: 'strip-unknown-code-refs', label: `Strip unknown code refs from segments (${segmentsWithUnknownCodes.length})` });
+    if (duplicateCodeGroups.length) fixes.push({ id: 'rename-duplicate-codes', label: `Auto-rename duplicate code names (${duplicateCodeGroups.length} groups)` });
+    if (memoTargetsMissing.length) fixes.push({ id: 'remove-orphan-memos', label: `Remove annotations linked to missing targets (${memoTargetsMissing.length})` });
+    if (invalidPdfRegions.length) fixes.push({ id: 'normalize-pdf-regions', label: `Normalize PDF region geometry (${invalidPdfRegions.length})` });
+    if (memosMissingEdited.length) fixes.push({ id: 'fill-memo-edited', label: `Fill missing annotation edited timestamps (${memosMissingEdited.length})` });
+
+    return {
+        summary: {
+            documents: appData.documents.length,
+            codes: appData.codes.length,
+            segments: appData.segments.length,
+            annotations: appData.memos.length
+        },
+        findings,
+        fixes
+    };
+}
+
+function renderProjectHealthCheckModal(report) {
+    const summaryEl = document.getElementById('healthCheckSummary');
+    const findingsEl = document.getElementById('healthCheckFindings');
+    const fixesEl = document.getElementById('healthCheckFixes');
+    if (!summaryEl || !findingsEl || !fixesEl) return;
+
+    summaryEl.innerHTML = `
+        <span><strong>Documents:</strong> ${report.summary.documents}</span>
+        <span><strong>Codes:</strong> ${report.summary.codes}</span>
+        <span><strong>Segments:</strong> ${report.summary.segments}</span>
+        <span><strong>Annotations:</strong> ${report.summary.annotations}</span>
+    `;
+
+    if (report.findings.length === 0) {
+        findingsEl.innerHTML = '<div class="health-check-ok">No structural issues detected.</div>';
+    } else {
+        findingsEl.innerHTML = report.findings.map(item => `
+            <div class="health-check-item">
+                <span>${escapeHtml(item.label)}</span>
+                <strong>${item.count}</strong>
+            </div>
+        `).join('');
+    }
+
+    if (report.fixes.length === 0) {
+        fixesEl.innerHTML = '<div class="health-check-ok">No automatic fixes available.</div>';
+    } else {
+        fixesEl.innerHTML = report.fixes.map((fix, idx) => `
+            <label class="health-fix-item">
+                <input type="checkbox" class="health-fix-checkbox" value="${escapeHtml(fix.id)}" ${idx === 0 ? 'checked' : ''}>
+                <span>${escapeHtml(fix.label)}</span>
+            </label>
+        `).join('');
+    }
+}
+
+function runProjectHealthCheck() {
+    lastHealthCheckReport = getHealthIssueReport();
+    renderProjectHealthCheckModal(lastHealthCheckReport);
+    const modal = document.getElementById('healthCheckModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeHealthCheckModal() {
+    const modal = document.getElementById('healthCheckModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function applySelectedHealthFixes() {
+    const modal = document.getElementById('healthCheckModal');
+    if (!modal) return;
+    const selectedFixIds = Array.from(modal.querySelectorAll('.health-fix-checkbox:checked')).map(cb => cb.value);
+    if (selectedFixIds.length === 0) return;
+
+    if (!confirm(`Apply ${selectedFixIds.length} selected fix${selectedFixIds.length === 1 ? '' : 'es'}?`)) {
+        return;
+    }
+
+    saveHistory();
+    let changed = 0;
+
+    const docIds = new Set(appData.documents.map(doc => doc.id));
+    const codeIds = new Set(appData.codes.map(code => code.id));
+    if (selectedFixIds.includes('remove-orphan-segments')) {
+        const before = appData.segments.length;
+        appData.segments = appData.segments.filter(seg => docIds.has(seg.docId));
+        changed += (before - appData.segments.length);
+    }
+
+    if (selectedFixIds.includes('remove-empty-segments')) {
+        const before = appData.segments.length;
+        appData.segments = appData.segments.filter(seg => Array.isArray(seg.codeIds) && seg.codeIds.length > 0);
+        changed += (before - appData.segments.length);
+    }
+
+    if (selectedFixIds.includes('strip-unknown-code-refs')) {
+        appData.segments.forEach(seg => {
+            if (!Array.isArray(seg.codeIds)) return;
+            const beforeLen = seg.codeIds.length;
+            seg.codeIds = seg.codeIds.filter(codeId => codeIds.has(codeId));
+            if (seg.codeIds.length !== beforeLen) changed += 1;
+        });
+        const before = appData.segments.length;
+        appData.segments = appData.segments.filter(seg => Array.isArray(seg.codeIds) && seg.codeIds.length > 0);
+        changed += (before - appData.segments.length);
+    }
+
+    if (selectedFixIds.includes('rename-duplicate-codes')) {
+        const seen = {};
+        appData.codes.forEach(code => {
+            const base = String(code.name || '').trim() || 'Code';
+            const key = base.toLowerCase();
+            seen[key] = (seen[key] || 0) + 1;
+            if (seen[key] > 1) {
+                code.name = `${base} (${seen[key]})`;
+                changed += 1;
+            }
+        });
+    }
+
+    if (selectedFixIds.includes('remove-orphan-memos')) {
+        const before = appData.memos.length;
+        appData.memos = appData.memos.filter(memo => {
+            if (!memo.targetId) return true;
+            if (memo.type === 'document') return appData.documents.some(doc => doc.id === memo.targetId);
+            if (memo.type === 'code') return appData.codes.some(code => code.id === memo.targetId);
+            if (memo.type === 'segment') return appData.segments.some(seg => seg.id === memo.targetId);
+            return true;
+        });
+        changed += (before - appData.memos.length);
+    }
+
+    if (selectedFixIds.includes('normalize-pdf-regions')) {
+        appData.segments.forEach(seg => {
+            if (!seg.pdfRegion) return;
+            if (typeof normalizePdfRegionShape === 'function') {
+                seg.pdfRegion = normalizePdfRegionShape(seg.pdfRegion);
+                changed += 1;
+            }
+        });
+    }
+
+    if (selectedFixIds.includes('fill-memo-edited')) {
+        appData.memos.forEach(memo => {
+            if (memo.edited) return;
+            memo.edited = memo.created || new Date().toISOString();
+            changed += 1;
+        });
+    }
+
+    if (changed > 0) {
+        saveData();
+        renderAll();
+    }
+
+    lastHealthCheckReport = getHealthIssueReport();
+    renderProjectHealthCheckModal(lastHealthCheckReport);
 }

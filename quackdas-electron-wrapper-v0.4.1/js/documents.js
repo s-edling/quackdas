@@ -392,8 +392,8 @@ async function importDocument(e) {
                     appData.documents.push(pdfDoc);
                     appData.currentDocId = pdfDoc.id;
                     saveData();
-                    renderAll();
                     closeImportModal();
+                    renderAll();
                     document.getElementById('importTitle').value = '';
                     const hint = document.getElementById('importFileHint');
                     if (hint) hint.textContent = '';
@@ -434,8 +434,8 @@ async function importDocument(e) {
                     appData.documents.push(pdfDoc);
                     appData.currentDocId = pdfDoc.id;
                     saveData();
-                    renderAll();
                     closeImportModal();
+                    renderAll();
                 })
                 .catch(function(err) {
                     alert('Error reading PDF file: ' + err.message);

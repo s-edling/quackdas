@@ -47,12 +47,15 @@ let pdfAnnotationOpenedAt = 0;
 
 function addSegmentMemo(segmentId, text) {
     if (!text) return;
+    const now = new Date().toISOString();
     appData.memos.push({
         id: 'memo_' + Date.now(),
         type: 'segment',
         targetId: segmentId,
         content: text,
-        created: new Date().toISOString()
+        tag: '',
+        created: now,
+        edited: now
     });
 }
 
@@ -119,7 +122,12 @@ function renderSegmentAnnotationList(segmentId) {
     list.hidden = false;
     list.innerHTML = `
         <div class="pdf-region-annotation-existing-title">Existing annotations</div>
-        ${memos.map(memo => `<div class="pdf-region-annotation-item">${escapeHtml(memo.content || '')}</div>`).join('')}
+        ${memos.map(memo => `
+            <div class="pdf-region-annotation-item">
+                ${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}
+                ${escapeHtml(memo.content || '')}
+            </div>
+        `).join('')}
     `;
 }
 
@@ -148,11 +156,31 @@ function savePdfRegionAnnotationInline() {
     if (!panel) return;
     const input = panel.querySelector('#pdfRegionAnnotationInput');
     const text = (input?.value || '').trim();
+    const segmentId = currentPdfAnnotationSegmentId;
+    const segment = appData.segments.find(s => s.id === segmentId);
+    const currentDoc = appData.documents.find(d => d.id === appData.currentDocId);
+    const isCurrentPdfSegment = !!(
+        segment &&
+        currentDoc &&
+        currentDoc.type === 'pdf' &&
+        segment.docId === currentDoc.id &&
+        !appData.filterCodeId
+    );
 
     saveHistory();
-    addSegmentMemo(currentPdfAnnotationSegmentId, text);
+    addSegmentMemo(segmentId, text);
     saveData();
-    renderAll();
+
+    if (isCurrentPdfSegment) {
+        // Do not re-render the PDF page here: it causes a jump to page top.
+        // We only refresh side panels and keep current viewport/page intact.
+        renderDocuments();
+        renderCodes();
+        renderSegmentAnnotationList(segmentId);
+    } else {
+        renderAll();
+    }
+
     dismissPdfRegionAnnotationInline();
 }
 
@@ -321,7 +349,9 @@ function applyCodeToStoredSelection(codeId) {
 
     const contentBody = document.querySelector('.content-body');
     const preservedScrollTop = contentBody ? contentBody.scrollTop : 0;
-    const preservedPage = currentPdfState.currentPage;
+    const pdfContainer = document.getElementById('pdfContainer');
+    const preservedPdfScrollTop = pdfContainer ? pdfContainer.scrollTop : 0;
+    const preservedPage = isPdfRegion ? (sel.pdfRegion.pageNum || currentPdfState.currentPage || 1) : currentPdfState.currentPage;
 
     saveData();
     if (isPdfRegion) {
@@ -333,6 +363,8 @@ function applyCodeToStoredSelection(codeId) {
         setTimeout(() => {
             const body = document.querySelector('.content-body');
             if (body) body.scrollTop = preservedScrollTop;
+            const c = document.getElementById('pdfContainer');
+            if (c) c.scrollTop = preservedPdfScrollTop;
         }, 0);
     } else {
         renderAll();
