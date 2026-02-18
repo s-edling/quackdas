@@ -401,6 +401,23 @@ function closeMoveToFolderModal() {
     moveToFolderDocId = null;
 }
 
+const CODE_COLOR_PALETTE_DUSTY = [
+    '#5b8fd9', '#8a64d6', '#d16a8e', '#d38452',
+    '#4fae8c', '#88a843', '#4e9eb8', '#c97362',
+    '#6d79d8', '#d48a4e', '#3ea8a1', '#b56aa5',
+    '#9e9a3f', '#5d93c8', '#c27c54', '#5aa66e'
+];
+
+const CODE_COLOR_PALETTE_CONTRAST = [
+    '#0f7ae5', '#d94f11', '#0c9e61', '#d11f6a',
+    '#6a4de3', '#b66f00', '#0f8a93', '#c22f2f',
+    '#2b6f2b', '#7a2cab', '#3663c5', '#a65c00',
+    '#01776f', '#bb2c86', '#4f5a11', '#8e3150'
+];
+
+let currentCodeColorTargetId = null;
+let codeColorHighContrast = false;
+
 // Code context menu
 function openCodeContextMenu(codeId, event) {
     event.preventDefault();
@@ -414,8 +431,76 @@ function openCodeContextMenu(codeId, event) {
     showContextMenu([
         { label: `Rename code: ${code.name}`, onClick: () => renameCode(codeId) },
         { label: shortcutLabel, onClick: () => assignShortcut(codeId) },
+        { label: 'Change colour', onClick: () => openCodeColorModal(codeId) },
         { label: `Delete code: ${code.name}`, onClick: () => deleteCode(codeId, { stopPropagation: () => {} }), danger: true }
     ], event.clientX, event.clientY);
+}
+
+function getActiveCodeColorPalette() {
+    return codeColorHighContrast ? CODE_COLOR_PALETTE_CONTRAST : CODE_COLOR_PALETTE_DUSTY;
+}
+
+function openCodeColorModal(codeId) {
+    const code = appData.codes.find(c => c.id === codeId);
+    if (!code) return;
+
+    currentCodeColorTargetId = codeId;
+    const modal = document.getElementById('codeColorModal');
+    const toggle = document.getElementById('codeColorHighContrastToggle');
+    if (toggle) toggle.checked = codeColorHighContrast;
+    renderCodeColorPalette();
+    if (modal) modal.classList.add('show');
+}
+
+function closeCodeColorModal() {
+    const modal = document.getElementById('codeColorModal');
+    if (modal) modal.classList.remove('show');
+    currentCodeColorTargetId = null;
+}
+
+function toggleCodeColorPaletteContrast(forceValue) {
+    if (typeof forceValue === 'boolean') {
+        codeColorHighContrast = forceValue;
+    } else {
+        const toggle = document.getElementById('codeColorHighContrastToggle');
+        codeColorHighContrast = !!(toggle && toggle.checked);
+    }
+    renderCodeColorPalette();
+}
+
+function renderCodeColorPalette() {
+    const code = appData.codes.find(c => c.id === currentCodeColorTargetId);
+    const grid = document.getElementById('codeColorPaletteGrid');
+    const meta = document.getElementById('codeColorPaletteMeta');
+    if (!grid || !meta || !code) return;
+
+    const palette = getActiveCodeColorPalette();
+    meta.textContent = `${code.name}`;
+
+    grid.innerHTML = palette.map((color) => {
+        const selected = color.toLowerCase() === String(code.color || '').toLowerCase();
+        return `<button type="button" class="code-color-swatch ${selected ? 'selected' : ''}" data-code-color="${escapeHtmlAttrValue(color)}" style="background:${escapeHtml(color)};" title="${escapeHtmlAttrValue(color)}"></button>`;
+    }).join('');
+
+    grid.querySelectorAll('.code-color-swatch[data-code-color]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            applyCodeColor(currentCodeColorTargetId, btn.dataset.codeColor);
+        });
+    });
+}
+
+function applyCodeColor(codeId, color) {
+    const code = appData.codes.find(c => c.id === codeId);
+    if (!code || !color) return;
+    if (String(code.color || '').toLowerCase() === String(color).toLowerCase()) {
+        closeCodeColorModal();
+        return;
+    }
+    saveHistory();
+    code.color = color;
+    saveData();
+    renderAll();
+    closeCodeColorModal();
 }
 
 // Zoom functions

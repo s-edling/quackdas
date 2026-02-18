@@ -226,7 +226,12 @@ const DOC_ACCESS_META_KEY = 'quackdas-doc-access';
 let docAccessSaveTimer = null;
 
 // Code colors
-const codeColors = ['#7c9885', '#b67d8f', '#8b8daa', '#c8956f', '#8aa4b5', '#a68d7c', '#9a8d9e', '#7d9e9c'];
+const codeColors = [
+    '#5b8fd9', '#8a64d6', '#d16a8e', '#d38452',
+    '#4fae8c', '#88a843', '#4e9eb8', '#c97362',
+    '#6d79d8', '#d48a4e', '#3ea8a1', '#b56aa5',
+    '#9e9a3f', '#5d93c8', '#c27c54', '#5aa66e'
+];
 let colorIndex = 0;
 
 function shouldUseLocalProjectCache() {

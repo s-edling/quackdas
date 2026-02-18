@@ -473,6 +473,74 @@ Files touched:
 - `styles.css`
 - `CHANGELOG.md`
 
+## Version 0.4.3-build-2026-02-17bf
+Date: 2026-02-17
+
+What changed:
+- Added code color editing from code right-click menu:
+  - new `Change colour` action in code context menu,
+  - opens a color palette modal with 16 default dusty/saturated colors.
+- Added high-contrast palette toggle:
+  - `High contrast colours` option in the modal corner switches to an alternate 16-color palette.
+- Updated default new-code color cycling to the same 16-color dusty palette.
+
+Why (one line):
+- To make code-color management faster and clearer while offering both UI-friendly and high-contrast color sets.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/ui.js`
+- `js/app.js`
+- `js/state.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bg
+Date: 2026-02-17
+
+What changed:
+- Removed the palette-mode text indicator from the code color modal meta line.
+- Modal now shows only the code name there.
+
+Why (one line):
+- To simplify the color modal header and reduce visual clutter.
+
+Files touched:
+- `js/ui.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bh
+Date: 2026-02-17
+
+What changed:
+- Updated the default 16-color “dusty” code palette to a less muted, more saturated set.
+- Kept the high-contrast palette unchanged.
+- Synced the same updated palette for new-code default color assignment.
+
+Why (one line):
+- To improve code-color clarity while still keeping colors softer than pure primaries.
+
+Files touched:
+- `js/ui.js`
+- `js/state.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17be
+Date: 2026-02-17
+
+What changed:
+- Improved hover feedback in Code view for controls that previously had weak/no visible hover state:
+  - `Add description` in Description and notes bar,
+  - Retrieval presets expand/collapse toggle row,
+  - `Segments` / `Annotations` switch buttons.
+
+Why (one line):
+- To keep click affordance clear after switching to default-arrow cursors across the UI.
+
+Files touched:
+- `styles.css`
+- `CHANGELOG.md`
+
 ## Version 0.4.2-build-2026-02-17l
 Date: 2026-02-17
 
@@ -1422,4 +1490,17 @@ Files touched:
 - `js/render.js`
 - `js/pdf.js`
 - `js/coding.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bd
+Date: 2026-02-17
+
+What changed:
+- Added a global cursor override to use the default arrow everywhere in the app UI.
+
+Why (one line):
+- To support a consistency test run with no special pointer/text/drag cursor states.
+
+Files touched:
+- `styles.css`
 - `CHANGELOG.md`

@@ -201,6 +201,7 @@ function setupStaticActionBindings() {
             case 'applySelectedCodes': applySelectedCodes(); break;
             case 'closeMoveToFolderModal': closeMoveToFolderModal(); break;
             case 'closeFolderInfoModal': closeFolderInfoModal(); break;
+            case 'closeCodeColorModal': closeCodeColorModal(); break;
             case 'closeTextPromptCancel': closeTextPrompt(false); break;
             case 'closeTextPromptOk': closeTextPrompt(true); break;
             case 'closeOcrHelpModal': closeOcrHelpModal(); break;
@@ -215,6 +216,7 @@ function setupStaticActionBindings() {
         switch (el.dataset.action) {
             case 'importProjectChange': importProject(event); break;
             case 'renderCooccurrenceOverlaps': renderCooccurrenceOverlaps(); break;
+            case 'toggleCodeColorPaletteContrast': toggleCodeColorPaletteContrast(event.target.checked); break;
             default: break;
         }
     });
