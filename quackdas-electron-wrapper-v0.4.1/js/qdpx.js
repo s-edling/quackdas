@@ -220,7 +220,8 @@ async function exportToQdpx() {
         codeXml += `name="${escapeXml(code.name)}" `;
         codeXml += `isCodable="true" `;
         codeXml += `color="${formatColor(code.color)}" `;
-        codeXml += `quackdasShortcut="${escapeXml(code.shortcut || '')}"`;
+        codeXml += `quackdasShortcut="${escapeXml(code.shortcut || '')}" `;
+        codeXml += `quackdasNotes="${escapeXml(code.notes || '')}"`;
         
         if (code.description || children.length > 0) {
             codeXml += '>\n';
@@ -489,6 +490,7 @@ async function importFromQdpx(qdpxData) {
         const color = parseColor(codeEl.getAttribute('color'));
         const rawShortcut = (codeEl.getAttribute('quackdasShortcut') || '').trim();
         const shortcut = /^[1-9]$/.test(rawShortcut) ? rawShortcut : '';
+        const notes = codeEl.getAttribute('quackdasNotes') || '';
         const descEl = codeEl.querySelector(':scope > Description');
         const description = descEl ? descEl.textContent : '';
         
@@ -500,6 +502,7 @@ async function importFromQdpx(qdpxData) {
             name: name,
             color: color,
             description: description,
+            notes: notes,
             parentId: parentId,
             created: new Date().toISOString(),
             lastUsed: new Date().toISOString(),

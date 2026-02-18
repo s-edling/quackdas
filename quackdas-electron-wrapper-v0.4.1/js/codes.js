@@ -31,6 +31,7 @@ function saveCode(e) {
         id: 'code_' + Date.now(),
         name: name,
         description: description,
+        notes: '',
         shortcut: shortcut,
         parentId: parentId,
         color: codeColors[colorIndex % codeColors.length],
@@ -153,10 +154,14 @@ function filterByCode(codeId, e) {
 
     if (appData.filterCodeId === codeId) {
         appData.filterCodeId = null;
+        if (typeof codeViewUiState === 'object' && codeViewUiState) {
+            codeViewUiState.notesExpanded = false;
+        }
     } else {
         appData.filterCodeId = codeId;
         if (typeof codeViewUiState === 'object' && codeViewUiState) {
             codeViewUiState.segmentsIncludeSubcodes = false;
+            codeViewUiState.notesExpanded = false;
         }
     }
     renderAll();

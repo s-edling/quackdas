@@ -6,6 +6,7 @@
 // Current segment being edited
 let currentEditSegment = null;
 let currentSegmentActionIds = null;
+const MIN_TEXT_CODING_LENGTH = 3; // 1-2 chars are never kept as coding
 
 function regionsEqualForSegment(a, b, tolerance = 0.0015) {
     if (!a || !b) return false;
@@ -20,15 +21,15 @@ let currentPdfAnnotationSegmentId = null;
 let pdfAnnotationOutsideBound = false;
 let pdfAnnotationOpenedAt = 0;
 
-function addSegmentMemo(segmentId, text) {
-    if (!text) return;
+function addSegmentMemo(segmentId, text, tag = '') {
+    if (!text && !tag) return;
     const now = new Date().toISOString();
     appData.memos.push({
         id: 'memo_' + Date.now(),
         type: 'segment',
         targetId: segmentId,
         content: text,
-        tag: '',
+        tag: String(tag || '').trim().slice(0, 40),
         created: now,
         edited: now
     });
@@ -45,6 +46,8 @@ function ensurePdfAnnotationInline() {
     panel.innerHTML = `
         <div class="pdf-region-annotation-title" id="pdfRegionAnnotationTitle">Add annotation</div>
         <textarea id="pdfRegionAnnotationInput" class="pdf-region-annotation-input" rows="3" placeholder="Why this region matters..."></textarea>
+        <div class="pdf-region-annotation-tag-title">Tag (optional)</div>
+        <input id="pdfRegionAnnotationTag" type="text" class="pdf-region-annotation-tag" maxlength="40" placeholder="Tag (optional)" />
         <div id="pdfRegionAnnotationExisting" class="pdf-region-annotation-existing" hidden></div>
         <div class="pdf-region-annotation-actions">
             <button type="button" id="pdfRegionAnnotationSave" class="btn btn-primary">Save annotation</button>
@@ -56,6 +59,7 @@ function ensurePdfAnnotationInline() {
     const saveBtn = panel.querySelector('#pdfRegionAnnotationSave');
     const skipBtn = panel.querySelector('#pdfRegionAnnotationSkip');
     const input = panel.querySelector('#pdfRegionAnnotationInput');
+    const tagInput = panel.querySelector('#pdfRegionAnnotationTag');
     if (saveBtn) saveBtn.addEventListener('click', savePdfRegionAnnotationInline);
     if (skipBtn) skipBtn.addEventListener('click', dismissPdfRegionAnnotationInline);
     if (input) {
@@ -70,6 +74,14 @@ function ensurePdfAnnotationInline() {
             if (event.shiftKey) return;
             event.preventDefault();
             savePdfRegionAnnotationInline();
+        });
+    }
+    if (tagInput) {
+        tagInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            dismissPdfRegionAnnotationInline();
         });
     }
 
@@ -121,6 +133,8 @@ function showPdfRegionAnnotationInline(segment, options = {}) {
         input.placeholder = options.placeholder || 'Add annotation (optional)...';
         setTimeout(() => input.focus(), 0);
     }
+    const tagInput = panel.querySelector('#pdfRegionAnnotationTag');
+    if (tagInput) tagInput.value = '';
     renderSegmentAnnotationList(segment.id);
     pdfAnnotationOpenedAt = Date.now();
     panel.hidden = false;
@@ -131,7 +145,9 @@ function savePdfRegionAnnotationInline() {
     const panel = document.getElementById('pdfRegionAnnotationInline');
     if (!panel) return;
     const input = panel.querySelector('#pdfRegionAnnotationInput');
+    const tagInput = panel.querySelector('#pdfRegionAnnotationTag');
     const text = (input?.value || '').trim();
+    const tag = (tagInput?.value || '').trim().slice(0, 40);
     const segmentId = currentPdfAnnotationSegmentId;
     const segment = appData.segments.find(s => s.id === segmentId);
     const currentDoc = appData.documents.find(d => d.id === appData.currentDocId);
@@ -144,7 +160,7 @@ function savePdfRegionAnnotationInline() {
     );
 
     saveHistory();
-    addSegmentMemo(segmentId, text);
+    addSegmentMemo(segmentId, text, tag);
     saveData();
 
     if (isCurrentPdfSegment) {
@@ -189,11 +205,290 @@ function handleTextSelection() {
     if (position) {
         // Store indices (not just a DOM Range) so we can restore selection after re-render
         appData.selectedText = {
-            text: text,
+            text: doc.content.substring(position.start, position.end),
             startIndex: position.start,
             endIndex: position.end
         };
     }
+}
+
+function isTinyTextRange(startIndex, endIndex) {
+    return (Number(endIndex) - Number(startIndex)) < MIN_TEXT_CODING_LENGTH;
+}
+
+function mergeIntervals(intervals) {
+    if (!Array.isArray(intervals) || intervals.length === 0) return [];
+    const sorted = intervals
+        .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+        .sort((x, y) => x[0] - y[0]);
+    if (sorted.length === 0) return [];
+    const merged = [sorted[0].slice()];
+    for (let i = 1; i < sorted.length; i++) {
+        const [start, end] = sorted[i];
+        const last = merged[merged.length - 1];
+        if (start <= last[1]) {
+            last[1] = Math.max(last[1], end);
+        } else {
+            merged.push([start, end]);
+        }
+    }
+    return merged;
+}
+
+function subtractIntervalsFromRange(start, end, coveredIntervals) {
+    if (!(end > start)) return [];
+    if (!Array.isArray(coveredIntervals) || coveredIntervals.length === 0) return [[start, end]];
+    const out = [];
+    let cursor = start;
+    coveredIntervals.forEach(([a, b]) => {
+        const s = Math.max(start, a);
+        const e = Math.min(end, b);
+        if (e <= s) return;
+        if (s > cursor) out.push([cursor, s]);
+        cursor = Math.max(cursor, e);
+    });
+    if (cursor < end) out.push([cursor, end]);
+    return out;
+}
+
+function findSnapSegmentRange(docId, startIndex, endIndex) {
+    const selectionLength = endIndex - startIndex;
+    if (!(selectionLength > 0)) return null;
+
+    const SNAP_MIN_OVERLAP_TO_SEGMENT = 0.88;
+    const SNAP_MIN_OVERLAP_TO_SELECTION = 0.75;
+    let best = null;
+    let bestScore = -Infinity;
+
+    appData.segments.forEach((segment) => {
+        if (!segment || segment.docId !== docId || segment.pdfRegion) return;
+        const segStart = Number(segment.startIndex);
+        const segEnd = Number(segment.endIndex);
+        if (!(segEnd > segStart)) return;
+
+        const overlap = Math.max(0, Math.min(endIndex, segEnd) - Math.max(startIndex, segStart));
+        if (!(overlap > 0)) return;
+
+        const segLen = segEnd - segStart;
+        const overlapToSeg = overlap / segLen;
+        const overlapToSel = overlap / selectionLength;
+        if (overlapToSeg < SNAP_MIN_OVERLAP_TO_SEGMENT || overlapToSel < SNAP_MIN_OVERLAP_TO_SELECTION) return;
+
+        const edgeTolerance = Math.max(4, Math.round(segLen * 0.12));
+        const startDrift = Math.abs(startIndex - segStart);
+        const endDrift = Math.abs(endIndex - segEnd);
+        if (startDrift > edgeTolerance || endDrift > edgeTolerance) return;
+
+        const score = (overlapToSeg * 2) + overlapToSel - ((startDrift + endDrift) / (edgeTolerance * 2));
+        if (score > bestScore) {
+            bestScore = score;
+            best = { startIndex: segStart, endIndex: segEnd };
+        }
+    });
+
+    return best;
+}
+
+function normalizeTextSelectionForCoding(doc, rawSelection) {
+    if (!doc || !rawSelection) return null;
+    let startIndex = Number(rawSelection.startIndex);
+    let endIndex = Number(rawSelection.endIndex);
+    if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) return null;
+    if (endIndex < startIndex) {
+        const t = startIndex;
+        startIndex = endIndex;
+        endIndex = t;
+    }
+    startIndex = Math.max(0, Math.min(startIndex, doc.content.length));
+    endIndex = Math.max(0, Math.min(endIndex, doc.content.length));
+    if (!(endIndex > startIndex)) return null;
+
+    const snapped = findSnapSegmentRange(doc.id, startIndex, endIndex);
+    if (snapped) {
+        startIndex = snapped.startIndex;
+        endIndex = snapped.endIndex;
+    }
+
+    return {
+        startIndex,
+        endIndex,
+        text: doc.content.substring(startIndex, endIndex)
+    };
+}
+
+function pruneTinyTextSegments() {
+    appData.segments = appData.segments.filter((segment) => {
+        if (!segment || segment.pdfRegion) return true;
+        const start = Number(segment.startIndex);
+        const end = Number(segment.endIndex);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) return false;
+        return !isTinyTextRange(start, end);
+    });
+}
+
+function coalesceExactTextSegments() {
+    const byKey = new Map();
+    const out = [];
+
+    appData.segments.forEach((segment) => {
+        if (!segment) return;
+        if (segment.pdfRegion) {
+            out.push(segment);
+            return;
+        }
+
+        const start = Number(segment.startIndex);
+        const end = Number(segment.endIndex);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) return;
+
+        const key = `${segment.docId}::${start}::${end}`;
+        const existing = byKey.get(key);
+        if (!existing) {
+            segment.codeIds = Array.from(new Set(Array.isArray(segment.codeIds) ? segment.codeIds : []));
+            byKey.set(key, segment);
+            out.push(segment);
+            return;
+        }
+
+        existing.codeIds = Array.from(new Set([...(existing.codeIds || []), ...((segment.codeIds || []))]));
+        if (!existing.created || (segment.created && segment.created < existing.created)) {
+            existing.created = segment.created;
+        }
+        existing.modified = segment.modified || existing.modified;
+        existing.text = existing.text || segment.text;
+    });
+
+    appData.segments = out.filter((segment) => {
+        if (segment.pdfRegion) return true;
+        return Array.isArray(segment.codeIds) && segment.codeIds.length > 0;
+    });
+}
+
+function toggleCodeForTextRange(doc, startIndex, endIndex, codeId) {
+    const overlapWithCode = appData.segments.filter((segment) => (
+        segment &&
+        !segment.pdfRegion &&
+        segment.docId === doc.id &&
+        Array.isArray(segment.codeIds) &&
+        segment.codeIds.includes(codeId) &&
+        Number(segment.startIndex) < endIndex &&
+        Number(segment.endIndex) > startIndex
+    ));
+
+    const coveredIntervals = mergeIntervals(
+        overlapWithCode.map((segment) => [
+            Math.max(startIndex, Number(segment.startIndex)),
+            Math.min(endIndex, Number(segment.endIndex))
+        ])
+    );
+
+    // Tiny ranges are allowed only for removal (fine-grained uncoding), never for adding new coding.
+    if (isTinyTextRange(startIndex, endIndex) && coveredIntervals.length === 0) {
+        return { changed: false, skippedTiny: true };
+    }
+
+    const addIntervals = subtractIntervalsFromRange(startIndex, endIndex, coveredIntervals)
+        .filter(([a, b]) => !isTinyTextRange(a, b));
+
+    const affectedIds = new Set(overlapWithCode.map(segment => segment.id));
+    const now = new Date().toISOString();
+    const idBase = Date.now();
+    let idSeq = 0;
+    const nextSegId = () => `seg_${idBase}_${++idSeq}`;
+    let changed = false;
+    const nextSegments = [];
+
+    appData.segments.forEach((segment) => {
+        if (!segment || !affectedIds.has(segment.id)) {
+            nextSegments.push(segment);
+            return;
+        }
+
+        const segStart = Number(segment.startIndex);
+        const segEnd = Number(segment.endIndex);
+        if (!(segEnd > segStart)) return;
+
+        const cuts = [segStart, segEnd];
+        if (startIndex > segStart && startIndex < segEnd) cuts.push(startIndex);
+        if (endIndex > segStart && endIndex < segEnd) cuts.push(endIndex);
+        cuts.sort((a, b) => a - b);
+
+        const pieces = [];
+        for (let i = 0; i < cuts.length - 1; i++) {
+            const a = cuts[i];
+            const b = cuts[i + 1];
+            if (!(b > a)) continue;
+
+            let codeIds = Array.from(new Set(Array.isArray(segment.codeIds) ? segment.codeIds : []));
+            const overlapsSelection = a < endIndex && b > startIndex;
+            if (overlapsSelection && codeIds.includes(codeId)) {
+                codeIds = codeIds.filter(id => id !== codeId);
+                changed = true;
+            }
+            if (codeIds.length === 0 || isTinyTextRange(a, b)) continue;
+
+            pieces.push({
+                ...segment,
+                id: nextSegId(),
+                startIndex: a,
+                endIndex: b,
+                text: doc.content.substring(a, b),
+                codeIds,
+                modified: now
+            });
+        }
+
+        if (pieces.length === 0) return;
+
+        // Keep memo linkage stable where possible by preserving original id on largest remaining piece.
+        let largestIndex = 0;
+        for (let i = 1; i < pieces.length; i++) {
+            const bestLen = Number(pieces[largestIndex].endIndex) - Number(pieces[largestIndex].startIndex);
+            const curLen = Number(pieces[i].endIndex) - Number(pieces[i].startIndex);
+            if (curLen > bestLen) largestIndex = i;
+        }
+        pieces[largestIndex].id = segment.id;
+        pieces[largestIndex].created = segment.created || now;
+
+        pieces.forEach(piece => nextSegments.push(piece));
+    });
+
+    addIntervals.forEach(([a, b]) => {
+        let target = nextSegments.find((segment) => (
+            segment &&
+            !segment.pdfRegion &&
+            segment.docId === doc.id &&
+            Number(segment.startIndex) === a &&
+            Number(segment.endIndex) === b
+        ));
+
+        if (target) {
+            if (!target.codeIds.includes(codeId)) {
+                target.codeIds.push(codeId);
+                target.codeIds = Array.from(new Set(target.codeIds));
+                target.text = doc.content.substring(a, b);
+                target.modified = now;
+                changed = true;
+            }
+        } else {
+            nextSegments.push({
+                id: nextSegId(),
+                docId: doc.id,
+                text: doc.content.substring(a, b),
+                codeIds: [codeId],
+                startIndex: a,
+                endIndex: b,
+                created: now,
+                modified: now
+            });
+            changed = true;
+        }
+    });
+
+    appData.segments = nextSegments;
+    coalesceExactTextSegments();
+    pruneTinyTextSegments();
+    return { changed, skippedTiny: false };
 }
 
 // Apply a single code to the currently stored selection (click-to-code workflow)
@@ -206,19 +501,9 @@ function applyCodeToStoredSelection(codeId) {
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const isPdfRegion = sel.kind === 'pdfRegion' && sel.pdfRegion;
     if (isPdfRegion && !sel.pdfRegion) return;
-    if (!isPdfRegion && !sel.text) return;
     if (!isPdfRegion && (sel.startIndex === undefined || sel.endIndex === undefined)) return;
 
-    // Save history before making changes
-    saveHistory();
-
-    // Update code lastUsed
-    const code = appData.codes.find(c => c.id === codeId);
-    if (code) {
-        code.lastUsed = new Date().toISOString();
-    }
-
-    // Merge into existing segment if boundaries match; otherwise create a new segment
+    // Merge/toggle for PDF region or text range
     let segment = null;
     if (isPdfRegion) {
         segment = appData.segments.find(s =>
@@ -226,16 +511,46 @@ function applyCodeToStoredSelection(codeId) {
             s.pdfRegion &&
             regionsEqualForSegment(s.pdfRegion, sel.pdfRegion)
         );
-    } else {
-        segment = appData.segments.find(s =>
-            s.docId === doc.id &&
-            s.startIndex === sel.startIndex &&
-            s.endIndex === sel.endIndex
-        );
     }
 
     let codeApplied = false;
-    if (segment) {
+    if (!isPdfRegion) {
+        const normalized = normalizeTextSelectionForCoding(doc, sel);
+        if (!normalized) {
+            appData.selectedText = null;
+            const nativeSelection = window.getSelection();
+            if (nativeSelection) nativeSelection.removeAllRanges();
+            return;
+        }
+
+        if (isTinyTextRange(normalized.startIndex, normalized.endIndex)) {
+            // Keep going: tiny ranges may still remove existing coding.
+            // Addition of tiny new coding is blocked in toggleCodeForTextRange.
+        }
+
+        // Save history before making changes
+        saveHistory();
+        const code = appData.codes.find(c => c.id === codeId);
+        if (code) code.lastUsed = new Date().toISOString();
+
+        appData.selectedText = {
+            text: normalized.text,
+            startIndex: normalized.startIndex,
+            endIndex: normalized.endIndex
+        };
+        const result = toggleCodeForTextRange(doc, normalized.startIndex, normalized.endIndex, codeId);
+        if (!result.changed) {
+            appData.selectedText = null;
+            const nativeSelection = window.getSelection();
+            if (nativeSelection) nativeSelection.removeAllRanges();
+            return;
+        }
+        codeApplied = true;
+    } else if (segment) {
+        // Save history before making changes
+        saveHistory();
+        const code = appData.codes.find(c => c.id === codeId);
+        if (code) code.lastUsed = new Date().toISOString();
         if (segment.codeIds.includes(codeId)) {
             // Toggle off: remove only the specific code (not parent codes)
             segment.codeIds = segment.codeIds.filter(id => id !== codeId);
@@ -246,13 +561,16 @@ function applyCodeToStoredSelection(codeId) {
         } else {
             // Add only the selected code (no automatic parent propagation)
             segment.codeIds.push(codeId);
-            // Keep text in sync (useful if content changed slightly)
             if (typeof sel.text === 'string') {
                 segment.text = sel.text;
             }
             codeApplied = true;
         }
     } else {
+        // Save history before making changes
+        saveHistory();
+        const code = appData.codes.find(c => c.id === codeId);
+        if (code) code.lastUsed = new Date().toISOString();
         segment = {
             id: 'seg_' + Date.now(),
             docId: doc.id,
@@ -260,9 +578,9 @@ function applyCodeToStoredSelection(codeId) {
                 ? sel.text
                 : `[PDF region: page ${sel.pdfRegion.pageNum}]`,
             codeIds: [codeId],
-            startIndex: isPdfRegion ? 0 : sel.startIndex,
-            endIndex: isPdfRegion ? 1 : sel.endIndex,
-            pdfRegion: isPdfRegion ? Object.assign({}, sel.pdfRegion) : undefined,
+            startIndex: 0,
+            endIndex: 1,
+            pdfRegion: Object.assign({}, sel.pdfRegion),
             created: new Date().toISOString()
         };
         appData.segments.push(segment);
@@ -400,6 +718,12 @@ function applySelectedCodes() {
         closeCodeSelectionModal();
         return;
     }
+
+    const normalized = normalizeTextSelectionForCoding(doc, selectedText);
+    if (!normalized || isTinyTextRange(normalized.startIndex, normalized.endIndex)) {
+        closeCodeSelectionModal();
+        return;
+    }
     
     // Save history before making changes
     saveHistory();
@@ -415,17 +739,31 @@ function applySelectedCodes() {
         }
     });
     
-    const segment = {
-        id: 'seg_' + Date.now(),
-        docId: doc.id,
-        text: selectedText.text,
-        codeIds: [...allCodeIds],
-        startIndex: selectedText.startIndex,
-        endIndex: selectedText.endIndex,
-        created: new Date().toISOString()
-    };
-    
-    appData.segments.push(segment);
+    let segment = appData.segments.find(s =>
+        s.docId === doc.id &&
+        !s.pdfRegion &&
+        Number(s.startIndex) === normalized.startIndex &&
+        Number(s.endIndex) === normalized.endIndex
+    );
+
+    if (segment) {
+        segment.codeIds = Array.from(new Set([...(segment.codeIds || []), ...allCodeIds]));
+        segment.text = normalized.text;
+        segment.modified = new Date().toISOString();
+    } else {
+        segment = {
+            id: 'seg_' + Date.now(),
+            docId: doc.id,
+            text: normalized.text,
+            codeIds: [...allCodeIds],
+            startIndex: normalized.startIndex,
+            endIndex: normalized.endIndex,
+            created: new Date().toISOString()
+        };
+        appData.segments.push(segment);
+    }
+    coalesceExactTextSegments();
+    pruneTinyTextSegments();
     saveData();
     closeCodeSelectionModal();
     renderAll();
@@ -443,65 +781,20 @@ function quickApplyCode(codeId) {
     
     const selection = window.getSelection();
     const text = selection.toString().trim();
-    
     if (text.length === 0 || !selection.rangeCount) return;
-    
+
     const range = selection.getRangeAt(0);
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const contentElement = document.getElementById('documentContent');
     const position = getTextPosition(contentElement, range, doc.content);
-    
     if (!position) return;
-    
-    saveHistory();
-    
-    // Update code lastUsed
-    const code = appData.codes.find(c => c.id === codeId);
-    if (code) {
-        code.lastUsed = new Date().toISOString();
-    }
-    
-    // Check if segment with same boundaries already exists
-    let segment = appData.segments.find(s =>
-        s.docId === doc.id &&
-        s.startIndex === position.start &&
-        s.endIndex === position.end
-    );
-    
-    if (segment) {
-        if (segment.codeIds.includes(codeId)) {
-            // Toggle off: remove only the specific code (not parent codes)
-            segment.codeIds = segment.codeIds.filter(id => id !== codeId);
-            // If no codes remain, remove the segment entirely
-            if (segment.codeIds.length === 0) {
-                appData.segments = appData.segments.filter(s => s.id !== segment.id);
-            }
-        } else {
-            // Add only the selected code (no automatic parent propagation)
-            segment.codeIds.push(codeId);
-            // Keep text in sync
-            segment.text = text;
-        }
-    } else {
-        segment = {
-            id: 'seg_' + Date.now(),
-            docId: doc.id,
-            text: text,
-            codeIds: [codeId],
-            startIndex: position.start,
-            endIndex: position.end,
-            created: new Date().toISOString()
-        };
-        appData.segments.push(segment);
-    }
-    
-    saveData();
-    renderAll();
-    
-    // Clear both native and stored selection after shortcut coding.
-    // Shortcut flow should not leave an invisible pending click-to-code target.
-    appData.selectedText = null;
-    window.getSelection().removeAllRanges();
+
+    appData.selectedText = {
+        text: doc.content.substring(position.start, position.end),
+        startIndex: position.start,
+        endIndex: position.end
+    };
+    applyCodeToStoredSelection(codeId);
 }
 
 // Handle editing/removing overlapping segments

@@ -1,5 +1,171 @@
 # Quackdas Changelog
 
+## Version 0.4.3-build-2026-02-18bs
+Date: 2026-02-18
+
+What changed:
+- Enforced explicit serif font on Code-view analytic input fields to remove remaining input rendering inconsistencies:
+  - `Description` and `Notes` inputs in code description editor,
+  - `Annotation` and `Tag` inputs in Code-view annotation flows (modal/inspector/PDF inline annotation panel).
+- Added a visual spacer between nested subfolder content and parent-folder documents:
+  - when a folder contains both subfolders and direct documents, a small vertical gap is rendered before the parent-folder document list.
+
+Why (one line):
+- To fully eliminate residual typography mismatches in Code view and improve visual hierarchy between subfolder and parent-folder document groups.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+
+## Version 0.4.3-build-2026-02-18br
+Date: 2026-02-18
+
+What changed:
+- Fixed remaining typography inconsistencies for user-entered description/notes/tag content:
+  - Code view `Description and notes` text now renders in serif.
+  - Annotation text and tag badges in Code view and annotation lists now render in serif.
+  - Folder description field now uses serif input text.
+  - PDF annotation preview/inline annotation list text now renders in serif.
+- Updated Coding inspector:
+  - moved inspector to a fixed right-side overlay so it sits over the right document panels rather than over coded text,
+  - added `Tag (optional)` input when adding an annotation from inspector,
+  - added tag display in existing inspector annotation items,
+  - inspector annotation input/tag text now renders in serif.
+- Folder tree ordering update:
+  - subfolders now render above documents at the same level inside each folder.
+
+Why (one line):
+- To complete typography consistency for analytic text, reduce inspector occlusion of coded content, and improve folder tree ordering clarity.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+
+## Version 0.4.3-build-2026-02-18bq
+Date: 2026-02-18
+
+What changed:
+- Unified serif typography for Code description editor inputs:
+  - `Description` single-line input now uses the same serif text style as `Notes`.
+- Unified serif typography in the Code view segment-annotation modal:
+  - `Tag (optional)` input now uses serif text styling to match annotation text.
+- Updated the in-document annotation overlay:
+  - annotation input now uses serif text styling,
+  - added a small `Tag (optional)` input for parity with Code view annotation editing,
+  - saving now persists optional tags for in-document annotations.
+
+Why (one line):
+- To make annotation/description editing visually consistent and keep tag behavior aligned across annotation entry points.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/coding.js`
+
+## Version 0.4.3-build-2026-02-18bp
+Date: 2026-02-18
+
+What changed:
+- Replaced Code view description editing prompt with a dedicated modal editor containing:
+  - a short single-line `Description` input,
+  - a larger resizable `Notes` textarea.
+- Updated Code view description bar behavior:
+  - description is always shown directly in Code view,
+  - added `Show notes` / `Hide notes` toggle in the same text-link style as other Code view actions,
+  - edit link now reads `Add description and notes`.
+- Added keyboard behavior for the new editor:
+  - `Enter` saves,
+  - `Shift+Enter` inserts line breaks in the notes textarea.
+- Added persistence support for code notes:
+  - new `code.notes` field in app state normalization and code creation defaults,
+  - QDPX export/import now round-trips notes via `quackdasNotes` code attribute.
+- Added Escape close support for the new code description modal.
+
+Why (one line):
+- To support separated short descriptions and longer analytic notes while keeping Code view compact by default.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/render.js`
+- `js/app.js`
+- `js/codes.js`
+- `js/state.js`
+- `js/qdpx.js`
+
+## Version 0.4.3-build-2026-02-18bo
+Date: 2026-02-18
+
+What changed:
+- Reduced coded-text underline thickness from 2px to 1px.
+- Adjusted tiny-range coding guard:
+  - 1-2 character text selections are still blocked for adding new coding,
+  - but 1-2 character selections now work for removing an already applied code (fine boundary adjustment).
+
+Why (one line):
+- To improve visual subtlety and allow precise uncoding edits at segment edges without permitting accidental tiny new codings.
+
+Files touched:
+- `styles.css`
+- `js/coding.js`
+
+## Version 0.4.3-build-2026-02-18bn
+Date: 2026-02-18
+
+What changed:
+- Reworked text coding to true binary toggle semantics by range:
+  - re-applying the same code to a subrange now removes that code from that subrange (with boundary splits as needed),
+  - applying to uncoded portions adds the code only where absent.
+- Added near-match selection snapping for text coding:
+  - if a text selection is close to an existing segment boundary (roughly 90-110% style near-hit), coding actions snap to that existing segment range.
+- Added minimum text coding length rule:
+  - text codings of 1-2 characters are not applied,
+  - tiny text segments are pruned from stored segments.
+- Added exact-range coalescing for text segments:
+  - merges duplicate text segments with identical boundaries to avoid duplicate code application artifacts.
+- Unified shortcut coding behavior:
+  - keyboard shortcut flow now routes through the same stored-selection toggle path as click-to-code for consistent behavior.
+
+Why (one line):
+- To make text coding predictable and reversible at any subrange while preventing accidental tiny codings and duplicate same-code overlays.
+
+Files touched:
+- `js/coding.js`
+
+## Version 0.4.3-build-2026-02-18bm
+Date: 2026-02-18
+
+What changed:
+- Fixed single-code highlight rendering regression:
+  - coded spans with one code now use a valid single-color `linear-gradient(...)` layer instead of a raw color token in `background-image`,
+  - restores highlight fill/underline visibility for one-code segments.
+
+Why (one line):
+- To ensure single-code and multi-code segments both render highlighted consistently.
+
+Files touched:
+- `js/render.js`
+
+## Version 0.4.3-build-2026-02-18bl
+Date: 2026-02-18
+
+What changed:
+- Fixed coded-text rendering so coding no longer changes paragraph flow:
+  - removed inline-flex marker layout from document coded spans,
+  - restored inline text flow for coded spans.
+- Reworked right-side coded marker rendering in document view:
+  - markers now render in a dedicated right-gutter overlay layer after text render,
+  - marker bands are computed from coded span client rects and split by large vertical gaps,
+  - whitespace-only coded fragments no longer emit marker lines.
+- Removed inline marker element from document coded-span HTML output (markers are now overlay-only).
+
+Why (one line):
+- To ensure coding never alters text layout and to prevent marker leaks/stray marker placement in document text.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+
 ## Version 0.4.3-build-2026-02-17bk
 Date: 2026-02-17
 
@@ -523,6 +689,43 @@ Why (one line):
 Files touched:
 - `js/ui.js`
 - `js/state.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bi
+Date: 2026-02-17
+
+What changed:
+- Updated coded-segment visual treatment from heavy underline to a highlighted mark style:
+  - tinted highlight fill in the code color,
+  - 2px underline in a darker shade of the same color,
+  - right-edge vertical marker in the same darker shade.
+- Applied to both in-document coded spans and Code view snippet spans.
+
+Why (one line):
+- To make coded text blocks easier to parse visually while preserving strong code-color identity.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-17bj
+Date: 2026-02-17
+
+What changed:
+- Fixed co-coding visual regression in coded spans:
+  - multi-code spans now render as multi-color highlights instead of collapsing to one color,
+  - removed inline-block behavior that caused unwanted line-wrap breaks after co-coding.
+- Updated right-side code markers:
+  - moved markers slightly outside the text block,
+  - multiple codes now render as parallel vertical lines (one per code), making overlap depth visually clear.
+
+Why (one line):
+- To preserve readable co-coding visuals and show overlapping code structure without disrupting text flow.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
 - `CHANGELOG.md`
 
 ## Version 0.4.3-build-2026-02-17be

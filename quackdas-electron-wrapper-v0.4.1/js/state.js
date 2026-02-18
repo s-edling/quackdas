@@ -265,6 +265,7 @@ function loadData() {
             // Add descriptions, shortcuts, and lastUsed to old codes
             appData.codes.forEach(code => {
                 if (!code.description) code.description = '';
+                if (typeof code.notes !== 'string') code.notes = '';
                 if (!code.shortcut) code.shortcut = '';
                 if (!code.lastUsed) code.lastUsed = code.created || new Date().toISOString();
             });

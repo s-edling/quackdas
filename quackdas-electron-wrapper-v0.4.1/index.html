@@ -223,7 +223,7 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Tag (optional)</label>
-                    <input type="text" class="form-input" id="memoTag" maxlength="40" placeholder="e.g. Method, Theory, Follow-up">
+                    <input type="text" class="form-input memo-tag-input" id="memoTag" maxlength="40" placeholder="e.g. Method, Theory, Follow-up">
                 </div>
                 <div class="memo-list" id="existingMemosList" style="display: none;">
                     <!-- Existing memos will be shown here -->
@@ -625,6 +625,29 @@
       <button class="btn btn-secondary" data-action="closeTextPromptCancel">Cancel</button>
       <button class="btn btn-primary" data-action="closeTextPromptOk">OK</button>
     </div>
+  </div>
+</div>
+
+<!-- Code description + notes editor -->
+<div id="codeDescriptionModal" class="modal">
+  <div class="modal-content modal-content-code-description">
+    <form id="codeDescriptionForm">
+      <div class="modal-body">
+        <h3 class="modal-title">Description and notes</h3>
+        <div class="form-group">
+          <label class="form-label" for="codeDescriptionShortInput">Description</label>
+          <input id="codeDescriptionShortInput" type="text" class="form-input code-description-short-input" placeholder="Add a short description..." />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="codeDescriptionNotesInput">Notes</label>
+          <textarea id="codeDescriptionNotesInput" class="form-textarea code-description-notes-input" rows="10" placeholder="Add notes..."></textarea>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-action="closeCodeDescriptionModal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
   </div>
 </div>
 

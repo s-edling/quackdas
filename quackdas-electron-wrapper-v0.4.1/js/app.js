@@ -202,6 +202,7 @@ function setupStaticActionBindings() {
             case 'closeMoveToFolderModal': closeMoveToFolderModal(); break;
             case 'closeFolderInfoModal': closeFolderInfoModal(); break;
             case 'closeCodeColorModal': closeCodeColorModal(); break;
+            case 'closeCodeDescriptionModal': closeCodeDescriptionModal(); break;
             case 'closeTextPromptCancel': closeTextPrompt(false); break;
             case 'closeTextPromptOk': closeTextPrompt(true); break;
             case 'closeOcrHelpModal': closeOcrHelpModal(); break;
@@ -225,6 +226,7 @@ function setupStaticActionBindings() {
         ['memoForm', saveMemo],
         ['metadataForm', saveMetadata],
         ['codeForm', saveCode],
+        ['codeDescriptionForm', saveCodeDescriptionFromModal],
         ['importForm', importDocument],
         ['pasteForm', pasteDocument],
         ['folderInfoForm', saveFolderInfo]
@@ -233,6 +235,24 @@ function setupStaticActionBindings() {
         if (!form || typeof handler !== 'function') return;
         form.addEventListener('submit', (event) => handler(event));
     });
+
+    const descInput = document.getElementById('codeDescriptionShortInput');
+    const notesInput = document.getElementById('codeDescriptionNotesInput');
+    if (descInput) {
+        descInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' || event.shiftKey) return;
+            event.preventDefault();
+            if (typeof saveCodeDescriptionFromModal === 'function') saveCodeDescriptionFromModal();
+        });
+    }
+    if (notesInput) {
+        notesInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            if (event.shiftKey) return; // Shift+Enter inserts line break.
+            event.preventDefault();
+            if (typeof saveCodeDescriptionFromModal === 'function') saveCodeDescriptionFromModal();
+        });
+    }
 }
 
 function isModalOpen(modalId) {
@@ -300,6 +320,12 @@ function closeUiOnEscape() {
     if (isModalOpen('textPromptModal')) {
         if (typeof closeTextPrompt === 'function') closeTextPrompt(false);
         else document.getElementById('textPromptModal').classList.remove('show');
+        return true;
+    }
+
+    if (isModalOpen('codeDescriptionModal')) {
+        if (typeof closeCodeDescriptionModal === 'function') closeCodeDescriptionModal();
+        else document.getElementById('codeDescriptionModal').classList.remove('show');
         return true;
     }
 

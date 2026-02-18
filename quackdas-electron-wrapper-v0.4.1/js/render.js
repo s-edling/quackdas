@@ -108,14 +108,18 @@ function renderDocuments() {
             html += renderFolderItem(folder, indent);
             
             if (folder.expanded !== false) {
+                // Render subfolders before documents on the same level.
+                html += renderFolderTree(folder.id, indent + 1, visited);
+
                 // Render documents in this folder
                 const docsInFolder = docsByFolder.get(folder.id) || [];
+                const subfoldersInFolder = folderChildrenByParent.get(folder.id) || [];
+                if (subfoldersInFolder.length > 0 && docsInFolder.length > 0) {
+                    html += `<div class="folder-level-separator" style="margin-left: ${12 + (indent + 1) * 16}px;"></div>`;
+                }
                 docsInFolder.forEach(doc => {
                     html += renderDocItem(doc, indent + 1);
                 });
-                
-                // Render subfolders
-                html += renderFolderTree(folder.id, indent + 1, visited);
             }
         });
         
@@ -384,6 +388,7 @@ function renderFullDocument(doc) {
         const html = escapeHtml(doc.content);
         content.innerHTML = html || '<p style="color: var(--text-secondary);"><em>Document is empty</em></p>';
         content.onmouseup = handleTextSelection;
+        clearDocumentSegmentMarkers(content);
         return;
     }
     
@@ -439,10 +444,165 @@ function renderFullDocument(doc) {
     
     content.innerHTML = html || '<p style="color: var(--text-secondary);"><em>Document is empty</em></p>';
     content.onmouseup = handleTextSelection;
+    renderDocumentSegmentMarkers(content);
+}
+
+function parseHexColorToRgb(hex) {
+    const raw = String(hex || '').trim().replace('#', '');
+    if (!/^[0-9a-f]{3}([0-9a-f]{3})?$/i.test(raw)) return null;
+    const full = raw.length === 3 ? raw.split('').map((ch) => ch + ch).join('') : raw;
+    const intVal = parseInt(full, 16);
+    return {
+        r: (intVal >> 16) & 255,
+        g: (intVal >> 8) & 255,
+        b: intVal & 255
+    };
+}
+
+function rgbToString(rgb) {
+    return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+}
+
+function darkenRgb(rgb, factor = 0.74) {
+    return {
+        r: Math.max(0, Math.round(rgb.r * factor)),
+        g: Math.max(0, Math.round(rgb.g * factor)),
+        b: Math.max(0, Math.round(rgb.b * factor))
+    };
+}
+
+function buildSegmentVisualStyleFromCodes(codes) {
+    const codeColors = (codes || [])
+        .map(code => String(code?.color || '').trim())
+        .filter(Boolean);
+    const uniqueColors = Array.from(new Set(codeColors));
+    const rgbList = uniqueColors
+        .map(hex => parseHexColorToRgb(hex))
+        .filter(Boolean);
+
+    if (rgbList.length === 0) {
+        rgbList.push({ r: 136, g: 136, b: 136 });
+    }
+
+    const darkList = rgbList.map(rgb => darkenRgb(rgb, 0.72));
+    const segCount = rgbList.length;
+
+    const buildSteppedBlendGradient = (list, alpha) => {
+        if (list.length <= 1) {
+            const solid = `rgba(${rgbToString(list[0])}, ${alpha})`;
+            return `linear-gradient(90deg, ${solid} 0%, ${solid} 100%)`;
+        }
+        const step = 100 / list.length;
+        const blend = Math.min(7, step * 0.42);
+        const blendHalf = blend / 2;
+        const stops = [];
+        stops.push(`rgba(${rgbToString(list[0])}, ${alpha}) 0%`);
+        for (let i = 0; i < list.length - 1; i++) {
+            const boundary = (i + 1) * step;
+            const left = Math.max(0, boundary - blendHalf).toFixed(4);
+            const right = Math.min(100, boundary + blendHalf).toFixed(4);
+            stops.push(`rgba(${rgbToString(list[i])}, ${alpha}) ${left}%`);
+            stops.push(`rgba(${rgbToString(list[i + 1])}, ${alpha}) ${right}%`);
+        }
+        stops.push(`rgba(${rgbToString(list[list.length - 1])}, ${alpha}) 100%`);
+        return `linear-gradient(90deg, ${stops.join(', ')})`;
+    };
+
+    const highlightGradient = buildSteppedBlendGradient(rgbList, 0.25);
+    const underlineGradient = buildSteppedBlendGradient(darkList, 0.96);
+
+    const markerStep = 4;
+    const markerLine = 2;
+    const markerWidth = Math.max(markerLine, ((darkList.length - 1) * markerStep) + markerLine);
+    const markerGradient = `linear-gradient(90deg, ${darkList.map((rgb, idx) => {
+        const start = idx * markerStep;
+        const end = start + markerLine;
+        return `rgba(${rgbToString(rgb)}, 0.96) ${start}px, rgba(${rgbToString(rgb)}, 0.96) ${end}px, transparent ${end}px, transparent ${start + markerStep}px`;
+    }).join(', ')})`;
+
+    return `--seg-highlight:${highlightGradient};--seg-underline:${underlineGradient};--seg-marker-gradient:${markerGradient};--seg-marker-width:${markerWidth}px;`;
+}
+
+function clearDocumentSegmentMarkers(contentEl) {
+    if (!contentEl) return;
+    const existingLayer = contentEl.querySelector(':scope > .document-segment-marker-layer');
+    if (existingLayer) existingLayer.remove();
+}
+
+function getGroupedRectBands(rects) {
+    if (!rects.length) return [];
+    const sorted = rects
+        .slice()
+        .sort((a, b) => (a.top - b.top) || (a.left - b.left));
+    const baseHeight = Math.max(8, sorted[0].height || 0);
+    const gapThreshold = Math.max(10, baseHeight * 0.9);
+    const bands = [];
+    let currentTop = sorted[0].top;
+    let currentBottom = sorted[0].bottom;
+
+    for (let i = 1; i < sorted.length; i++) {
+        const rect = sorted[i];
+        if ((rect.top - currentBottom) > gapThreshold) {
+            bands.push({ top: currentTop, bottom: currentBottom });
+            currentTop = rect.top;
+            currentBottom = rect.bottom;
+        } else {
+            currentBottom = Math.max(currentBottom, rect.bottom);
+        }
+    }
+
+    bands.push({ top: currentTop, bottom: currentBottom });
+    return bands;
+}
+
+function renderDocumentSegmentMarkers(contentEl) {
+    if (!contentEl || contentEl.classList.contains('code-view-mode')) return;
+    clearDocumentSegmentMarkers(contentEl);
+
+    const spans = Array.from(contentEl.querySelectorAll('.coded-segment'));
+    if (spans.length === 0) return;
+
+    const contentRect = contentEl.getBoundingClientRect();
+    if (!contentRect.width || !contentRect.height) return;
+
+    const layer = document.createElement('div');
+    layer.className = 'document-segment-marker-layer';
+    const baseLeft = contentEl.clientWidth + 10;
+
+    spans.forEach((span) => {
+        const rawText = span.textContent || '';
+        // Avoid visual artifacts for spans that only carry whitespace/newline boundaries.
+        if (!rawText.replace(/\s/g, '')) return;
+
+        const rects = Array.from(span.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+        if (rects.length === 0) return;
+
+        const computed = window.getComputedStyle(span);
+        const markerWidth = Math.max(2, parseFloat(computed.getPropertyValue('--seg-marker-width')) || 2);
+        const markerGradient = computed.getPropertyValue('--seg-marker-gradient').trim() || 'rgba(101, 101, 101, 0.95)';
+        const bands = getGroupedRectBands(rects);
+
+        bands.forEach((band) => {
+            const height = Math.max(2, band.bottom - band.top);
+            const marker = document.createElement('span');
+            marker.className = 'document-segment-marker';
+            marker.style.left = `${baseLeft}px`;
+            marker.style.top = `${band.top - contentRect.top}px`;
+            marker.style.height = `${height}px`;
+            marker.style.width = `${markerWidth}px`;
+            marker.style.background = markerGradient;
+            layer.appendChild(marker);
+        });
+    });
+
+    if (layer.childElementCount > 0) {
+        contentEl.appendChild(layer);
+    }
 }
 
 // Render a span of coded text with the given active segments
 function renderCodedSpan(text, activeSegments) {
+
     // Collect all unique codes from active segments
     const codes = [];
     activeSegments.forEach(seg => {
@@ -456,14 +616,7 @@ function renderCodedSpan(text, activeSegments) {
     
     // Create visual representation
     const codeNames = codes.map(c => c.name).join(', ');
-    const primaryColor = codes[0]?.color || '#999';
-    
-    // For multiple codes, show a gradient or multiple indicators
-    let borderStyle = `border-bottom: 2px solid ${primaryColor};`;
-    if (codes.length > 1) {
-        const colors = codes.slice(0, 4).map(c => c.color).join(', ');
-        borderStyle = `border-bottom: 3px solid; border-image: linear-gradient(to right, ${colors}) 1;`;
-    }
+    const segmentStyle = buildSegmentVisualStyleFromCodes(codes);
     
     const segmentIds = activeSegments.map(s => s.id).join(',');
     const safeSegmentIdsJs = escapeJsForSingleQuotedString(segmentIds);
@@ -471,7 +624,7 @@ function renderCodedSpan(text, activeSegments) {
     const segmentMemoCount = activeSegments.reduce((sum, s) => sum + getMemoCountForTarget('segment', s.id), 0);
     const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${safeFirstSegmentIdJs}', event)" title="${segmentMemoCount} annotation(s)">💭</span>` : '';
     
-    return `<span class="coded-segment" style="${borderStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)">${escapeHtml(text)}</span>${segmentMemoIndicator}`;
+    return `<span class="coded-segment" style="${segmentStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)"><span class="coded-segment-text">${escapeHtml(text)}</span></span>${segmentMemoIndicator}`;
 }
 
 const codeViewUiState = {
@@ -484,7 +637,8 @@ const codeViewUiState = {
     segmentsMemoFilter: 'all',
     segmentsIncludeSubcodes: false,
     segmentsSort: 'document',
-    presetsExpanded: false
+    presetsExpanded: false,
+    notesExpanded: false
 };
 
 const codeInspectorState = {
@@ -509,6 +663,11 @@ const filterVirtualState = {
 
 function setCodeViewMode(mode) {
     codeViewUiState.mode = (mode === 'annotations') ? 'annotations' : 'segments';
+    renderCurrentDocument();
+}
+
+function toggleCodeViewNotes() {
+    codeViewUiState.notesExpanded = !codeViewUiState.notesExpanded;
     renderCurrentDocument();
 }
 
@@ -682,12 +841,16 @@ function renderCodeInspector() {
                 ${memos.length === 0 ? '<div class="inspector-empty">No annotations yet.</div>' : memos.map(m => `
                     <div class="inspector-memo-item">
                         <div class="inspector-memo-date">${escapeHtml(new Date(m.edited || m.created).toLocaleString())}</div>
+                        ${m.tag ? `<div class="memo-tag-badge">${escapeHtml(m.tag)}</div>` : ''}
                         <div>${preserveLineBreaks(escapeHtml(m.content || ''))}</div>
                     </div>
                 `).join('')}
             </div>
             <div class="inspector-add-row">
-                <textarea id="inspectorMemoInput" class="form-textarea inspector-memo-input" rows="2" placeholder="Add annotation..."></textarea>
+                <div class="inspector-add-fields">
+                    <textarea id="inspectorMemoInput" class="form-textarea inspector-memo-input" rows="2" placeholder="Add annotation..."></textarea>
+                    <input id="inspectorMemoTag" type="text" class="form-input inspector-memo-tag-input" maxlength="40" placeholder="Tag (optional)">
+                </div>
                 <button type="button" class="btn btn-primary" onclick="addInspectorSegmentMemo('${escapeJsForSingleQuotedString(segment.id)}')">Save</button>
             </div>
         </div>
@@ -742,9 +905,11 @@ function toggleInspectorSegmentCode(segmentId, codeId, isChecked) {
 
 function addInspectorSegmentMemo(segmentId) {
     const input = document.getElementById('inspectorMemoInput');
+    const tagInput = document.getElementById('inspectorMemoTag');
     if (!input) return;
     const text = String(input.value || '').trim();
-    if (!text) return;
+    const tag = String(tagInput?.value || '').trim().slice(0, 40);
+    if (!text && !tag) return;
     saveHistory();
     const now = new Date().toISOString();
     appData.memos.push({
@@ -752,7 +917,7 @@ function addInspectorSegmentMemo(segmentId) {
         type: 'segment',
         targetId: segmentId,
         content: text,
-        tag: '',
+        tag: tag,
         created: now,
         edited: now
     });
@@ -761,6 +926,7 @@ function addInspectorSegmentMemo(segmentId) {
     saveData();
     renderCodeInspector();
     input.value = '';
+    if (tagInput) tagInput.value = '';
     renderCurrentDocument();
 }
 
@@ -1069,18 +1235,20 @@ function renderFilteredView() {
         </span>
     ` : '';
     const hasDescription = !!(code.description && code.description.trim());
-    const descriptionText = hasDescription ? escapeHtml(code.description) : 'No description yet.';
-    const descriptionHtml = hasDescription
-        ? `<div class="filter-code-description">
-                <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
-                <span class="filter-code-description-text">${preserveLineBreaks(descriptionText)}</span>
-                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Edit</button>
-            </div>`
-        : `<div class="filter-code-description empty">
+    const hasNotes = !!(code.notes && code.notes.trim());
+    const descriptionText = hasDescription ? preserveLineBreaks(escapeHtml(code.description)) : 'No description yet.';
+    const notesText = hasNotes ? preserveLineBreaks(escapeHtml(code.notes)) : 'No notes yet.';
+    const descriptionHtml = `<div class="filter-code-description ${hasDescription ? '' : 'empty'}">
+            <div class="filter-code-description-main">
                 <span class="filter-code-description-label"><strong>Description and notes:</strong></span>
                 <span class="filter-code-description-text">${descriptionText}</span>
-                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Add description</button>
-            </div>`;
+            </div>
+            <div class="filter-code-description-actions">
+                <span class="filter-shortcut" onclick="toggleCodeViewNotes()">${codeViewUiState.notesExpanded ? 'Hide notes' : 'Show notes'}</span>
+                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Add description and notes</button>
+            </div>
+            ${codeViewUiState.notesExpanded ? `<div class="filter-code-notes-block">${notesText}</div>` : ''}
+        </div>`;
     
     if (!codeViewUiState.annotationCodeId) {
         codeViewUiState.annotationCodeId = code?.id || '';
@@ -1353,7 +1521,7 @@ function renderFilteredView() {
                     html: `<div class="filter-snippet ${segment.pdfRegion ? 'pdf-snippet' : ''} ${codeInspectorState.segmentId === segment.id ? 'inspector-selected' : ''}" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">
                         ${previewHtml}
                         <div class="filter-snippet-main">
-                            <span class="coded-segment" style="border-color: ${escapeHtml(code.color || '')};">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span>
+                            <span class="coded-segment" style="${buildSegmentVisualStyleFromCodes(segment.codeIds.map(id => appData.codes.find(c => c.id === id)).filter(Boolean))}"><span class="coded-segment-text">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span><span class="coded-segment-marker" aria-hidden="true"></span></span>
                         </div>
                     </div>`
                 });
@@ -1448,12 +1616,56 @@ function handleFilterPreviewImageLoaded() {
 async function editFilterCodeDescription(codeId) {
     const code = appData.codes.find(c => c.id === codeId);
     if (!code) return;
-    const input = await openTextPrompt('Code description', code.description || '');
-    if (input === null) return;
+    openCodeDescriptionModal(codeId);
+}
+
+let currentCodeDescriptionEditId = null;
+
+function openCodeDescriptionModal(codeId) {
+    const code = appData.codes.find(c => c.id === codeId);
+    if (!code) return;
+    currentCodeDescriptionEditId = codeId;
+
+    const modal = document.getElementById('codeDescriptionModal');
+    const shortInput = document.getElementById('codeDescriptionShortInput');
+    const notesInput = document.getElementById('codeDescriptionNotesInput');
+    if (!modal || !shortInput || !notesInput) return;
+
+    shortInput.value = code.description || '';
+    notesInput.value = code.notes || '';
+    modal.classList.add('show');
+    setTimeout(() => shortInput.focus(), 0);
+}
+
+function closeCodeDescriptionModal() {
+    const modal = document.getElementById('codeDescriptionModal');
+    if (modal) modal.classList.remove('show');
+    currentCodeDescriptionEditId = null;
+}
+
+function saveCodeDescriptionFromModal(event) {
+    if (event) event.preventDefault();
+    const code = appData.codes.find(c => c.id === currentCodeDescriptionEditId);
+    if (!code) {
+        closeCodeDescriptionModal();
+        return;
+    }
+
+    const shortInput = document.getElementById('codeDescriptionShortInput');
+    const notesInput = document.getElementById('codeDescriptionNotesInput');
+    const nextDescription = (shortInput?.value || '').trim();
+    const nextNotes = String(notesInput?.value || '');
+
+    if (nextDescription === (code.description || '') && nextNotes === (code.notes || '')) {
+        closeCodeDescriptionModal();
+        return;
+    }
 
     saveHistory();
-    code.description = input.trim();
+    code.description = nextDescription;
+    code.notes = nextNotes;
     saveData();
+    closeCodeDescriptionModal();
     renderAll();
 }
 
