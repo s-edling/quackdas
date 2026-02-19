@@ -2344,3 +2344,127 @@ Files touched:
 - `package.json`
 - `package-lock.json`
 - `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19ct
+Date: 2026-02-19
+
+What changed:
+- Fixed global search navigation for PDF document results so opening a result jumps to the page containing the first match instead of always landing on page 1.
+- Disabled the in-page find bar for PDF documents (including `Cmd/Ctrl+F` opening), because PDF text-layer highlighting is unreliable.
+- Changed Code view snippet/region ordering (default `Sort: document`) to follow coding order using segment `created` timestamps, with stable location fallback.
+- Fixed segment timestamp persistence across project close/reopen by round-tripping segment `created`/`modified` metadata in QDPX export/import:
+  - plain text selections now write/read `quackdasCreated` and `quackdasModified`,
+  - PDF region selections now write/read `quackdasCreated` and `quackdasModified`.
+- Added segment timestamp normalization so missing `modified` falls back to `created` during project normalization.
+
+Why (one line):
+- To make search/navigation and code inspection timestamps trustworthy for PDFs and persisted projects, and to align Code view ordering with coding chronology.
+
+Files touched:
+- `js/search.js`
+- `js/render.js`
+- `js/qdpx.js`
+- `js/state.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cu
+Date: 2026-02-19
+
+What changed:
+- Fixed pending PDF global-search navigation so PDF page jumps are applied after PDF renderer readiness (no more dropped jump that left you on page 1).
+- Improved PDF page resolution for global-search character positions by mapping against page text offsets.
+- Changed global-search result output for document content from one aggregated row per document to separate hit rows per mention.
+- Grouped document hit rows under per-document headers with hit counts, while keeping non-document matches in a separate "Other matches" group.
+- Added search-result group header styles for readability.
+
+Why (one line):
+- To make PDF global-search navigation reliable and to expose each mention as a directly navigable result while keeping results organized by source document.
+
+Files touched:
+- `js/pdf.js`
+- `js/search.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cv
+Date: 2026-02-19
+
+What changed:
+- Fixed PDF global-search page targeting by mapping hit positions to pages using absolute `textItems[].start` offsets (aligned with `doc.content`) with legacy fallback.
+- Kept deferred PDF page navigation handling so jumps requested before PDF readiness are still applied once rendering initializes.
+- Blocked single-letter global searches (including wildcard variants like `a*`) to prevent high-hit freezes on large datasets.
+- Added inline validation feedback in the global search results panel when a blocked one-letter query is submitted.
+
+Why (one line):
+- To make PDF search navigation land on the correct page consistently and to prevent expensive one-character searches from freezing large projects.
+
+Files touched:
+- `js/pdf.js`
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cw
+Date: 2026-02-19
+
+What changed:
+- Fixed a PDF navigation race in global-search flow where first-page render retry could override pending hit navigation and send users back to page 1.
+- Applied pending PDF hit/region navigation before first-page stabilization retry and skipped retry when explicit navigation exists.
+- Shortened one-letter search validation text to only: `Search must be at least 2 characters.`
+
+Why (one line):
+- To prevent page-1 fallback after clicking PDF hits and keep validation copy concise.
+
+Files touched:
+- `js/pdf.js`
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cx
+Date: 2026-02-19
+
+What changed:
+- Reworked PDF global-search page mapping to use robust per-page character ranges instead of a single heuristic:
+  - uses stored absolute offsets when available,
+  - falls back to rebuilding page ranges from live PDF text content (`getTextContent`) using the same spacing/newline logic as import,
+  - falls back again to legacy cumulative text-length mapping for old data.
+- Added cached page-range reuse tied to current document content length to avoid repeated recomputation.
+- Kept one-letter global-search validation copy concise (`Search must be at least 2 characters.`).
+
+Why (one line):
+- To eliminate remaining PDF hit-to-page mismatches across both new and legacy PDF project data while keeping search guardrails clear.
+
+Files touched:
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cy
+Date: 2026-02-19
+
+What changed:
+- Removed timer-based PDF jump dispatch in global search result navigation and switched to deterministic immediate dispatch right after `selectDocument(...)`.
+- Cleared stale `pendingGoToRegion` and `pendingGoToCharPos` values during PDF cleanup to avoid previous attempts influencing subsequent attempts.
+- Kept one-letter global-search validation as: `Search must be at least 2 characters.`
+
+Why (one line):
+- To eliminate timing-dependent PDF hit navigation behavior that could work on first attempt and fail on repeated attempts.
+
+Files touched:
+- `js/search.js`
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cz
+Date: 2026-02-19
+
+What changed:
+- Fixed intermittent PDF search-hit jumps by preserving pending PDF navigation during cleanup when it targets the currently selected document.
+- Avoided unnecessary full PDF re-render when clicking multiple global-search hits in the same already-open PDF context.
+- Kept deterministic immediate hit dispatch (no delay timer) for PDF global-search navigation.
+
+Why (one line):
+- To address repeat-click instability where the first PDF hit navigation could work but subsequent attempts were lost.
+
+Files touched:
+- `js/pdf.js`
+- `js/search.js`
+- `CHANGELOG.md`

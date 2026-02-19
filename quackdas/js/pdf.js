@@ -22,7 +22,8 @@ let currentPdfState = {
     renderToken: 0,
     ocrPromise: null,
     pendingRegion: null,
-    pendingGoToRegion: null
+    pendingGoToRegion: null,
+    pendingGoToCharPos: null
 };
 const pdfRegionPreviewCache = new Map();
 const pdfRegionPreviewInflight = new Map();
@@ -115,6 +116,127 @@ function getPdfPageTextOffset(doc, pageNum) {
         offset += 2; // '\n\n' page break marker used at import
     }
     return offset;
+}
+
+function buildPageCharRangesFromStoredOffsets(doc) {
+    if (!doc || !Array.isArray(doc.pdfPages) || doc.pdfPages.length === 0) return null;
+    const ranges = [];
+    for (const pageInfo of doc.pdfPages) {
+        if (!pageInfo || !Array.isArray(pageInfo.textItems) || pageInfo.textItems.length === 0) continue;
+        let start = Infinity;
+        let end = -Infinity;
+        for (const item of pageInfo.textItems) {
+            const s = Number(item?.start);
+            const e = Number(item?.end);
+            if (Number.isFinite(s) && s < start) start = s;
+            if (Number.isFinite(e) && e > end) end = e;
+        }
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+        const pageNum = Number.parseInt(pageInfo.pageNum, 10) || 1;
+        ranges.push({ pageNum, start, end: Math.max(start, end) });
+    }
+    if (ranges.length === 0) return null;
+    ranges.sort((a, b) => a.pageNum - b.pageNum);
+    return ranges;
+}
+
+function buildPageCharRangesFromLegacyItems(doc) {
+    if (!doc || !Array.isArray(doc.pdfPages) || doc.pdfPages.length === 0) return null;
+    const ranges = [];
+    let cursor = 0;
+    for (const pageInfo of doc.pdfPages) {
+        const pageNum = Number.parseInt(pageInfo?.pageNum, 10) || 1;
+        const start = cursor;
+        let pageLength = 0;
+        if (Array.isArray(pageInfo?.textItems)) {
+            for (const item of pageInfo.textItems) {
+                pageLength += String(item?.text || '').length;
+            }
+        }
+        cursor += pageLength;
+        ranges.push({ pageNum, start, end: Math.max(start, cursor) });
+        cursor += 2; // '\n\n' page break marker
+    }
+    return ranges;
+}
+
+async function buildPageCharRangesFromLivePdf(doc) {
+    if (!doc || !currentPdfState.pdfDoc || currentPdfState.docId !== doc.id) return null;
+    const pdfDoc = currentPdfState.pdfDoc;
+    const ranges = [];
+    let cursor = 0;
+
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+        const page = await pdfDoc.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const items = Array.isArray(textContent?.items) ? textContent.items : [];
+        const start = cursor;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const text = String(item?.str || '');
+            if (text) cursor += text.length;
+
+            if (item?.hasEOL) {
+                cursor += 1;
+            } else if (i < items.length - 1) {
+                const nextItem = items[i + 1];
+                const nextText = String(nextItem?.str || '');
+                if (text && nextText && !text.endsWith(' ') && !nextText.startsWith(' ')) {
+                    const itemX = Number(item?.transform?.[4]) || 0;
+                    const itemW = Number(item?.width) || 0;
+                    const nextX = Number(nextItem?.transform?.[4]) || 0;
+                    const gap = nextX - (itemX + itemW);
+                    if (gap > 2) cursor += 1;
+                }
+            }
+        }
+
+        ranges.push({ pageNum, start, end: Math.max(start, cursor) });
+        if (pageNum < pdfDoc.numPages) cursor += 2;
+    }
+
+    return ranges;
+}
+
+function resolvePdfPageNumForCharPos(ranges, charPos, fallbackPage = 1) {
+    if (!Array.isArray(ranges) || ranges.length === 0) return fallbackPage;
+    const target = Math.max(0, Number.parseInt(charPos, 10) || 0);
+    let selected = ranges[0];
+
+    for (const range of ranges) {
+        if (!range) continue;
+        if (target < range.start) break;
+        selected = range;
+        if (target <= range.end) break;
+    }
+
+    return Number.parseInt(selected?.pageNum, 10) || fallbackPage;
+}
+
+async function ensurePdfPageCharRanges(doc) {
+    if (!doc) return null;
+    const contentLength = String(doc.content || '').length;
+    if (
+        Array.isArray(doc._pdfPageCharRanges) &&
+        doc._pdfPageCharRanges.length > 0 &&
+        doc._pdfPageCharRangesContentLength === contentLength
+    ) {
+        return doc._pdfPageCharRanges;
+    }
+
+    let ranges = buildPageCharRangesFromStoredOffsets(doc);
+    if (!ranges) {
+        ranges = await buildPageCharRangesFromLivePdf(doc);
+    }
+    if (!ranges) {
+        ranges = buildPageCharRangesFromLegacyItems(doc);
+    }
+    if (!ranges) return null;
+
+    doc._pdfPageCharRanges = ranges;
+    doc._pdfPageCharRangesContentLength = contentLength;
+    return ranges;
 }
 
 function isLikelyImageOnlyPdf(doc, totalPages) {
@@ -928,21 +1050,33 @@ async function renderPdfDocument(doc, container) {
     }
 
     // Render first page.
-    // Some PDFs intermittently show a blank initial canvas on first paint in Electron;
-    // schedule one immediate retry to stabilize first-page rendering.
     await renderPdfPage(1, doc, renderToken);
-    setTimeout(() => {
-        if (renderToken !== currentPdfState.renderToken) return;
-        if (currentPdfState.docId !== doc.id) return;
-        if (currentPdfState.currentPage !== 1) return;
-        renderPdfPage(1, doc, renderToken).catch(() => {});
-    }, 0);
 
     // If navigation was requested before the PDF renderer was ready, apply it now.
+    // Do this before first-page retry, otherwise retry can race and jump back to page 1.
+    let appliedPendingNavigation = false;
+    if (currentPdfState.pendingGoToCharPos && currentPdfState.pendingGoToCharPos.docId === doc.id) {
+        const pending = currentPdfState.pendingGoToCharPos;
+        currentPdfState.pendingGoToCharPos = null;
+        appliedPendingNavigation = true;
+        pdfGoToPosition(doc, pending.charPos);
+    }
     if (currentPdfState.pendingGoToRegion && currentPdfState.pendingGoToRegion.docId === doc.id) {
         const pending = currentPdfState.pendingGoToRegion;
         currentPdfState.pendingGoToRegion = null;
+        appliedPendingNavigation = true;
         pdfGoToRegion(doc, pending.region, pending.segmentId);
+    }
+
+    // Some PDFs intermittently show a blank initial canvas on first paint in Electron;
+    // schedule one immediate retry to stabilize first-page rendering when no explicit navigation is pending.
+    if (!appliedPendingNavigation) {
+        setTimeout(() => {
+            if (renderToken !== currentPdfState.renderToken) return;
+            if (currentPdfState.docId !== doc.id) return;
+            if (currentPdfState.currentPage !== 1) return;
+            renderPdfPage(1, doc, renderToken).catch(() => {});
+        }, 0);
     }
 }
 
@@ -1199,28 +1333,32 @@ function pdfZoomOut() {
 /**
  * Go to a specific page containing a character position
  */
-function pdfGoToPosition(doc, charPos) {
-    if (!doc.pdfPages) return;
-    
-    let pageNum = 1;
-    let cumulative = 0;
-    
-    for (const pageInfo of doc.pdfPages) {
-        let pageLength = 0;
-        if (pageInfo.textItems) {
-            pageInfo.textItems.forEach(item => {
-                pageLength += item.text.length;
-            });
-        }
-        
-        if (cumulative + pageLength >= charPos) {
-            pageNum = pageInfo.pageNum;
-            break;
-        }
-        
-        cumulative += pageLength + 2; // +2 for page break
+async function pdfGoToPosition(doc, charPos) {
+    if (!doc) return;
+    const normalizedPos = Math.max(0, Number.parseInt(charPos, 10) || 0);
+
+    if (!currentPdfState.pdfDoc || currentPdfState.docId !== doc.id) {
+        currentPdfState.pendingGoToCharPos = {
+            docId: doc.id,
+            charPos: normalizedPos
+        };
+        return;
     }
-    
+
+    const ranges = await ensurePdfPageCharRanges(doc);
+    if (!ranges) return;
+    if (!currentPdfState.pdfDoc || currentPdfState.docId !== doc.id) {
+        currentPdfState.pendingGoToCharPos = {
+            docId: doc.id,
+            charPos: normalizedPos
+        };
+        return;
+    }
+    const fallbackPage = Array.isArray(doc.pdfPages) && doc.pdfPages.length > 0
+        ? (Number.parseInt(doc.pdfPages[doc.pdfPages.length - 1]?.pageNum, 10) || 1)
+        : (currentPdfState.totalPages || 1);
+    const pageNum = resolvePdfPageNumForCharPos(ranges, normalizedPos, fallbackPage);
+
     renderPdfPage(pageNum, doc);
 }
 
@@ -1257,6 +1395,19 @@ function cleanupPdfState() {
     currentPdfState.renderToken += 1;
     cancelPdfRenderTasks();
     clearPendingPdfRegionSelection();
+    const activeDocId = (typeof appData === 'object' && appData) ? appData.currentDocId : null;
+    const keepPendingRegion = !!(
+        currentPdfState.pendingGoToRegion &&
+        activeDocId &&
+        currentPdfState.pendingGoToRegion.docId === activeDocId
+    );
+    const keepPendingCharPos = !!(
+        currentPdfState.pendingGoToCharPos &&
+        activeDocId &&
+        currentPdfState.pendingGoToCharPos.docId === activeDocId
+    );
+    if (!keepPendingRegion) currentPdfState.pendingGoToRegion = null;
+    if (!keepPendingCharPos) currentPdfState.pendingGoToCharPos = null;
 
     const loadingTask = currentPdfState.loadingTask;
     if (loadingTask && typeof loadingTask.destroy === 'function') {

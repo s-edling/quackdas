@@ -3360,6 +3360,24 @@
             border-color: var(--accent);
         }
 
+        .search-result-group-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin: 10px 2px 8px;
+        }
+
+        .search-result-group-count {
+            font-weight: 500;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
         .search-result-title {
             font-weight: 600;
             font-size: 14px;

@@ -173,6 +173,9 @@ function normaliseProject(p) {
     out.zoomLevel = Number.isFinite(src.zoomLevel) ? src.zoomLevel : d.zoomLevel;
 
     out.segments.forEach(seg => {
+        if (!seg || typeof seg !== 'object') return;
+        if (!seg.created) seg.created = new Date().toISOString();
+        if (!seg.modified) seg.modified = seg.created;
         if (seg && seg.pdfRegion) {
             seg.pdfRegion = normalizePdfRegionShape(seg.pdfRegion);
         }

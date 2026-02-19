@@ -14,13 +14,14 @@ function initSearchResultsDelegatedHandlers() {
     const list = document.getElementById('searchResultsList');
     if (!list) return;
     list.addEventListener('click', (event) => {
-        const item = event.target.closest('.search-result-item[data-kind][data-primary-id][data-doc-id][data-query]');
+        const item = event.target.closest('.search-result-item[data-kind][data-primary-id][data-doc-id][data-query][data-first-match-index]');
         if (!item) return;
         goToSearchResult(
             item.dataset.kind,
             item.dataset.primaryId,
             item.dataset.docId,
-            item.dataset.query
+            item.dataset.query,
+            item.dataset.firstMatchIndex
         );
     });
     searchResultsDelegationBound = true;
@@ -131,6 +132,25 @@ function ensureSearchIndexCurrent() {
     globalSearchIndex.dirty = false;
 }
 
+function isSingleLetterGlobalSearchQuery(query) {
+    const normalized = String(query || '').trim();
+    if (!normalized) return false;
+    const tokens = normalized
+        .split(/\s+/)
+        .map(t => t.trim())
+        .filter(Boolean)
+        .filter(t => !/^(AND|OR|NOT)$/i.test(t));
+    if (tokens.length !== 1) return false;
+    const core = tokens[0].replace(/\*/g, '').trim();
+    return core.length === 1;
+}
+
+function showGlobalSearchQueryValidationMessage(message) {
+    const list = document.getElementById('searchResultsList');
+    if (!list) return;
+    list.innerHTML = `<p style="color: var(--text-secondary); text-align: center; padding: 40px;">${escapeHtml(message)}</p>`;
+}
+
 function openSearchModal() {
     if (typeof closeInPageSearch === 'function') closeInPageSearch();
     if (appData.documents.length === 0) {
@@ -158,6 +178,10 @@ function openSearchModal() {
         if (e.key === 'Enter') {
             const query = this.value.trim();
             if (query) {
+                if (isSingleLetterGlobalSearchQuery(query)) {
+                    showGlobalSearchQueryValidationMessage('Search must be at least 2 characters.');
+                    return;
+                }
                 const results = searchAllDocuments(query);
                 showSearchResults(query, results);
             }
@@ -175,6 +199,10 @@ function openSearchModal() {
 function performSearch(query) {
     if (appData.documents.length === 0) {
         alert('No documents to search.');
+        return;
+    }
+    if (isSingleLetterGlobalSearchQuery(query)) {
+        showGlobalSearchQueryValidationMessage('Search must be at least 2 characters.');
         return;
     }
     
@@ -266,6 +294,7 @@ function convertWildcardToRegex(term) {
 function searchAllDocuments(query) {
     const normalizedQuery = String(query || '').trim();
     if (!normalizedQuery) return [];
+    if (isSingleLetterGlobalSearchQuery(normalizedQuery)) return [];
 
     ensureSearchIndexCurrent();
     const parsed = parseSearchQuery(normalizedQuery);
@@ -279,7 +308,20 @@ function searchAllDocuments(query) {
         const sourceText = String(text || '');
         let matches = true;
         let matchCount = 0;
-        const snippets = [];
+        let firstMatchIndex = -1;
+        const mentions = [];
+        const addMention = (matchIndex, matchLength) => {
+            const idx = Number.isFinite(matchIndex) ? matchIndex : -1;
+            if (idx < 0) return;
+            if (firstMatchIndex === -1 || idx < firstMatchIndex) firstMatchIndex = idx;
+            const safeLen = Math.max(1, Number.isFinite(matchLength) ? matchLength : 1);
+            const start = Math.max(0, idx - 50);
+            const end = Math.min(sourceText.length, idx + safeLen + 50);
+            let snippet = sourceText.substring(start, end);
+            if (start > 0) snippet = '...' + snippet;
+            if (end < sourceText.length) snippet += '...';
+            mentions.push({ index: idx, snippet });
+        };
 
         for (const regex of notRegexes) {
             regex.lastIndex = 0;
@@ -288,7 +330,7 @@ function searchAllDocuments(query) {
                 break;
             }
         }
-        if (!matches) return { matches: false, matchCount: 0, snippets: [] };
+        if (!matches) return { matches: false, matchCount: 0, snippets: [], mentions: [], firstMatchIndex: -1 };
 
         if (parsed.type === 'AND' || parsed.type === 'SIMPLE') {
             for (const regex of termRegexes) {
@@ -301,13 +343,8 @@ function searchAllDocuments(query) {
                 matchCount += termMatches.length;
                 regex.lastIndex = 0;
                 let match;
-                while ((match = regex.exec(sourceText)) !== null && snippets.length < 3) {
-                    const start = Math.max(0, match.index - 50);
-                    const end = Math.min(sourceText.length, match.index + match[0].length + 50);
-                    let snippet = sourceText.substring(start, end);
-                    if (start > 0) snippet = '...' + snippet;
-                    if (end < sourceText.length) snippet += '...';
-                    snippets.push({ text: snippet });
+                while ((match = regex.exec(sourceText)) !== null) {
+                    addMention(match.index, String(match[0] || '').length);
                 }
             }
         } else if (parsed.type === 'OR') {
@@ -320,13 +357,8 @@ function searchAllDocuments(query) {
                 matchCount += termMatches.length;
                 regex.lastIndex = 0;
                 let match;
-                while ((match = regex.exec(sourceText)) !== null && snippets.length < 3) {
-                    const start = Math.max(0, match.index - 50);
-                    const end = Math.min(sourceText.length, match.index + match[0].length + 50);
-                    let snippet = sourceText.substring(start, end);
-                    if (start > 0) snippet = '...' + snippet;
-                    if (end < sourceText.length) snippet += '...';
-                    snippets.push({ text: snippet });
+                while ((match = regex.exec(sourceText)) !== null) {
+                    addMention(match.index, String(match[0] || '').length);
                 }
             }
             matches = anyMatch;
@@ -335,12 +367,32 @@ function searchAllDocuments(query) {
         if (!(parsed.terms.length > 0 || parsed.notTerms.length > 0)) {
             matches = false;
         }
-        return { matches, matchCount, snippets };
+        mentions.sort((a, b) => a.index - b.index);
+        const snippets = mentions.slice(0, 3).map((m) => ({ text: m.snippet }));
+        return { matches, matchCount, snippets, mentions, firstMatchIndex };
     };
 
     globalSearchIndex.entries.forEach((entry) => {
         const result = collectMatchData(entry.searchText);
         if (!result.matches) return;
+        if (entry.kind === 'document') {
+            result.mentions.forEach((mention, index) => {
+                results.push({
+                    kind: entry.kind,
+                    kindLabel: 'Document hit',
+                    primaryId: entry.primaryId,
+                    docId: entry.docId || entry.primaryId || '',
+                    title: entry.title,
+                    groupTitle: entry.title,
+                    matchCount: result.matchCount,
+                    hitOrdinal: index + 1,
+                    matchIndex: Number.isFinite(mention.index) ? mention.index : -1,
+                    snippets: [{ text: mention.snippet }],
+                    firstMatchIndex: Number.isFinite(mention.index) ? mention.index : -1
+                });
+            });
+            return;
+        }
         results.push({
             kind: entry.kind,
             kindLabel: entry.kindLabel,
@@ -348,12 +400,22 @@ function searchAllDocuments(query) {
             docId: entry.docId || '',
             title: entry.title,
             matchCount: result.matchCount,
-            snippets: result.snippets
+            snippets: result.snippets,
+            firstMatchIndex: Number.isFinite(result.firstMatchIndex) ? result.firstMatchIndex : -1
         });
     });
     
-    // Sort by match count descending
-    results.sort((a, b) => b.matchCount - a.matchCount);
+    // Sort by document then hit position for document hits; others by match count desc.
+    results.sort((a, b) => {
+        if (a.kind === 'document' && b.kind === 'document') {
+            const titleCmp = String(a.groupTitle || a.title || '').localeCompare(String(b.groupTitle || b.title || ''));
+            if (titleCmp !== 0) return titleCmp;
+            return (a.matchIndex || 0) - (b.matchIndex || 0);
+        }
+        if (a.kind === 'document') return -1;
+        if (b.kind === 'document') return 1;
+        return (b.matchCount || 0) - (a.matchCount || 0);
+    });
     
     return results;
 }
@@ -386,33 +448,82 @@ function showSearchResults(query, results) {
         }
     }, 50);
     
+    const highlightSnippet = (text) => {
+        if (highlightPatterns) {
+            const regex = new RegExp(`(${highlightPatterns})`, 'gi');
+            return escapeHtml(String(text || '')).replace(regex, '<mark>$1</mark>');
+        }
+        return escapeHtml(String(text || ''));
+    };
+    const renderResultItem = (result, snippetHtml, countLabel) => {
+        const firstMatchIndex = Number.isFinite(result.firstMatchIndex) ? result.firstMatchIndex : -1;
+        return `
+            <div class="search-result-item"
+                 data-kind="${escapeHtmlAttrValue(result.kind)}"
+                 data-primary-id="${escapeHtmlAttrValue(result.primaryId)}"
+                 data-doc-id="${escapeHtmlAttrValue(result.docId || '')}"
+                 data-query="${escapeHtmlAttrValue(encodeURIComponent(query))}"
+                 data-first-match-index="${escapeHtmlAttrValue(String(firstMatchIndex))}">
+                <div class="search-result-title">
+                    ${escapeHtml(result.title)}
+                    <span class="search-result-count">${escapeHtml(countLabel)}</span>
+                </div>
+                <div class="search-result-snippet">${snippetHtml || '<em>No preview available</em>'}</div>
+            </div>
+        `;
+    };
+
     if (results.length === 0) {
         list.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 40px;">No documents match your search.</p>';
     } else {
-        list.innerHTML = results.map(result => {
-            // Highlight snippets
-            const highlightedSnippets = result.snippets.map(s => {
-                if (highlightPatterns) {
-                    const regex = new RegExp(`(${highlightPatterns})`, 'gi');
-                    return escapeHtml(s.text).replace(regex, '<mark>$1</mark>');
-                }
-                return escapeHtml(s.text);
-            }).join('<br>');
-            
-            return `
-                <div class="search-result-item"
-                     data-kind="${escapeHtmlAttrValue(result.kind)}"
-                     data-primary-id="${escapeHtmlAttrValue(result.primaryId)}"
-                     data-doc-id="${escapeHtmlAttrValue(result.docId || '')}"
-                     data-query="${escapeHtmlAttrValue(encodeURIComponent(query))}">
-                    <div class="search-result-title">
-                        ${escapeHtml(result.title)}
-                        <span class="search-result-count">${result.kindLabel} · ${result.matchCount} match${result.matchCount !== 1 ? 'es' : ''}</span>
-                    </div>
-                    <div class="search-result-snippet">${highlightedSnippets || '<em>No preview available</em>'}</div>
+        const documentResults = results.filter(r => r.kind === 'document');
+        const nonDocumentResults = results.filter(r => r.kind !== 'document');
+
+        const documentGroups = new Map();
+        documentResults.forEach((result) => {
+            const key = String(result.primaryId || '');
+            if (!documentGroups.has(key)) {
+                documentGroups.set(key, {
+                    title: result.groupTitle || result.title || 'Untitled document',
+                    items: []
+                });
+            }
+            documentGroups.get(key).items.push(result);
+        });
+
+        let html = '';
+        documentGroups.forEach((group) => {
+            html += `
+                <div class="search-result-group-title">
+                    ${escapeHtml(group.title)}
+                    <span class="search-result-group-count">${group.items.length} hit${group.items.length !== 1 ? 's' : ''}</span>
                 </div>
             `;
-        }).join('');
+            group.items.forEach((result, idx) => {
+                const snippet = Array.isArray(result.snippets) && result.snippets[0] ? result.snippets[0].text : '';
+                html += renderResultItem(
+                    result,
+                    highlightSnippet(snippet),
+                    `Document · hit ${idx + 1}/${group.items.length}`
+                );
+            });
+        });
+
+        if (nonDocumentResults.length > 0) {
+            html += '<div class="search-result-group-title">Other matches</div>';
+            nonDocumentResults.forEach((result) => {
+                const highlightedSnippets = (Array.isArray(result.snippets) ? result.snippets : [])
+                    .map(s => highlightSnippet(s.text))
+                    .join('<br>');
+                html += renderResultItem(
+                    result,
+                    highlightedSnippets,
+                    `${result.kindLabel} · ${result.matchCount} match${result.matchCount !== 1 ? 'es' : ''}`
+                );
+            });
+        }
+
+        list.innerHTML = html;
     }
     
     modal.classList.add('show');
@@ -422,6 +533,10 @@ function handleSearchInputKeydown(e) {
     if (e.key === 'Enter') {
         const newQuery = e.target.value.trim();
         if (newQuery) {
+            if (isSingleLetterGlobalSearchQuery(newQuery)) {
+                showGlobalSearchQueryValidationMessage('Search must be at least 2 characters.');
+                return;
+            }
             const newResults = searchAllDocuments(newQuery);
             showSearchResults(newQuery, newResults);
         }
@@ -544,6 +659,11 @@ function applyInPageSearch(query) {
 }
 
 function openInPageSearch() {
+    const currentDoc = appData.documents.find(d => d.id === appData.currentDocId);
+    if (currentDoc && currentDoc.type === 'pdf') {
+        closeInPageSearch();
+        return;
+    }
     const bar = document.getElementById('inPageSearchBar');
     const input = document.getElementById('inPageSearchInput');
     if (!bar || !input) return;
@@ -669,13 +789,30 @@ function highlightSearchTermsInCurrentDocument(query) {
     }, 5000);
 }
 
-function goToSearchResult(kind, primaryId, docId, encodedQuery) {
+function goToSearchResult(kind, primaryId, docId, encodedQuery, firstMatchIndexRaw = '-1') {
     const query = decodeURIComponent(encodedQuery || '');
+    const firstMatchIndex = Number.parseInt(firstMatchIndexRaw, 10);
     closeSearchResults();
 
     if (kind === 'document') {
-        selectDocument(primaryId);
-        setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+        const doc = appData.documents.find(d => d.id === primaryId);
+        if (doc && doc.type === 'pdf') {
+            const isSamePdfContext = (
+                appData.currentDocId === primaryId &&
+                !appData.filterCodeId &&
+                !appData.selectedCaseId
+            );
+            if (!isSamePdfContext) {
+                selectDocument(primaryId);
+            }
+            if (Number.isFinite(firstMatchIndex) && firstMatchIndex >= 0 && typeof pdfGoToPosition === 'function') {
+                const selectedDoc = appData.documents.find(d => d.id === primaryId) || doc;
+                pdfGoToPosition(selectedDoc, firstMatchIndex);
+            }
+        } else {
+            selectDocument(primaryId);
+            setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+        }
         return;
     }
 
@@ -696,7 +833,10 @@ function goToSearchResult(kind, primaryId, docId, encodedQuery) {
         }
         if (memo.type === 'document' && memo.targetId && appData.documents.some(d => d.id === memo.targetId)) {
             selectDocument(memo.targetId);
-            setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+            const doc = appData.documents.find(d => d.id === memo.targetId);
+            if (!(doc && doc.type === 'pdf')) {
+                setTimeout(() => highlightSearchTermsInCurrentDocument(query), 100);
+            }
             return;
         }
         if (memo.type === 'segment' && memo.targetId) {

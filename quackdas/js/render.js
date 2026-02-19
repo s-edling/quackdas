@@ -364,6 +364,7 @@ function renderCurrentDocument() {
     if (doc.type === 'pdf') {
         setDocumentViewMode(true);
         setZoomControlsVisible(true);
+        if (typeof closeInPageSearch === 'function') closeInPageSearch();
         const content = document.getElementById('documentContent');
         if (!doc.pdfData) {
             content.innerHTML = `
@@ -1576,14 +1577,23 @@ function renderFilteredView() {
         const rows = [];
         sortedDocs.forEach(doc => {
             const docSegments = segmentsByDoc[doc.id];
-            // Sort segments by their position in the document
+            const segmentCreatedMs = (segment) => {
+                const ms = new Date(segment?.created || 0).getTime();
+                return Number.isFinite(ms) ? ms : 0;
+            };
+            // Default view: keep snippets/regions in coding order (created ascending).
+            // Other sort modes keep existing behavior.
             docSegments.sort((a, b) => {
                 if (codeViewUiState.segmentsSort === 'date') {
                     return new Date(b.modified || b.created || 0) - new Date(a.modified || a.created || 0);
                 }
+                const createdDiff = segmentCreatedMs(a) - segmentCreatedMs(b);
+                if (createdDiff !== 0) return createdDiff;
+                if (!!a.pdfRegion !== !!b.pdfRegion) return a.pdfRegion ? 1 : -1;
                 if (a.pdfRegion && b.pdfRegion) {
-                    if (a.pdfRegion.pageNum !== b.pdfRegion.pageNum) return a.pdfRegion.pageNum - b.pdfRegion.pageNum;
-                    return (a.pdfRegion.yNorm || 0) - (b.pdfRegion.yNorm || 0);
+                    if ((a.pdfRegion.pageNum || 0) !== (b.pdfRegion.pageNum || 0)) return (a.pdfRegion.pageNum || 0) - (b.pdfRegion.pageNum || 0);
+                    if ((a.pdfRegion.yNorm || 0) !== (b.pdfRegion.yNorm || 0)) return (a.pdfRegion.yNorm || 0) - (b.pdfRegion.yNorm || 0);
+                    return (a.pdfRegion.xNorm || 0) - (b.pdfRegion.xNorm || 0);
                 }
                 return (a.startIndex || 0) - (b.startIndex || 0);
             });

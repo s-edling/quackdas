@@ -507,7 +507,9 @@ async function exportToQdpx() {
         xml += `    <PlainTextSelection guid="${segGuid}" `;
         xml += `sourceGUID="${sourceGuid}" `;
         xml += `startPosition="${segment.startIndex}" `;
-        xml += `endPosition="${segment.endIndex}">\n`;
+        xml += `endPosition="${segment.endIndex}" `;
+        if (segment.created) xml += `quackdasCreated="${escapeXml(String(segment.created))}" `;
+        xml += `quackdasModified="${escapeXml(String(segment.modified || segment.created || ''))}">\n`;
         
         // Each code applied to this segment
         segment.codeIds.forEach(codeId => {
@@ -594,6 +596,8 @@ async function exportToQdpx() {
         xml += `wNorm="${Number(r.wNorm) || 0}" hNorm="${Number(r.hNorm) || 0}" `;
         if (Number.isFinite(segment.startIndex)) xml += `startPosition="${segment.startIndex}" `;
         if (Number.isFinite(segment.endIndex)) xml += `endPosition="${segment.endIndex}" `;
+        if (segment.created) xml += `quackdasCreated="${escapeXml(String(segment.created))}" `;
+        xml += `quackdasModified="${escapeXml(String(segment.modified || segment.created || ''))}" `;
         xml += `text="${escapeXml(segment.text || '')}">\n`;
         segment.codeIds.forEach(codeId => {
             const codeGuid = getOrCreateGuid(codeId);
@@ -1045,7 +1049,8 @@ async function importFromQdpx(qdpxData) {
             codeIds: codeIds,
             startIndex: range.start,
             endIndex: range.end,
-            created: new Date().toISOString()
+            created: getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString(),
+            modified: getAttrFirst(selEl, ['quackdasModified', 'modifiedDateTime']) || getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString()
         };
         
         project.segments.push(segment);
@@ -1079,7 +1084,8 @@ async function importFromQdpx(qdpxData) {
             docId: docId,
             text: getAttrFirst(selEl, ['text']) || '',
             codeIds,
-            created: new Date().toISOString(),
+            created: getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString(),
+            modified: getAttrFirst(selEl, ['quackdasModified', 'modifiedDateTime']) || getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString(),
             pdfRegion: (typeof normalizePdfRegionShape === 'function' ? normalizePdfRegionShape({
                 pageNum: parseInt(getAttrFirst(selEl, ['pageNum']), 10) || 1,
                 xNorm: parseFloat(getAttrFirst(selEl, ['xNorm', 'x'])) || 0,
