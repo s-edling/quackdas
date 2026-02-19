@@ -163,7 +163,6 @@ function setupStaticActionBindings() {
             case 'manualSaveAsAndCloseHeaderDropdown': manualSave(true); closeHeaderDropdown(); break;
             case 'openStatsModalAndCloseHeaderDropdown': openStatsModal(); closeHeaderDropdown(); break;
             case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
-            case 'openCooccurrenceModalAndCloseHeaderDropdown': openCooccurrenceModal(); closeHeaderDropdown(); break;
             case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
             case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
             case 'openCodeModal': openCodeModal(); break;
@@ -185,7 +184,6 @@ function setupStaticActionBindings() {
             case 'closeStatsModal': closeStatsModal(); break;
             case 'closeHealthCheckModal': closeHealthCheckModal(); break;
             case 'applySelectedHealthFixes': applySelectedHealthFixes(); break;
-            case 'closeCooccurrenceModal': closeCooccurrenceModal(); break;
             case 'closeSearchResults': closeSearchResults(); break;
             case 'inPageSearchPrev': inPageSearchPrev(); break;
             case 'inPageSearchNext': inPageSearchNext(); break;
@@ -216,7 +214,6 @@ function setupStaticActionBindings() {
         if (!el) return;
         switch (el.dataset.action) {
             case 'importProjectChange': importProject(event); break;
-            case 'renderCooccurrenceOverlaps': renderCooccurrenceOverlaps(); break;
             case 'toggleCodeColorPaletteContrast': toggleCodeColorPaletteContrast(event.target.checked); break;
             default: break;
         }
@@ -269,6 +266,11 @@ function closeTopmostShownModalFallback() {
 }
 
 function closeUiOnEscape() {
+    if (typeof closeDocumentCasesPicker === 'function' && typeof documentCasePickerState !== 'undefined' && documentCasePickerState && documentCasePickerState.open) {
+        closeDocumentCasesPicker();
+        return true;
+    }
+
     const contextMenu = document.getElementById('contextMenu');
     if (contextMenu && contextMenu.classList.contains('show')) {
         hideContextMenu();
@@ -296,12 +298,6 @@ function closeUiOnEscape() {
     if (isModalOpen('statsModal')) {
         if (typeof closeStatsModal === 'function') closeStatsModal();
         else document.getElementById('statsModal').classList.remove('show');
-        return true;
-    }
-
-    if (isModalOpen('cooccurrenceModal')) {
-        if (typeof closeCooccurrenceModal === 'function') closeCooccurrenceModal();
-        else document.getElementById('cooccurrenceModal').classList.remove('show');
         return true;
     }
 
@@ -503,21 +499,26 @@ if (window.electronAPI && window.electronAPI.hasProjectHandle) {
     setInterval(async () => {
         try {
             if (appData && appData.hasUnsavedChanges && await window.electronAPI.hasProjectHandle()) {
-                // Generate QDPX for autosave
-                if (typeof exportToQdpx === 'function') {
+                let base64 = null;
+                if (typeof getProjectQdpxBase64 === 'function') {
+                    base64 = await getProjectQdpxBase64();
+                } else if (typeof exportToQdpx === 'function') {
                     const blob = await exportToQdpx();
                     const arrayBuffer = await blob.arrayBuffer();
-                    const base64 = arrayBufferToBase64(arrayBuffer);
-                    await window.electronAPI.saveProject({
-                        qdpxBase64: base64
-                    }, { saveAs: false, silent: true, format: 'qdpx' });
-                    appData.lastSaveTime = new Date().toISOString();
-                    appData.hasUnsavedChanges = false;
-                    if (typeof updateSaveStatus === 'function') updateSaveStatus();
-                    if (typeof createProjectBackup === 'function') {
-                        createProjectBackup('autosave', { force: true, base64 }).catch(() => {});
-                    }
+                    base64 = arrayBufferToBase64(arrayBuffer);
                 }
+                if (!base64) return;
+
+                await window.electronAPI.saveProject({
+                    qdpxBase64: base64
+                }, { saveAs: false, silent: true, format: 'qdpx' });
+
+                if (typeof createProjectBackup === 'function') {
+                    createProjectBackup('autosave', { base64 }).catch(() => {});
+                }
+                appData.lastSaveTime = new Date().toISOString();
+                appData.hasUnsavedChanges = false;
+                if (typeof updateSaveStatus === 'function') updateSaveStatus();
             }
         } catch (e) {
             // Don't spam the user; just log.

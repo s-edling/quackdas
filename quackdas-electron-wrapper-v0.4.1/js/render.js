@@ -6,6 +6,7 @@
 function renderAll() {
     renderDocuments();
     renderCodes();
+    if (typeof renderCases === 'function') renderCases();
     renderCurrentDocument();
     applyZoom();
     if (typeof refreshInPageSearchAfterRender === 'function') refreshInPageSearchAfterRender();
@@ -209,7 +210,7 @@ function renderCodes() {
     // Update parent select
     parentSelect.innerHTML = '<option value="">None (Top-level code)</option>' + 
         appData.codes.filter(c => !c.parentId).map(c => 
-            `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`
+            `<option value="${escapeHtmlAttrValue(c.id)}">${escapeHtml(c.name)}</option>`
         ).join('');
 
     // Render code tree sorted by sortOrder (user-defined via drag-and-drop)
@@ -238,12 +239,12 @@ function renderCodeItem(code, isChild = false, index = 0) {
     const shortcutBadge = code.shortcut ? `<span style="font-size: 11px; opacity: 0.6; margin-left: 4px;">[${escapeHtml(code.shortcut)}]</span>` : '';
     const memoCount = getMemoCountForTarget('code', code.id);
     const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭</span>` : '';
-    const titleAttr = code.description ? `title="${escapeHtml(code.description)}"` : '';
-    const dragAttr = !isChild ? `draggable="true" data-code-id="${safeCodeIdAttr}" data-sort-index="${index}"` : '';
+    const titleAttr = code.description ? `title="${escapeHtmlAttrValue(code.description)}"` : '';
+    const dragAttr = `draggable="true" data-code-id="${safeCodeIdAttr}" data-sort-index="${index}"`;
     
     let html = `
-        <div class="code-item ${isChild ? 'child' : 'draggable-code'} ${isSelected ? 'selected' : ''}" onclick="filterByCode('${safeCodeIdJs}', event)" oncontextmenu="openCodeContextMenu('${safeCodeIdJs}', event)" ${titleAttr} ${dragAttr}>
-            ${!isChild ? '<span class="drag-handle" title="Drag to reorder">⠿</span>' : ''}
+        <div class="code-item draggable-code ${isChild ? 'child' : ''} ${isSelected ? 'selected' : ''}" onclick="filterByCode('${safeCodeIdJs}', event)" oncontextmenu="openCodeContextMenu('${safeCodeIdJs}', event)" ${titleAttr} ${dragAttr}>
+            <span class="drag-handle" title="Drag onto another code to make child">⠿</span>
             <div class="code-color" style="background: ${escapeHtml(code.color)};"></div>
             <div class="code-name">${escapeHtml(code.name)}${shortcutBadge}${memoIndicator}</div>
             <div class="code-count">${count}</div>
@@ -312,9 +313,23 @@ function renderCurrentDocument() {
         if (contentBody) contentBody.classList.add('code-view-mode');
         setDocumentViewMode(false);
         setZoomControlsVisible(false);
+        if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         const code = appData.codes.find(c => c.id === appData.filterCodeId);
         document.getElementById('documentTitle').textContent = `Code view · ${code ? code.name : 'Code'}`;
         renderFilteredView();
+        renderCodeInspector();
+        return;
+    }
+
+    if (appData.selectedCaseId && typeof renderCaseSheet === 'function') {
+        if (contentElement) contentElement.classList.add('code-view-mode');
+        if (contentBody) contentBody.classList.add('code-view-mode');
+        setDocumentViewMode(false);
+        setZoomControlsVisible(false);
+        if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
+        const selectedCase = appData.cases.find(c => c.id === appData.selectedCaseId);
+        document.getElementById('documentTitle').textContent = selectedCase ? `Case view · ${selectedCase.name}` : 'Case view';
+        renderCaseSheet(appData.selectedCaseId);
         renderCodeInspector();
         return;
     }
@@ -322,6 +337,7 @@ function renderCurrentDocument() {
     if (!doc) {
         setDocumentViewMode(false);
         setZoomControlsVisible(true);
+        if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         // Show empty state if no document selected
         const content = document.getElementById('documentContent');
         content.innerHTML = `
@@ -342,6 +358,7 @@ function renderCurrentDocument() {
     }
 
     document.getElementById('documentTitle').textContent = doc.title;
+    if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
     
     // Check if this is a PDF document
     if (doc.type === 'pdf') {
@@ -568,6 +585,8 @@ function renderDocumentSegmentMarkers(contentEl) {
     const layer = document.createElement('div');
     layer.className = 'document-segment-marker-layer';
     const baseLeft = contentEl.clientWidth + 10;
+    const markerSpecs = [];
+    let maxMarkerWidth = 2;
 
     spans.forEach((span) => {
         const rawText = span.textContent || '';
@@ -581,18 +600,49 @@ function renderDocumentSegmentMarkers(contentEl) {
         const markerWidth = Math.max(2, parseFloat(computed.getPropertyValue('--seg-marker-width')) || 2);
         const markerGradient = computed.getPropertyValue('--seg-marker-gradient').trim() || 'rgba(101, 101, 101, 0.95)';
         const bands = getGroupedRectBands(rects);
+        const memoCount = Number(span.dataset.memoCount || 0);
+        const firstSegmentId = String(span.dataset.primarySegmentId || '').trim();
+        if (bands.length === 0) return;
+        if (markerWidth > maxMarkerWidth) maxMarkerWidth = markerWidth;
+        markerSpecs.push({
+            markerWidth,
+            markerGradient,
+            bands,
+            memoCount,
+            firstSegmentId
+        });
+    });
 
-        bands.forEach((band) => {
+    const annotationLaneLeft = baseLeft + maxMarkerWidth + 8;
+    markerSpecs.forEach((spec) => {
+        spec.bands.forEach((band) => {
             const height = Math.max(2, band.bottom - band.top);
             const marker = document.createElement('span');
             marker.className = 'document-segment-marker';
             marker.style.left = `${baseLeft}px`;
             marker.style.top = `${band.top - contentRect.top}px`;
             marker.style.height = `${height}px`;
-            marker.style.width = `${markerWidth}px`;
-            marker.style.background = markerGradient;
+            marker.style.width = `${spec.markerWidth}px`;
+            marker.style.background = spec.markerGradient;
             layer.appendChild(marker);
         });
+
+        if (spec.memoCount > 0 && spec.firstSegmentId) {
+            const firstBand = spec.bands[0];
+            const indicator = document.createElement('button');
+            indicator.type = 'button';
+            indicator.className = 'document-segment-annotation-indicator';
+            indicator.style.left = `${annotationLaneLeft}px`;
+            indicator.style.top = `${firstBand.top - contentRect.top + 2}px`;
+            indicator.title = `${spec.memoCount} annotation${spec.memoCount === 1 ? '' : 's'}`;
+            indicator.setAttribute('aria-label', indicator.title);
+            indicator.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openMemoModal('segment', spec.firstSegmentId, event);
+            });
+            layer.appendChild(indicator);
+        }
     });
 
     if (layer.childElementCount > 0) {
@@ -605,26 +655,53 @@ function renderCodedSpan(text, activeSegments) {
 
     // Collect all unique codes from active segments
     const codes = [];
+    const seenCodeIds = new Set();
+    const codeById = getCodeLookupMap();
     activeSegments.forEach(seg => {
         seg.codeIds.forEach(codeId => {
-            const code = appData.codes.find(c => c.id === codeId);
-            if (code && !codes.find(c => c.id === code.id)) {
-                codes.push(code);
-            }
+            if (seenCodeIds.has(codeId)) return;
+            const code = codeById.get(codeId);
+            if (!code) return;
+            seenCodeIds.add(codeId);
+            codes.push(code);
         });
     });
     
     // Create visual representation
     const codeNames = codes.map(c => c.name).join(', ');
     const segmentStyle = buildSegmentVisualStyleFromCodes(codes);
-    
-    const segmentIds = activeSegments.map(s => s.id).join(',');
+
+    const segmentIdsList = activeSegments.map(s => s.id);
+    const segmentIds = segmentIdsList.join(',');
     const safeSegmentIdsJs = escapeJsForSingleQuotedString(segmentIds);
-    const safeFirstSegmentIdJs = escapeJsForSingleQuotedString(activeSegments[0]?.id || '');
-    const segmentMemoCount = activeSegments.reduce((sum, s) => sum + getMemoCountForTarget('segment', s.id), 0);
-    const segmentMemoIndicator = segmentMemoCount > 0 ? `<span class="memo-indicator" onclick="openMemoModal('segment', '${safeFirstSegmentIdJs}', event)" title="${segmentMemoCount} annotation(s)">💭</span>` : '';
-    
-    return `<span class="coded-segment" style="${segmentStyle}" data-tooltip="${escapeHtml(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)"><span class="coded-segment-text">${escapeHtml(text)}</span></span>${segmentMemoIndicator}`;
+    const codeIdsList = codes.map(c => c.id);
+    const codeIds = codeIdsList.join(',');
+    const primarySegmentId = activeSegments[0]?.id || '';
+    const segmentMemoCount = primarySegmentId ? getSegmentMemoCount(primarySegmentId) : 0;
+
+    return `<span class="coded-segment" style="${segmentStyle}" data-primary-segment-id="${escapeHtmlAttrValue(primarySegmentId)}" data-segment-ids="${escapeHtmlAttrValue(segmentIds)}" data-code-ids="${escapeHtmlAttrValue(codeIds)}" data-memo-count="${segmentMemoCount}" data-tooltip="${escapeHtmlAttrValue(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)"><span class="coded-segment-text">${escapeHtml(text)}</span></span>`;
+}
+
+const codeLookupCache = {
+    projectRef: null,
+    revision: null,
+    map: new Map()
+};
+
+function getCodeLookupMap() {
+    const revision = (typeof appDataRevision === 'number') ? appDataRevision : -1;
+    if (codeLookupCache.projectRef === appData && codeLookupCache.revision === revision && codeLookupCache.map) {
+        return codeLookupCache.map;
+    }
+    const map = new Map();
+    (Array.isArray(appData.codes) ? appData.codes : []).forEach((code) => {
+        if (!code || !code.id) return;
+        map.set(code.id, code);
+    });
+    codeLookupCache.projectRef = appData;
+    codeLookupCache.revision = revision;
+    codeLookupCache.map = map;
+    return map;
 }
 
 const codeViewUiState = {
@@ -912,7 +989,14 @@ function addInspectorSegmentMemo(segmentId) {
     if (!text && !tag) return;
     saveHistory();
     const now = new Date().toISOString();
-    appData.memos.push({
+    const segment = appData.segments.find(s => s.id === segmentId);
+    const scopedCodeId = (
+        segment &&
+        String(appData.filterCodeId || '').trim() &&
+        Array.isArray(segment.codeIds) &&
+        segment.codeIds.includes(appData.filterCodeId)
+    ) ? appData.filterCodeId : '';
+    const memo = {
         id: 'memo_' + Date.now(),
         type: 'segment',
         targetId: segmentId,
@@ -920,8 +1004,9 @@ function addInspectorSegmentMemo(segmentId) {
         tag: tag,
         created: now,
         edited: now
-    });
-    const segment = appData.segments.find(s => s.id === segmentId);
+    };
+    if (scopedCodeId) memo.codeId = scopedCodeId;
+    appData.memos.push(memo);
     if (segment) segment.modified = now;
     saveData();
     renderCodeInspector();
@@ -950,6 +1035,8 @@ function getMemoLinkedCodeIds(memo) {
     if (!memo) return [];
     if (memo.type === 'code' && memo.targetId) return [memo.targetId];
     if (memo.type === 'segment') {
+        const memoCodeId = String(memo.codeId || '').trim();
+        if (memoCodeId) return [memoCodeId];
         const seg = appData.segments.find(s => s.id === memo.targetId);
         return Array.isArray(seg?.codeIds) ? seg.codeIds : [];
     }
@@ -971,6 +1058,10 @@ function getAnnotationSearchText(memo) {
         const doc = seg ? appData.documents.find(d => d.id === seg.docId) : null;
         if (doc) parts.push(doc.title || '');
     }
+    getMemoLinkedCodeIds(memo).forEach((codeId) => {
+        const code = appData.codes.find(c => c.id === codeId);
+        if (code && code.name) parts.push(code.name);
+    });
     return parts.join(' ').toLowerCase();
 }
 
@@ -1173,6 +1264,16 @@ function renderFilteredView() {
     if (hasChildren && codeViewUiState.segmentsIncludeSubcodes) {
         includedCodeIds.push(...getDescendantCodeIds(code.id));
     }
+    const includedCodeIdSet = new Set(includedCodeIds);
+    const getRelevantSegmentMemos = (segment) => {
+        const memos = getMemosForTarget('segment', segment.id);
+        if (memos.length === 0) return [];
+        return memos.filter((memo) => {
+            const memoCodeId = String(memo?.codeId || '').trim();
+            if (!memoCodeId) return true;
+            return includedCodeIdSet.has(memoCodeId);
+        });
+    };
     const rawSegments = Array.from(new Map(
         includedCodeIds
             .flatMap((id) => getSegmentsForCode(id))
@@ -1181,8 +1282,8 @@ function renderFilteredView() {
     const allSegments = rawSegments
         .filter(segment => !codeViewUiState.segmentsDocId || segment.docId === codeViewUiState.segmentsDocId)
         .filter(segment => {
-            if (codeViewUiState.segmentsMemoFilter === 'with') return getMemosForTarget('segment', segment.id).length > 0;
-            if (codeViewUiState.segmentsMemoFilter === 'without') return getMemosForTarget('segment', segment.id).length === 0;
+            if (codeViewUiState.segmentsMemoFilter === 'with') return getRelevantSegmentMemos(segment).length > 0;
+            if (codeViewUiState.segmentsMemoFilter === 'without') return getRelevantSegmentMemos(segment).length === 0;
             return true;
         });
     
@@ -1349,7 +1450,7 @@ function renderFilteredView() {
 
         html += `
             <div class="annotation-filters">
-                <input type="text" class="form-input annotation-search-input" value="${escapeHtml(codeViewUiState.annotationQuery)}"
+                <input type="text" class="form-input annotation-search-input" value="${escapeHtmlAttrValue(codeViewUiState.annotationQuery)}"
                     placeholder="Search annotations..." oninput="updateAnnotationViewFilter('annotationQuery', this.value)">
                 <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationCodeId', this.value)">
                     ${codeOptions.map(opt => `<option value="${escapeHtmlAttrValue(opt.id)}" ${opt.id === codeViewUiState.annotationCodeId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
@@ -1497,7 +1598,7 @@ function renderFilteredView() {
                 const snippetText = segment.pdfRegion
                     ? `[PDF page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
                     : segment.text;
-                const memos = getMemosForTarget('segment', segment.id);
+                const memos = getRelevantSegmentMemos(segment);
                 const memoHtml = memos.length > 0
                     ? `<div class="filter-snippet-memo">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
                     : '<div class="filter-snippet-memo empty">No annotation.</div>';

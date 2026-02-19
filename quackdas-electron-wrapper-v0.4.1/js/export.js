@@ -4,7 +4,7 @@
  */
 
 function newProject() {
-    if (appData.documents.length > 0 || appData.codes.length > 0) {
+    if (appData.documents.length > 0 || appData.codes.length > 0 || appData.cases.length > 0) {
         if (!confirm('This will clear all current data. Continue?')) {
             return;
         }
@@ -46,7 +46,7 @@ function importProject(event) {
                 throw new Error('QDPX import not available');
             }
             
-            if (appData.documents.length > 0 || appData.codes.length > 0) {
+            if (appData.documents.length > 0 || appData.codes.length > 0 || appData.cases.length > 0) {
                 if (!confirm('This will replace your current project. Continue?')) {
                     return;
                 }
@@ -73,7 +73,7 @@ async function importProjectNative() {
             const res = await window.electronAPI.openProjectFile();
             if (!res || !res.ok) return;
             
-            if (appData.documents.length > 0 || appData.codes.length > 0) {
+            if (appData.documents.length > 0 || appData.codes.length > 0 || appData.cases.length > 0) {
                 if (!confirm('This will replace your current project. Continue?')) return;
             }
             

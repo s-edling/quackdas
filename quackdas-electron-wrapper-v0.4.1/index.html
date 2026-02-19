@@ -2,7 +2,7 @@
 <html lang="en">
 <!--
     Quackdas - Qualitative Data Analysis Software
-    Version 0.4.3
+    Version 0.5.0
     
     MIT License
     
@@ -73,7 +73,7 @@
                     <div class="header-dropdown-menu" id="headerDropdownMenu">
                         <button class="header-dropdown-item header-dropdown-item-white" data-action="newProjectAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                            + New project
+                            New project
                         </button>
                         <button class="header-dropdown-item" id="headerOpenProjectItem" data-action="importProjectNativeAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -85,15 +85,11 @@
                         </button>
                         <button class="header-dropdown-item" data-action="openStatsModalAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-                            Statistics
+                            Analysis
                         </button>
                         <button class="header-dropdown-item" data-action="runProjectHealthCheckAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                             Project health check
-                        </button>
-                        <button class="header-dropdown-item" data-action="openCooccurrenceModalAndCloseHeaderDropdown">
-                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M3 6h6v6H3z"/><path d="M15 6h6v6h-6z"/><path d="M9 15h6v6H9z"/></svg>
-                            Code co-occurrence
                         </button>
                         <button class="header-dropdown-item" data-action="openRestoreBackupModalAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3,3 3,9 9,9"/><path d="M12 7v5l3 3"/></svg>
@@ -117,6 +113,13 @@
             </div>
             <div class="codes-list" id="codesList">
                 <!-- Codes will be populated here -->
+            </div>
+            <div class="panel-header cases-panel-header">
+                <div class="panel-title">Cases</div>
+                <button class="add-code-btn add-case-btn" onclick="openCaseModal()">+ New Case</button>
+            </div>
+            <div class="codes-list cases-list" id="casesList">
+                <!-- Cases will be populated here -->
             </div>
         </aside>
 
@@ -149,6 +152,7 @@
                     <div class="pdf-selection-status" id="pdfSelectionStatus" hidden>
                         Region selected. Click a code to apply. Press Esc to clear.
                     </div>
+                    <div class="document-cases-control" id="documentCasesControl" hidden></div>
                     <div class="zoom-controls" id="docZoomControls">
                         <button class="zoom-btn" id="docZoomOutBtn" data-action="adjustZoomOut" title="Zoom out">−</button>
                         <span class="zoom-level" id="zoomLevel">100%</span>
@@ -319,21 +323,24 @@
     <!-- Statistics Dashboard Modal -->
     <div id="statsModal" class="modal">
         <div class="modal-content modal-content-wide">
-            <h2 class="modal-title">Statistics Dashboard</h2>
+            <h2 class="modal-title">Analysis dashboard</h2>
             <div class="stats-grid" id="statsGrid">
                 <!-- Stats will be rendered here -->
             </div>
             <div class="stat-chart">
-                <h3 style="font-size: 16px; margin-bottom: 12px;">Most Used Codes</h3>
+                <h3 style="font-size: 16px; margin-bottom: 12px;">Most used codes</h3>
                 <div id="codeChart">
                     <!-- Chart will be rendered here -->
                 </div>
             </div>
             <div class="stat-chart">
-                <h3 style="font-size: 16px; margin-bottom: 12px;">Coding Progress by Document</h3>
+                <h3 style="font-size: 16px; margin-bottom: 12px;">Coding progress by document</h3>
                 <div id="documentChart">
                     <!-- Chart will be rendered here -->
                 </div>
+            </div>
+            <div id="caseAnalysisSection" class="stat-chart">
+                <!-- Case Analysis will be rendered here -->
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeStatsModal">Close</button>
@@ -359,28 +366,6 @@
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeHealthCheckModal">Close</button>
                 <button type="button" class="btn btn-primary" data-action="applySelectedHealthFixes">Apply selected</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Code Co-occurrence Modal -->
-    <div id="cooccurrenceModal" class="modal">
-        <div class="modal-content modal-content-wide">
-            <h2 class="modal-title">Code Co-occurrence</h2>
-            <div class="cooc-layout">
-                <div class="cooc-matrix-wrap">
-                    <div id="cooccurrenceMatrix"></div>
-                </div>
-                <div class="cooc-side">
-                    <div class="cooc-controls">
-                        <select id="coocCodeA" class="form-select" data-action="renderCooccurrenceOverlaps"></select>
-                        <select id="coocCodeB" class="form-select" data-action="renderCooccurrenceOverlaps"></select>
-                    </div>
-                    <div id="cooccurrenceOverlaps" class="cooc-overlaps"></div>
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" data-action="closeCooccurrenceModal">Close</button>
             </div>
         </div>
     </div>
@@ -478,6 +463,61 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" data-action="closeCodeModal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create Code</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Case Modal -->
+    <div id="caseModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">New Case</h2>
+            <form id="caseForm" onsubmit="saveCase(event)">
+                <div class="form-group">
+                    <label class="form-label">Case Name</label>
+                    <input type="text" class="form-input" id="caseName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Type (optional)</label>
+                    <input type="text" class="form-input" id="caseType" placeholder="e.g. Person, Organisation, Site, Event">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parent Case (optional)</label>
+                    <select class="form-select" id="caseParent">
+                        <option value="">None (Top-level case)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCaseModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Case</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Case Add Documents Modal -->
+    <div id="caseAddDocumentsModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Add Documents to Case</h2>
+            <form id="caseAddDocumentsForm" onsubmit="saveCaseAddDocuments(event)">
+                <div class="case-doc-picker-list" id="caseAddDocumentsList"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCaseAddDocumentsModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Assign Document to Cases Modal -->
+    <div id="documentAssignCasesModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Assign to Cases</h2>
+            <form id="documentAssignCasesForm" onsubmit="saveDocumentAssignCases(event)">
+                <div class="case-doc-picker-list" id="documentAssignCasesList"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeDocumentAssignCasesModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply</button>
                 </div>
             </form>
         </div>
@@ -700,6 +740,7 @@
     <script src="js/render.js"></script>
     <script src="js/documents.js"></script>
     <script src="js/codes.js"></script>
+    <script src="js/cases.js"></script>
     <script src="js/coding.js"></script>
     <script src="js/search.js"></script>
     <script src="js/memos.js"></script>

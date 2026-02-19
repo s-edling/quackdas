@@ -1,5 +1,35 @@
 # Quackdas Changelog
 
+## Version 0.4.3-build-2026-02-18bu
+Date: 2026-02-18
+
+What changed:
+- Restored right-click behavior on coded text segments in document view by making the document marker overlay layer non-interactive again (`pointer-events: none`).
+- Keeps the new gutter annotation indicator visible while no longer blocking segment context-menu interactions.
+
+Why (one line):
+- To fix regression where the marker overlay intercepted right-clicks meant for coded text segments.
+
+Files touched:
+- `styles.css`
+
+## Version 0.4.3-build-2026-02-18bt
+Date: 2026-02-18
+
+What changed:
+- Removed inline annotation icon rendering inside coded document text spans.
+- Added a dedicated annotation indicator in the right-side segment-marker gutter:
+  - appears next to code marker lines when the coded span has annotations,
+  - uses a higher-contrast ring style for better visibility,
+  - clicking it opens segment annotations for that coded span.
+
+Why (one line):
+- To keep document text visually clean while preserving visible, direct access to annotations in a less intrusive location.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+
 ## Version 0.4.3-build-2026-02-18bs
 Date: 2026-02-18
 
@@ -637,6 +667,36 @@ Why (one line):
 
 Files touched:
 - `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18aa
+Date: 2026-02-18
+
+What changed:
+- Applied targeted attribute-escaping hardening in dynamic HTML templates:
+  - replaced attribute-context `escapeHtml(...)` usage with `escapeHtmlAttrValue(...)` in search modal input values, code view/filter inputs, select option values, and title/data-tooltip attributes.
+- Added QDPX import safety guardrails for untrusted archives:
+  - archive size limit before unzip,
+  - zip entry-count limit,
+  - `project.qde` size limit,
+  - per-source and total decompressed-read safety limits,
+  - path normalization for source paths referenced from XML to reject unsafe paths.
+- Added strict range validation for imported coded selections:
+  - plain-text selections are now ignored when range bounds are invalid,
+  - imported bounds are normalized/clamped to document content length.
+- Added main-process file-size preflight checks for project/document imports:
+  - `.qdpx` open/import now rejects overly large files before reading into memory,
+  - document import (`.txt/.docx/.pdf`) now rejects overly large files before loading.
+
+Why (one line):
+- To reduce injection and denial-of-service risk from untrusted imported data while keeping behavior and UI flows unchanged.
+
+Files touched:
+- `main.js`
+- `js/qdpx.js`
+- `js/search.js`
+- `js/render.js`
+- `js/ui.js`
 - `CHANGELOG.md`
 
 ## Version 0.4.3-build-2026-02-17bf
@@ -1706,4 +1766,540 @@ Why (one line):
 
 Files touched:
 - `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18bv
+Date: 2026-02-18
+
+What changed:
+- Added code-scoped segment annotations (`memo.codeId`) so annotations on multi-coded text can be attached to a specific code instead of implicitly applying to every code on that segment.
+- Updated coded-text right-click behavior:
+  - right-click now resolves the clicked color lane in a multi-code span,
+  - the annotation action opens in that selected code context,
+  - saved annotations keep the code linkage.
+- Updated annotation rendering/counting:
+  - coded-span metadata now includes code IDs and segment IDs,
+  - right-gutter annotation dots are computed from current memo state,
+  - annotation dots render in a fixed horizontal lane (independent of marker-line count/width).
+- Fixed stale annotation-dot behavior after deleting annotations from the annotation modal by forcing immediate document/codes re-render.
+- Updated code-view and search linkage for segment annotations so code-specific memos are treated as linked to their explicit code.
+- Added QDPX round-trip support for code-scoped segment annotations via `quackdasCodeGUID` on notes.
+- Added health-check validation/fix coverage for segment annotations whose code linkage becomes invalid.
+
+Why (one line):
+- To make multi-code annotation workflows precise and manageable, while fixing lingering marker visibility/placement issues and preserving annotation scope across saves/imports.
+
+Files touched:
+- `js/coding.js`
+- `js/render.js`
+- `js/state.js`
+- `js/memos.js`
+- `js/search.js`
+- `js/ui.js`
+- `js/qdpx.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18bw
+Date: 2026-02-18
+
+What changed:
+- Fixed HTML attribute escaping to correctly escape quotes/apostrophes in `escapeHtmlAttrValue`, closing attribute-breakout injection paths in dynamic UI markup.
+- Hardened segment-annotation integrity rules:
+  - segment memos are now pruned if their target segment no longer exists,
+  - orphaned code parent links are normalized to top-level on project normalization.
+- Fixed document deletion cleanup:
+  - deleting a document now also deletes segment memos linked to segments in that document,
+  - delete confirmation memo count now includes those segment memos.
+- Fixed recursive code deletion:
+  - deleting a code now deletes all descendant codes (not only direct children),
+  - removes descendant codings from segments and clears active code filter if deleted.
+- Fixed coded-span annotation indicator mismatch:
+  - memo indicator count now matches the segment opened by indicator click.
+- Added menu-open error handling in Electron main process:
+  - File -> Open Project now catches failures and shows a native error dialog.
+
+Why (one line):
+- To address Batch 1 high-risk safety and data-integrity issues with minimal behavior change and low regression risk.
+
+Files touched:
+- `js/state.js`
+- `js/documents.js`
+- `js/codes.js`
+- `js/render.js`
+- `main.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18bx
+Date: 2026-02-18
+
+What changed:
+- Added one more data-integrity cleanup to code deletion:
+  - when deleting a code subtree, remove `code` annotations targeting deleted code IDs,
+  - remove code-scoped `segment` annotations (`memo.codeId`) that point to deleted code IDs.
+
+Why (one line):
+- To prevent orphan annotations after recursive code deletion and keep annotation counts/search results consistent.
+
+Files touched:
+- `js/codes.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18by
+Date: 2026-02-18
+
+What changed:
+- Added a lightweight QDPX serialization cache keyed by project object + revision, and reused it across save/backup paths to avoid repeated full `exportToQdpx()` work for unchanged state.
+- Updated backup creation to use the shared cached serialization helper when no payload is provided.
+- Updated Electron autosave to use cached QDPX payload generation and removed forced duplicate backup writes:
+  - autosave now attempts a normal backup (revision-aware dedupe) instead of `force: true`.
+- Updated manual save to use cached QDPX payload generation and switched backup call to revision-aware dedupe (non-forced).
+- Optimized coded-span rendering hot path by replacing repeated `Array.find()` calls with per-render `Map`/`Set` lookups in `renderCodedSpan`.
+- Added an early return in global search for empty/whitespace queries to avoid unnecessary full-index scans.
+
+Why (one line):
+- To reduce repeated heavy work (QDPX serialization, duplicate backups, and hot-path lookups) while preserving existing UI and save semantics.
+
+Files touched:
+- `js/ui.js`
+- `js/app.js`
+- `js/render.js`
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.4.3-build-2026-02-18bz
+Date: 2026-02-18
+
+What changed:
+- Patched a Batch 2 regression risk in coded-text rendering hot path:
+  - replaced per-span code-map rebuilding with a cached code lookup map keyed by project + revision,
+  - keeps render behavior identical while removing repeated full-map allocations inside `renderCodedSpan`.
+
+Why (one line):
+- To avoid performance backsliding on heavily coded documents during repeated span rendering.
+
+Files touched:
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.4.4-build-2026-02-19ca
+Date: 2026-02-19
+
+What changed:
+- Reworked QDPX import to prioritize NVivo-style package layout and coding structure.
+- Added source-file path resolution for NVivo `internal://...` references with archive lookup fallbacks (including `sources/`/`Sources/` handling).
+- Updated PDF import to prefer NVivo representation text (`Representation plainTextPath`) for content offsets before falling back to inline/extracted text.
+- Extended coded-segment import to support both top-level `Selections > PlainTextSelection` and NVivo nested source selections (`TextSource` / `PDFSource > Representation`).
+- Added support for NVivo coding references via `CodeRef targetGUID` in addition to direct `Coding codeGUID`.
+
+Why (one line):
+- To fix empty NVivo-imported documents and missing coded segments by aligning importer behavior to NVivo QDPX conventions.
+
+Files touched:
+- `js/qdpx.js`
+- `package.json`
+- `index.html`
+- `CHANGELOG.md`
+
+## Version 0.4.5-build-2026-02-19cb
+Date: 2026-02-19
+
+What changed:
+- Fixed NVivo code color parsing so `#RRGGBB` colors now import correctly instead of falling back to grey.
+- Extended project state schema with NVivo-like entities:
+  - `cases` collection (case name/description/member documents/attributes),
+  - `variableDefinitions` collection (variable names/types).
+- Updated QDPX export to be closer to NVivo package structure:
+  - source files now written under lowercase `sources/`,
+  - added `sources/.root` marker,
+  - source XML paths now use `internal://...` references,
+  - PDF exports now include `Representation plainTextPath` text references.
+- Extended QDPX export/import for cases/variables:
+  - export now writes `<Variables>` from project definitions + document/case attributes,
+  - export now writes `<Cases>` with `MemberSource` and `VariableValue`,
+  - import now restores variable definitions and case entities (plus document case links) while preserving current folder/document workflow.
+
+Why (one line):
+- To move Quackdas project structure closer to NVivo-style QDPX interoperability without forcing a UI redesign away from your folder-first analysis workflow.
+
+Files touched:
+- `js/qdpx.js`
+- `js/state.js`
+- `package.json`
+- `index.html`
+- `CHANGELOG.md`
+
+## Version 0.5.0-build-2026-02-19cc
+Date: 2026-02-19
+
+What changed:
+- Added a full Cases feature set distinct from thematic Codes:
+  - new CASES section in the left sidebar below CODES with its own header and `+ New Case`,
+  - case hierarchy rendering (parent/child, expand/collapse) with per-row linked-document count badges,
+  - case selection behavior that opens a dedicated Case Sheet in the center panel.
+- Implemented Case Sheet editing:
+  - editable case name, parent, and type,
+  - attribute key/value table editor with add/edit/delete and duplicate-key merge warnings,
+  - linked-document management (open linked doc, unlink, add documents via multi-select modal).
+- Added document header Cases integration:
+  - `Cases:` pills for assigned cases,
+  - `+` searchable picker with checkbox link/unlink behavior,
+  - `Create new case...` flow from the picker.
+- Implemented case operations and safeguards:
+  - parent reassignment with cycle prevention,
+  - delete-case flow with two options:
+    - delete case only (children move to deleted case's parent),
+    - delete case + descendants,
+  - deletion/unlink logic preserves documents and thematic codes.
+- Upgraded state model + normalization for cases:
+  - canonical case shape now supports `type`, `parentId`, `attributes`, `linkedDocumentIds`,
+  - migration support for legacy `docIds`/document-side links,
+  - consistency sync between `case.linkedDocumentIds` and `document.caseIds`,
+  - persisted `selectedCaseId` in undo/redo snapshots.
+- Extended QDPX compatibility hooks for cases:
+  - export/import now maps case hierarchy (`parentGUID`) and case type (`type`),
+  - importer now handles nested/flat case structures and explicit source-case links into `linkedDocumentIds`.
+- Updated project version to `0.5.0` and added responsive + visual styles for case UI elements.
+
+Why (one line):
+- To establish NVivo-like foundational Cases functionality (entity hierarchy + attributes + document links) with persistent storage and integrated workflow UI.
+
+Files touched:
+- `index.html`
+- `styles.css`
+- `js/cases.js`
+- `js/render.js`
+- `js/documents.js`
+- `js/codes.js`
+- `js/state.js`
+- `js/qdpx.js`
+- `js/ui.js`
+- `js/app.js`
+- `js/export.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.1-build-2026-02-19cd
+Date: 2026-02-19
+
+What changed:
+- Renamed visible “Case sheet” labeling to “Case view” in the center-panel title and case context-menu action text.
+- Made Case view layout density match Code view more closely:
+  - Case view now uses compact `code-view-mode` content padding.
+  - Case sections now use Code-view banner/card spacing patterns.
+  - Reduced internal paddings/gaps in Case cards, grid rows, tables, and linked-document rows.
+  - Removed the extra centered/narrow container feel by making Case view full-width within the content area.
+
+Why (one line):
+- To improve visual consistency and reduce excess whitespace so Case view feels as compact and usable as Code view.
+
+Files touched:
+- `js/render.js`
+- `js/cases.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.5.2-build-2026-02-19ce
+Date: 2026-02-19
+
+What changed:
+- Case view simplification:
+  - removed rename and parent reassignment fields from Case view's main Case section,
+  - replaced them with read-only Name/Parent display in Case view.
+- Added a Case-view description and notes bar modeled on Code view:
+  - same compact bar style/pattern,
+  - show/hide notes toggle,
+  - inline edit mode for description + notes with save/cancel.
+- Fixed linked-documents empty-state overflow:
+  - `No linked documents yet.` now wraps safely inside its container.
+- Added hierarchy drag-and-drop parenting in both left panels:
+  - codes: drag one code onto another to make it a child code (cycle-protected),
+  - cases: drag one case onto another to make it a child case (cycle-protected).
+- Added document context-menu action:
+  - `Assign to case...` with a checkbox modal to assign/unassign the selected document to multiple cases.
+
+Why (one line):
+- To reduce friction in Case view editing, improve layout robustness, and bring hierarchy/document-case operations in line with expected NVivo-style workflows.
+
+Files touched:
+- `js/cases.js`
+- `js/codes.js`
+- `js/render.js`
+- `js/ui.js`
+- `index.html`
+- `styles.css`
+- `js/state.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.3-build-2026-02-19cf
+Date: 2026-02-19
+
+What changed:
+- Extended code/case drag-and-drop to support level-aware hierarchy placement:
+  - dropping in the middle of a row keeps “make child of target” behavior,
+  - dropping near the top/bottom of a row moves to that row’s level (sibling level),
+  - dropping on empty list background moves item to root level.
+- Applied this behavior to both trees:
+  - CODES panel (`code -> code`),
+  - CASES panel (`case -> case`).
+
+Why (one line):
+- To make hierarchy editing predictable so users can move items back to root or to the correct level directly via drag-and-drop.
+
+Files touched:
+- `js/codes.js`
+- `js/cases.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.4-build-2026-02-19cg
+Date: 2026-02-19
+
+What changed:
+- Improved drag-and-drop hierarchy behavior for both CODES and CASES across all nesting levels:
+  - row-middle drop => make dragged item a child of target,
+  - row-edge drop (top/bottom) => move dragged item to target's level and reorder as sibling (before/after target),
+  - list-background drop => move dragged item to root level.
+- Added consistent sibling-level ordering updates by reindexing `sortOrder` for the affected level(s) after each move.
+- Updated drag hover visuals:
+  - removed confusing red insertion line when drop intent is “make child,”
+  - kept insertion-line indicator for sibling-level reorder drops,
+  - added child-intent highlight without insertion line.
+
+Why (one line):
+- To make drag-and-drop hierarchy editing fully level-aware and visually unambiguous at any depth.
+
+Files touched:
+- `js/codes.js`
+- `js/cases.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.5-build-2026-02-19ch
+Date: 2026-02-19
+
+What changed:
+- Updated Case view information layout:
+  - removed Name and Parent fields from the in-box Case section,
+  - added a dedicated top banner (styled like the top Code view box) with case-relevant summary only:
+    - case name,
+    - parent case,
+    - type,
+    - linked document count.
+- Kept editable Type field in the Case section for direct case metadata editing.
+
+Why (one line):
+- To reduce duplication and match the requested information hierarchy by showing case identity context in a concise top summary box.
+
+Files touched:
+- `js/cases.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.6-build-2026-02-19ci
+Date: 2026-02-19
+
+What changed:
+- Fixed Case view Attributes section heading alignment:
+  - ensured case cards use block layout instead of the center-aligned flex layout inherited from `code-view-banner`,
+  - this keeps `ATTRIBUTES` pinned to the top of its box rather than vertically centering beside the table.
+
+Why (one line):
+- To match expected section-header positioning and improve visual clarity in Case view.
+
+Files touched:
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.7-build-2026-02-19cj
+Date: 2026-02-19
+
+What changed:
+- Fixed Case view section layout inheritance issue:
+  - removed `code-view-banner` class from Case section cards (`Case`, `Attributes`, `Linked Documents`) so they no longer inherit flex-row layout.
+- Result:
+  - section titles (including `ATTRIBUTES`) now render above section content as intended.
+
+Why (one line):
+- To ensure Case view section headings are top-aligned and not vertically centered beside their content.
+
+Files touched:
+- `js/cases.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.8-build-2026-02-19ck
+Date: 2026-02-19
+
+What changed:
+- Updated Case view section label capitalization and wording:
+  - `Case` -> `Case type`
+  - `Attributes` kept with initial-cap style
+  - `Linked Documents` -> `Linked documents`
+- Removed uppercase transform from Case view section titles so labels render with initial-letter capitalization as written.
+
+Why (one line):
+- To match requested label style and improve wording consistency in Case view headings.
+
+Files touched:
+- `js/cases.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.5.9-build-2026-02-19cl
+Date: 2026-02-19
+
+What changed:
+- Removed the inline `TYPE` label from the `Case type` section in Case view.
+- Kept only the type input + save action, and adjusted layout so this row spans the full section width cleanly.
+
+Why (one line):
+- To simplify the Case type box UI and match the requested label-free presentation.
+
+Files touched:
+- `js/cases.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.0-build-2026-02-19cm
+Date: 2026-02-19
+
+What changed:
+- Extended the Statistics Dashboard with a new **Case Analysis** section containing three collapsible panels:
+  - `Filter coded references`
+  - `Case summary`
+  - `Code × Case matrix`
+- Implemented NVivo-like retrieval semantics using case-document links:
+  - Code retrieval filtered by specific cases and/or case attribute exact match.
+  - Case + attribute filters are intersected when both are set.
+  - No case/attribute filter falls back to normal code retrieval behaviour.
+- Added click-through results list in the filter panel:
+  - shows document, snippet, code, and `Go to` action opening the exact coded segment.
+- Added case summary tooling:
+  - searchable hierarchical case selector,
+  - case metadata header (name/type/attributes preview),
+  - linked document + coded segment totals,
+  - top codes list with click-to-prefill retrieval filtering.
+- Added Code × Case matrix tooling:
+  - rows by individual cases or grouped by case attribute value (with `(missing)` bucket),
+  - columns by selected codes or a code group (hierarchy-based),
+  - clickable cells that prefill the retrieval panel for underlying extracts,
+  - totals row/column.
+- Added lightweight indexing/caching for case analysis:
+  - cached case/doc/attribute mappings per revision,
+  - cached `(caseId, codeId)` reference counts with automatic invalidation on state revision changes.
+- Added dedicated stats modal container and new styles for pickers, result lists, and matrix tables while preserving existing dashboard cards/charts.
+
+Why (one line):
+- To turn Statistics into a practical NVivo-like analysis/query surface where aggregated case/code counts always drill through to underlying coded extracts.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.1-build-2026-02-19cn
+Date: 2026-02-19
+
+What changed:
+- Increased Statistics Dashboard usable width and viewport use:
+  - `#statsModal` now opens at near-full width (`96vw`, max `1560px`) with scrollable height (`92vh`).
+- Resized dashboard contents for medium/large datasets:
+  - summary cards now render in a wider five-column layout on desktop,
+  - chart label column widened substantially to reduce truncation and improve readability.
+- Improved Case Analysis panel usability in the Statistics view:
+  - controls grid now auto-fits with sensible minimum widths,
+  - picker list height increased for longer code/case lists,
+  - results list height increased to show more rows per panel.
+- Added responsive fallbacks for smaller screens so the expanded desktop layout still degrades cleanly.
+
+Why (one line):
+- To make the Statistics and Case Analysis tools practically usable with medium-sized datasets by reducing cramped layouts and truncation.
+
+Files touched:
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.2-build-2026-02-19co
+Date: 2026-02-19
+
+What changed:
+- Updated Statistics dashboard chart lists to show only top 4 items by default:
+  - `Most used codes` now shows top 4 entries initially.
+  - `Coding progress by document` now shows top 4 entries initially.
+- Added a toggle button under each chart list:
+  - `Show more` expands to full list.
+  - `Show less` collapses back to top 4.
+- Updated Statistics dashboard heading and label capitalisation to initial-letter style:
+  - modal title, chart headings, and Case analysis heading text updated,
+  - stats card labels now use sentence-style casing,
+  - form labels inside the Statistics dashboard no longer force uppercase.
+
+Why (one line):
+- To reduce visual overload in stats lists and align heading/label casing with the requested initial-letter style.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.3-build-2026-02-19cp
+Date: 2026-02-19
+
+What changed:
+- Renamed the Statistics dashboard modal title to `Analysis dashboard`.
+- Renamed the corresponding header dropdown menu item from `Statistics` to `Analysis`.
+- Removed the leading `+` character from `New project` in the same header dropdown menu.
+
+Why (one line):
+- To align naming with the new analysis-focused dashboard purpose and simplify the menu label styling.
+
+Files touched:
+- `index.html`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.4-build-2026-02-19cq
+Date: 2026-02-19
+
+What changed:
+- Moved `Code co-occurrence` into the `Analysis dashboard` as an embedded collapsible panel under Case analysis.
+- Removed `Code co-occurrence` as a separate header menu option.
+- Removed the standalone Code Co-occurrence modal/overlay from the app shell.
+- Updated co-occurrence interactions to work inline in Analysis dashboard:
+  - matrix cell click selects code pairs directly,
+  - overlap rows click through to source segment via existing `Go to` behaviour.
+- Removed now-obsolete app action bindings for opening/closing separate co-occurrence modal.
+
+Why (one line):
+- To consolidate analysis workflows in one place and eliminate duplicate modal navigation.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `js/app.js`
+- `package.json`
+- `package-lock.json`
 - `CHANGELOG.md`
