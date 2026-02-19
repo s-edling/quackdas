@@ -223,13 +223,97 @@ function formatColor(hexColor) {
 // Parse QDPX color to hex
 function parseColor(qdpxColor) {
     if (!qdpxColor) return '#808080';
-    let color = String(qdpxColor).trim().replace(/^#/, '');
-    // Remove alpha channel if present (first 2 chars)
-    if (color.length === 8) {
-        color = color.substring(2);
+    const raw = String(qdpxColor).trim();
+
+    // 1) rgb()/rgba() formats
+    const rgbMatch = raw.match(/^rgba?\s*\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/i);
+    if (rgbMatch) {
+        const r = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[1], 10) || 0));
+        const g = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[2], 10) || 0));
+        const b = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[3], 10) || 0));
+        return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
     }
-    if (!/^[0-9a-fA-F]{6}$/.test(color)) return '#808080';
-    return '#' + color.toLowerCase();
+
+    // 2) Comma-separated forms: "R,G,B" or "A,R,G,B"
+    const csvParts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+    if (csvParts.length === 3 || csvParts.length === 4) {
+        const offset = csvParts.length === 4 ? 1 : 0;
+        const r = Number.parseInt(csvParts[offset], 10);
+        const g = Number.parseInt(csvParts[offset + 1], 10);
+        const b = Number.parseInt(csvParts[offset + 2], 10);
+        if ([r, g, b].every((v) => Number.isFinite(v))) {
+            return '#' + [r, g, b]
+                .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+                .join('');
+        }
+    }
+    const wsParts = raw.split(/\s+/).map((p) => p.trim()).filter(Boolean);
+    if (wsParts.length === 3 || wsParts.length === 4) {
+        const offset = wsParts.length === 4 ? 1 : 0;
+        const r = Number.parseInt(wsParts[offset], 10);
+        const g = Number.parseInt(wsParts[offset + 1], 10);
+        const b = Number.parseInt(wsParts[offset + 2], 10);
+        if ([r, g, b].every((v) => Number.isFinite(v))) {
+            return '#' + [r, g, b]
+                .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+                .join('');
+        }
+    }
+
+    // 3) Hex forms: #RRGGBB, #AARRGGBB, 0xRRGGBB, 0xAARRGGBB
+    let color = raw.replace(/^#/, '').replace(/^0x/i, '');
+    if (/^[0-9a-fA-F]{8}$/.test(color)) color = color.substring(2); // drop alpha (AARRGGBB -> RRGGBB)
+    if (/^[0-9a-fA-F]{6}$/.test(color)) return '#' + color.toLowerCase();
+
+    // 4) Integer forms used by some tools (including signed ARGB values from .NET/NVivo exports).
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+        const n = Math.trunc(numeric);
+        const unsigned = n >>> 0;
+        const rgb = unsigned > 0xFFFFFF ? (unsigned & 0xFFFFFF) : unsigned;
+        const hex = rgb.toString(16).padStart(6, '0').slice(-6);
+        return '#' + hex.toLowerCase();
+    }
+
+    return '#808080';
+}
+
+function getCodeColorRawValue(codeEl) {
+    if (!codeEl) return '';
+    const direct = getAttrFirst(codeEl, [
+        'color',
+        'Color',
+        'colour',
+        'rgbColor',
+        'argbColor',
+        'codeColor',
+        'backgroundColor'
+    ]);
+    if (direct) return direct;
+
+    const colorEl = codeEl.querySelector(':scope > Color, :scope > Colour, :scope > CodeColor');
+    if (colorEl) {
+        const attrValue = getAttrFirst(colorEl, [
+            'value',
+            'color',
+            'colour',
+            'rgb',
+            'argb',
+            'hex'
+        ]);
+        if (attrValue) return attrValue;
+
+        const r = getAttrFirst(colorEl, ['r', 'red']);
+        const g = getAttrFirst(colorEl, ['g', 'green']);
+        const b = getAttrFirst(colorEl, ['b', 'blue']);
+        const a = getAttrFirst(colorEl, ['a', 'alpha']);
+        if (r && g && b) return a ? `${a},${r},${g},${b}` : `${r},${g},${b}`;
+
+        const textValue = String(colorEl.textContent || '').trim();
+        if (textValue) return textValue;
+    }
+
+    return '';
 }
 
 function buildQdpxId(prefix) {
@@ -721,7 +805,7 @@ async function importFromQdpx(qdpxData) {
     function parseCodeElement(codeEl, parentId = null) {
         const guid = codeEl.getAttribute('guid');
         const name = codeEl.getAttribute('name') || 'Unnamed Code';
-        const color = parseColor(codeEl.getAttribute('color'));
+        const color = parseColor(getCodeColorRawValue(codeEl));
         const rawShortcut = (codeEl.getAttribute('quackdasShortcut') || '').trim();
         const shortcut = /^[1-9]$/.test(rawShortcut) ? rawShortcut : '';
         const notes = codeEl.getAttribute('quackdasNotes') || '';

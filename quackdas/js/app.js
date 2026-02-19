@@ -18,6 +18,22 @@ function applyPlatformShortcutTooltips() {
     if (redoBtn) redoBtn.title = isMac ? 'Redo (Cmd+Shift+Z)' : 'Redo (Ctrl+Y)';
 }
 
+function setupLogoQuackEasterEgg() {
+    const logo = document.getElementById('appLogo');
+    if (!logo) return;
+    const quackAudio = new Audio('assets/quack.mp3');
+    quackAudio.preload = 'auto';
+    logo.addEventListener('dblclick', () => {
+        try {
+            quackAudio.currentTime = 0;
+            const playPromise = quackAudio.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch(() => {});
+            }
+        } catch (_) {}
+    });
+}
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', async function() {
     window.__startupProjectRestoreInProgress = true;
@@ -65,6 +81,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Setup context menu dismissal
         setupContextMenuDismissal();
         setupStaticActionBindings();
+        setupLogoQuackEasterEgg();
         if (typeof startProjectBackupScheduler === 'function') {
             startProjectBackupScheduler();
         }
