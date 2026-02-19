@@ -32,5 +32,6 @@ pnpm-debug.log*
 # Environment files
 .env*
 
+# Local AI tooling instructions (kept out of repo)
 AGENTS.md
 AGENTS.local.md
