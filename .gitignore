@@ -31,3 +31,6 @@ pnpm-debug.log*
 
 # Environment files
 .env*
+
+AGENTS.md
+AGENTS.local.md
