@@ -163,7 +163,12 @@ function renderDocuments() {
     // Render root-level documents (no folder)
     const rootDocs = docsByFolder.get(ROOT_KEY) || [];
     if (appData.folders.length > 0 && rootDocs.length > 0) {
-        allHtml += '<div class="root-doc-separator"></div>';
+        allHtml += `
+            <div class="root-doc-separator"
+                 ondragover="handleFolderDragOver(event)"
+                 ondragleave="handleFolderDragLeave(event)"
+                 ondrop="handleDocumentDropOnFolder(event, null)"></div>
+        `;
     }
     rootDocs.forEach(doc => {
         allHtml += renderDocItem(doc, 0);
@@ -190,8 +195,7 @@ function renderDocuments() {
     
     if (recentDocs.length === 0) {
         recentList.innerHTML = '<div class="empty-state" style="padding: 20px;"><p style="font-size: 13px;">No recent documents</p></div>';
-        recentList.style.height = 'auto';
-        recentList.style.maxHeight = 'none';
+        sizeRecentDocumentsListViewport(recentList);
     } else {
         recentList.innerHTML = recentDocs.map(doc => renderDocItem(doc, 0)).join('');
         updateCompactDocumentTitleLineClasses(recentList);
@@ -201,20 +205,9 @@ function renderDocuments() {
 
 function sizeRecentDocumentsListViewport(recentList) {
     if (!recentList) return;
-    const cards = Array.from(recentList.querySelectorAll('.document-item'));
-    if (cards.length < 3) {
-        recentList.style.height = 'auto';
-        recentList.style.maxHeight = 'none';
-        return;
-    }
-
-    const thirdCard = cards[2];
-    // Exact viewport: use visual geometry inside this list (independent of offsetParent).
-    const listRect = recentList.getBoundingClientRect();
-    const thirdRect = thirdCard.getBoundingClientRect();
-    const finalPx = Math.max(1, Math.floor((thirdRect.bottom - listRect.top) + 1));
-    recentList.style.height = `${finalPx}px`;
-    recentList.style.maxHeight = `${finalPx}px`;
+    const fixedPx = 176; // ~three compact cards at two-line title height
+    recentList.style.height = `${fixedPx}px`;
+    recentList.style.maxHeight = `${fixedPx}px`;
 }
 
 // getDocSegmentCount is now getDocSegmentCountFast in state.js

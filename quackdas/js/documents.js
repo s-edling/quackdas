@@ -173,6 +173,24 @@ let draggedDocId = null;
 let draggedDocIds = [];
 let draggedFolderId = null;
 
+function getDraggedDocumentIdsFromEvent(event) {
+    const payloadDocIds = event?.dataTransfer?.getData('application/x-quackdas-doc-ids');
+    const parsedDocIds = payloadDocIds ? (() => {
+        try {
+            const ids = JSON.parse(payloadDocIds);
+            return Array.isArray(ids) ? ids : [];
+        } catch (_) {
+            return [];
+        }
+    })() : [];
+    const fallbackDocId = draggedDocId ||
+        event?.dataTransfer?.getData('application/x-quackdas-doc-id') ||
+        event?.dataTransfer?.getData('text/plain');
+    return (draggedDocIds && draggedDocIds.length > 0)
+        ? draggedDocIds
+        : (parsedDocIds.length > 0 ? parsedDocIds : (fallbackDocId ? [fallbackDocId] : []));
+}
+
 function handleDocDragStart(event, docId) {
     draggedDocId = docId;
     const selectedIds = Array.isArray(appData.selectedDocIds) ? appData.selectedDocIds.filter(id => appData.documents.some(d => d.id === id)) : [];
@@ -263,6 +281,7 @@ function handleFolderDragLeave(event) {
 
 function handleDocumentDropOnFolder(event, folderId) {
     event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.classList.remove('drag-over');
 
     const folderDragId = draggedFolderId || event.dataTransfer.getData('application/x-quackdas-folder-id');
@@ -271,22 +290,38 @@ function handleDocumentDropOnFolder(event, folderId) {
         return;
     }
 
-    const payloadDocIds = event.dataTransfer.getData('application/x-quackdas-doc-ids');
-    const parsedDocIds = payloadDocIds ? (() => {
-        try {
-            const ids = JSON.parse(payloadDocIds);
-            return Array.isArray(ids) ? ids : [];
-        } catch (err) {
-            return [];
-        }
-    })() : [];
-    const fallbackDocId = draggedDocId || event.dataTransfer.getData('application/x-quackdas-doc-id') || event.dataTransfer.getData('text/plain');
-    const docIds = (draggedDocIds && draggedDocIds.length > 0)
-        ? draggedDocIds
-        : (parsedDocIds.length > 0 ? parsedDocIds : (fallbackDocId ? [fallbackDocId] : []));
+    const docIds = getDraggedDocumentIdsFromEvent(event);
     if (docIds.length === 0) return;
 
     moveDocumentsToFolder(docIds, folderId);
+}
+
+function handleRootLevelDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove('drag-over');
+
+    // Let specific item drop handlers (folder/doc cards, explicit root drop zone) own their drops.
+    const target = event.target;
+    if (
+        target &&
+        (target.closest('.folder-item') ||
+            target.closest('.document-item') ||
+            target.closest('.root-drop-zone') ||
+            target.closest('.root-doc-separator'))
+    ) {
+        return;
+    }
+
+    const folderDragId = draggedFolderId || event.dataTransfer.getData('application/x-quackdas-folder-id');
+    if (folderDragId) {
+        moveFolderToParent(folderDragId, null);
+        return;
+    }
+
+    const docIds = getDraggedDocumentIdsFromEvent(event);
+    if (docIds.length === 0) return;
+    moveDocumentsToFolder(docIds, null);
 }
 
 function openFolderContextMenu(folderId, event) {

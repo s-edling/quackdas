@@ -593,6 +593,26 @@ function flushDocumentAccessMetaSave() {
     } catch (_) {}
 }
 
+function captureDocumentFolderSnapshot() {
+    const out = {};
+    appData.documents.forEach((doc) => {
+        if (!doc || !doc.id) return;
+        out[doc.id] = doc.folderId || null;
+    });
+    return out;
+}
+
+function applyDocumentFolderSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const byDocId = snapshot;
+    appData.documents.forEach((doc) => {
+        if (!doc || !doc.id) return;
+        doc.folderId = Object.prototype.hasOwnProperty.call(byDocId, doc.id)
+            ? (byDocId[doc.id] || null)
+            : null;
+    });
+}
+
 // Undo/Redo support
 // Snapshots exclude document content since it's immutable after import.
 // This dramatically reduces memory usage for large projects.
@@ -601,6 +621,7 @@ function saveHistory() {
     const snapshot = JSON.stringify({
         // Store document metadata only, not content
         documentIds: appData.documents.map(d => d.id),
+        documentFolders: captureDocumentFolderSnapshot(),
         codes: appData.codes,
         segments: appData.segments,
         memos: appData.memos,
@@ -626,6 +647,7 @@ function undo() {
     // Save current state to future
     const currentSnapshot = JSON.stringify({
         documentIds: appData.documents.map(d => d.id),
+        documentFolders: captureDocumentFolderSnapshot(),
         codes: appData.codes,
         segments: appData.segments,
         memos: appData.memos,
@@ -644,6 +666,7 @@ function undo() {
     
     // Documents are not restored (content is immutable, structure changes are rare)
     // Only restore codes, segments, memos, folders
+    applyDocumentFolderSnapshot(restored.documentFolders);
     appData.codes = restored.codes;
     appData.segments = restored.segments;
     appData.memos = restored.memos;
@@ -668,6 +691,7 @@ function redo() {
     // Save current state to past
     const currentSnapshot = JSON.stringify({
         documentIds: appData.documents.map(d => d.id),
+        documentFolders: captureDocumentFolderSnapshot(),
         codes: appData.codes,
         segments: appData.segments,
         memos: appData.memos,
@@ -684,6 +708,7 @@ function redo() {
     const nextSnapshot = history.future.pop();
     const restored = JSON.parse(nextSnapshot);
     
+    applyDocumentFolderSnapshot(restored.documentFolders);
     appData.codes = restored.codes;
     appData.segments = restored.segments;
     appData.memos = restored.memos;

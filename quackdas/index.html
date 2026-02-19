@@ -196,7 +196,10 @@
                 <div class="panel-title">All Documents</div>
                 <button class="panel-header-action" data-action="createFolder" title="New folder">+ Folder</button>
             </div>
-            <div class="documents-list" id="documentsList">
+            <div class="documents-list" id="documentsList"
+                 ondragover="handleFolderDragOver(event)"
+                 ondragleave="handleFolderDragLeave(event)"
+                 ondrop="handleRootLevelDrop(event)">
                 <!-- Documents will be populated here -->
             </div>
         </aside>
