@@ -9,6 +9,59 @@ let projectBackupTimer = null;
 let projectBackupInFlight = false;
 let lastBackedUpRevision = 0;
 let cooccurrenceDelegationBound = false;
+let caseAnalysisCache = {
+    revision: -1,
+    caseById: new Map(),
+    docById: new Map(),
+    caseDocIds: new Map(),
+    docCaseIds: new Map(),
+    attrValuesByKey: new Map(),
+    caseIdsByAttrPair: new Map()
+};
+let caseCodeReferenceCountCache = {
+    revision: -1,
+    values: new Map()
+};
+const caseAnalysisUiState = {
+    expandedPanels: {
+        filter: true,
+        summary: true,
+        matrix: true,
+        cooccurrence: true
+    },
+    filter: {
+        codeId: '',
+        codeQuery: '',
+        caseMode: 'any',
+        caseQuery: '',
+        caseIds: [],
+        attrKey: '',
+        attrValue: '',
+        attrValueQuery: '',
+        resultLimit: 250
+    },
+    summary: {
+        caseId: '',
+        caseQuery: ''
+    },
+    matrix: {
+        rowMode: 'cases',
+        rowAttributeKey: '',
+        codeMode: 'selected',
+        codeQuery: '',
+        selectedCodeIds: [],
+        codeGroupId: '',
+        metric: 'references'
+    },
+    cooccurrence: {
+        codeAId: '',
+        codeBId: ''
+    }
+};
+const statsDashboardUiState = {
+    showAllMostUsedCodes: false,
+    showAllCodingProgressDocs: false
+};
 let qdpxExportCache = {
     projectRef: null,
     revision: null,
@@ -686,35 +739,37 @@ function renderStatistics() {
     const statsGrid = document.getElementById('statsGrid');
     statsGrid.innerHTML = `
         <div class="stat-card">
-            <div class="stat-label">Total Documents</div>
+            <div class="stat-label">Total documents</div>
             <div class="stat-value">${totalDocs}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Codes</div>
+            <div class="stat-label">Total codes</div>
             <div class="stat-value">${totalCodes}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Coded Segments</div>
+            <div class="stat-label">Coded segments</div>
             <div class="stat-value">${totalSegments}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Analytical Memos</div>
+            <div class="stat-label">Analytical memos</div>
             <div class="stat-value">${totalMemos}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Avg Segments/Doc</div>
+            <div class="stat-label">Avg segments/doc</div>
             <div class="stat-value">${avgCodesPerDoc}</div>
         </div>
     `;
     
-    // Most used codes chart (using precomputed index)
-    const codeCounts = appData.codes.map(code => ({
+    const codeCountsAll = appData.codes.map(code => ({
         name: code.name,
         count: getCodeSegmentCountFast(code.id)
-    })).sort((a, b) => b.count - a.count).slice(0, 10);
-    
-    const maxCodeCount = Math.max(...codeCounts.map(c => c.count), 1);
-    
+    })).sort((a, b) => b.count - a.count);
+
+    const codeCounts = statsDashboardUiState.showAllMostUsedCodes
+        ? codeCountsAll
+        : codeCountsAll.slice(0, 4);
+    const maxCodeCount = Math.max(...codeCountsAll.map(c => c.count), 1);
+
     const codeChart = document.getElementById('codeChart');
     codeChart.innerHTML = codeCounts.map(code => `
         <div class="chart-bar">
@@ -725,15 +780,26 @@ function renderStatistics() {
             </div>
         </div>
     `).join('') || '<p style="color: var(--text-secondary);">No data yet</p>';
+    if (codeCountsAll.length > 4) {
+        codeChart.innerHTML += `
+            <div class="stats-show-more-wrap">
+                <button type="button" class="btn btn-secondary stats-show-more-btn" onclick="toggleStatsMostUsedCodes()">
+                    ${statsDashboardUiState.showAllMostUsedCodes ? 'Show less' : 'Show more'}
+                </button>
+            </div>
+        `;
+    }
     
-    // Document coding progress chart (using precomputed index)
-    const docProgress = appData.documents.map(doc => ({
+    const docProgressAll = appData.documents.map(doc => ({
         name: doc.title,
         count: getDocSegmentCountFast(doc.id)
     })).sort((a, b) => b.count - a.count);
-    
-    const maxDocCount = Math.max(...docProgress.map(d => d.count), 1);
-    
+
+    const docProgress = statsDashboardUiState.showAllCodingProgressDocs
+        ? docProgressAll
+        : docProgressAll.slice(0, 4);
+    const maxDocCount = Math.max(...docProgressAll.map(d => d.count), 1);
+
     const documentChart = document.getElementById('documentChart');
     documentChart.innerHTML = docProgress.map(doc => `
         <div class="chart-bar">
@@ -744,6 +810,779 @@ function renderStatistics() {
             </div>
         </div>
     `).join('') || '<p style="color: var(--text-secondary);">No documents yet</p>';
+    if (docProgressAll.length > 4) {
+        documentChart.innerHTML += `
+            <div class="stats-show-more-wrap">
+                <button type="button" class="btn btn-secondary stats-show-more-btn" onclick="toggleStatsCodingProgressDocs()">
+                    ${statsDashboardUiState.showAllCodingProgressDocs ? 'Show less' : 'Show more'}
+                </button>
+            </div>
+        `;
+    }
+
+    renderCaseAnalysisInStats();
+}
+
+function toggleStatsMostUsedCodes() {
+    statsDashboardUiState.showAllMostUsedCodes = !statsDashboardUiState.showAllMostUsedCodes;
+    renderStatistics();
+}
+
+function toggleStatsCodingProgressDocs() {
+    statsDashboardUiState.showAllCodingProgressDocs = !statsDashboardUiState.showAllCodingProgressDocs;
+    renderStatistics();
+}
+
+function ensureCaseAnalysisDefaults() {
+    const topCodes = appData.codes
+        .map((code) => ({ codeId: code.id, count: getCodeSegmentCountFast(code.id) }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map((item) => item.codeId);
+    const validCodeIds = new Set(appData.codes.map((code) => code.id));
+    caseAnalysisUiState.matrix.selectedCodeIds = caseAnalysisUiState.matrix.selectedCodeIds.filter((codeId) => validCodeIds.has(codeId));
+    if (caseAnalysisUiState.matrix.selectedCodeIds.length === 0) {
+        caseAnalysisUiState.matrix.selectedCodeIds = topCodes;
+    }
+    if (!caseAnalysisUiState.filter.codeId || !validCodeIds.has(caseAnalysisUiState.filter.codeId)) {
+        caseAnalysisUiState.filter.codeId = topCodes[0] || (appData.codes[0]?.id || '');
+    }
+    const validCaseIds = new Set(appData.cases.map((caseItem) => caseItem.id));
+    caseAnalysisUiState.filter.caseIds = caseAnalysisUiState.filter.caseIds.filter((caseId) => validCaseIds.has(caseId));
+    if (!caseAnalysisUiState.summary.caseId || !validCaseIds.has(caseAnalysisUiState.summary.caseId)) {
+        caseAnalysisUiState.summary.caseId = appData.cases[0]?.id || '';
+    }
+}
+
+function rebuildCaseAnalysisCacheIfNeeded() {
+    if (caseAnalysisCache.revision === appDataRevision) return caseAnalysisCache;
+
+    const caseById = new Map(appData.cases.map((caseItem) => [caseItem.id, caseItem]));
+    const docById = new Map(appData.documents.map((doc) => [doc.id, doc]));
+    const caseDocIds = new Map();
+    const docCaseIds = new Map();
+    const attrValuesByKey = new Map();
+    const caseIdsByAttrPair = new Map();
+
+    appData.cases.forEach((caseItem) => {
+        const docIds = new Set(Array.isArray(caseItem.linkedDocumentIds) ? caseItem.linkedDocumentIds.filter((docId) => docById.has(docId)) : []);
+        caseDocIds.set(caseItem.id, docIds);
+
+        Object.entries(caseItem.attributes || {}).forEach(([rawKey, rawValue]) => {
+            const key = String(rawKey || '').trim();
+            if (!key) return;
+            const value = String(rawValue == null ? '' : rawValue).trim();
+            if (!attrValuesByKey.has(key)) attrValuesByKey.set(key, new Set());
+            attrValuesByKey.get(key).add(value);
+            const pairKey = `${key}\u0000${value}`;
+            if (!caseIdsByAttrPair.has(pairKey)) caseIdsByAttrPair.set(pairKey, new Set());
+            caseIdsByAttrPair.get(pairKey).add(caseItem.id);
+        });
+    });
+
+    appData.documents.forEach((doc) => {
+        const ids = new Set(Array.isArray(doc.caseIds) ? doc.caseIds.filter((caseId) => caseById.has(caseId)) : []);
+        docCaseIds.set(doc.id, ids);
+    });
+
+    caseDocIds.forEach((docIds, caseId) => {
+        docIds.forEach((docId) => {
+            if (!docCaseIds.has(docId)) docCaseIds.set(docId, new Set());
+            docCaseIds.get(docId).add(caseId);
+        });
+    });
+
+    caseAnalysisCache = {
+        revision: appDataRevision,
+        caseById,
+        docById,
+        caseDocIds,
+        docCaseIds,
+        attrValuesByKey,
+        caseIdsByAttrPair
+    };
+    if (caseCodeReferenceCountCache.revision !== appDataRevision) {
+        caseCodeReferenceCountCache.revision = appDataRevision;
+        caseCodeReferenceCountCache.values = new Map();
+    }
+    return caseAnalysisCache;
+}
+
+function getSortedCodesByHierarchy() {
+    const children = new Map();
+    appData.codes.forEach((code) => {
+        const key = code.parentId || '__root__';
+        if (!children.has(key)) children.set(key, []);
+        children.get(key).push(code);
+    });
+    const sortFn = (a, b) => {
+        const aOrder = typeof a.sortOrder === 'number' ? a.sortOrder : Infinity;
+        const bOrder = typeof b.sortOrder === 'number' ? b.sortOrder : Infinity;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        const aCreated = new Date(a.created || 0).getTime();
+        const bCreated = new Date(b.created || 0).getTime();
+        if (aCreated !== bCreated) return aCreated - bCreated;
+        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+    };
+    children.forEach((items) => items.sort(sortFn));
+
+    const rows = [];
+    const walk = (parentId, depth, visited) => {
+        const key = parentId || '__root__';
+        const items = children.get(key) || [];
+        items.forEach((code) => {
+            if (visited.has(code.id)) return;
+            const nextVisited = new Set(visited);
+            nextVisited.add(code.id);
+            rows.push({ codeId: code.id, name: code.name, depth });
+            walk(code.id, depth + 1, nextVisited);
+        });
+    };
+    walk(null, 0, new Set());
+    return rows;
+}
+
+function getSortedCasesByHierarchy(searchQuery = '') {
+    const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
+    const children = new Map();
+    appData.cases.forEach((caseItem) => {
+        const key = caseItem.parentId || '__root__';
+        if (!children.has(key)) children.set(key, []);
+        children.get(key).push(caseItem);
+    });
+    children.forEach((items) => {
+        if (typeof sortCasesByAppOrder === 'function') {
+            const sorted = sortCasesByAppOrder(items);
+            items.length = 0;
+            items.push(...sorted);
+            return;
+        }
+        items.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }));
+    });
+
+    const rows = [];
+    const walk = (parentId, depth, visited) => {
+        const key = parentId || '__root__';
+        const items = children.get(key) || [];
+        items.forEach((caseItem) => {
+            if (visited.has(caseItem.id)) return;
+            const nextVisited = new Set(visited);
+            nextVisited.add(caseItem.id);
+            const include = !normalizedQuery ||
+                String(caseItem.name || '').toLowerCase().includes(normalizedQuery) ||
+                String(caseItem.type || '').toLowerCase().includes(normalizedQuery);
+            if (include) rows.push({ caseId: caseItem.id, name: caseItem.name, type: caseItem.type || '', depth });
+            walk(caseItem.id, depth + 1, nextVisited);
+        });
+    };
+    walk(null, 0, new Set());
+    return rows;
+}
+
+function renderCaseAnalysisInStats() {
+    const host = document.getElementById('caseAnalysisSection');
+    if (!host) return;
+
+    ensureCaseAnalysisDefaults();
+    const cache = rebuildCaseAnalysisCacheIfNeeded();
+    const panelFilterOpen = caseAnalysisUiState.expandedPanels.filter;
+    const panelSummaryOpen = caseAnalysisUiState.expandedPanels.summary;
+    const panelMatrixOpen = caseAnalysisUiState.expandedPanels.matrix;
+    const panelCooccurrenceOpen = caseAnalysisUiState.expandedPanels.cooccurrence;
+
+    const filterResults = getCaseAnalysisFilterResults();
+    const summaryData = getCaseSummaryData(caseAnalysisUiState.summary.caseId);
+    const matrixData = getCaseCodeMatrixData();
+
+    const attrKeys = Array.from(cache.attrValuesByKey.keys())
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const attrValues = caseAnalysisUiState.filter.attrKey
+        ? Array.from(cache.attrValuesByKey.get(caseAnalysisUiState.filter.attrKey) || []).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        : [];
+    const caseRowsForFilter = getSortedCasesByHierarchy(caseAnalysisUiState.filter.caseQuery);
+    const codeRowsForFilter = getSortedCodesByHierarchy().filter((row) => {
+        const q = String(caseAnalysisUiState.filter.codeQuery || '').trim().toLowerCase();
+        if (!q) return true;
+        return String(row.name || '').toLowerCase().includes(q);
+    });
+    const summaryCaseRows = getSortedCasesByHierarchy(caseAnalysisUiState.summary.caseQuery);
+    const matrixCodeRows = getSortedCodesByHierarchy().filter((row) => {
+        const q = String(caseAnalysisUiState.matrix.codeQuery || '').trim().toLowerCase();
+        if (!q) return true;
+        return String(row.name || '').toLowerCase().includes(q);
+    });
+
+    host.innerHTML = `
+        <h3 style="font-size: 16px; margin-bottom: 12px;">Case analysis</h3>
+        <div class="case-analysis-panels">
+            <section class="case-analysis-panel">
+                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('filter')">
+                    <span>Filter coded references</span>
+                    <span>${panelFilterOpen ? '▾' : '▸'}</span>
+                </button>
+                ${panelFilterOpen ? `
+                    <div class="case-analysis-panel-body">
+                        <div class="case-analysis-controls-grid">
+                            <div class="case-analysis-control">
+                                <label class="form-label">Code</label>
+                                <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.codeQuery)}" oninput="updateCaseAnalysisField('filter.codeQuery', this.value)">
+                                <div class="case-analysis-picker-list">
+                                    ${codeRowsForFilter.length === 0
+                                        ? '<div class="empty-state-hint">No matching codes.</div>'
+                                        : codeRowsForFilter.map((row) => `
+                                            <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
+                                                <input type="radio" name="caseAnalysisFilterCode" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.filter.codeId === row.codeId ? 'checked' : ''} onchange="updateCaseAnalysisField('filter.codeId', this.value)">
+                                                <span>${escapeHtml(row.name)}</span>
+                                            </label>
+                                        `).join('')}
+                                </div>
+                            </div>
+                            <div class="case-analysis-control">
+                                <label class="form-label">Case filter</label>
+                                <select class="form-select" onchange="updateCaseAnalysisField('filter.caseMode', this.value)">
+                                    <option value="any" ${caseAnalysisUiState.filter.caseMode === 'any' ? 'selected' : ''}>Any case</option>
+                                    <option value="specific" ${caseAnalysisUiState.filter.caseMode === 'specific' ? 'selected' : ''}>Specific cases...</option>
+                                </select>
+                                ${caseAnalysisUiState.filter.caseMode === 'specific' ? `
+                                    <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.caseQuery)}" oninput="updateCaseAnalysisField('filter.caseQuery', this.value)">
+                                    <div class="case-analysis-picker-list">
+                                        ${caseRowsForFilter.length === 0
+                                            ? '<div class="empty-state-hint">No matching cases.</div>'
+                                            : caseRowsForFilter.map((row) => `
+                                                <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
+                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.filter.caseIds.includes(row.caseId) ? 'checked' : ''} onchange="toggleCaseAnalysisFilterCase('${escapeJsForSingleQuotedString(row.caseId)}', this.checked)">
+                                                    <span>${escapeHtml(row.name)}</span>
+                                                </label>
+                                            `).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                            <div class="case-analysis-control">
+                                <label class="form-label">Attribute filter</label>
+                                <select class="form-select" onchange="updateCaseAnalysisField('filter.attrKey', this.value)">
+                                    <option value="">Any attribute</option>
+                                    ${attrKeys.map((key) => `<option value="${escapeHtmlAttrValue(key)}" ${caseAnalysisUiState.filter.attrKey === key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
+                                </select>
+                                <input class="form-input" list="caseAnalysisAttributeValues" type="text" placeholder="Exact value" value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.attrValue)}" oninput="updateCaseAnalysisField('filter.attrValue', this.value)">
+                                <datalist id="caseAnalysisAttributeValues">
+                                    ${attrValues.map((value) => `<option value="${escapeHtmlAttrValue(value)}"></option>`).join('')}
+                                </datalist>
+                            </div>
+                        </div>
+                        <div class="case-analysis-result-summary">${filterResults.totalCount} matching coded segment${filterResults.totalCount === 1 ? '' : 's'}${filterResults.truncated ? ` (showing first ${filterResults.matches.length})` : ''}</div>
+                        <div class="case-analysis-results-list">
+                            ${filterResults.matches.length === 0
+                                ? '<div class="empty-state-hint">No matches for the selected filters.</div>'
+                                : filterResults.matches.map((match) => `
+                                    <div class="case-analysis-result-row">
+                                        <div class="case-analysis-result-main">
+                                            <div class="case-analysis-result-meta"><strong>${escapeHtml(match.docTitle)}</strong> · ${escapeHtml(match.codeName)}</div>
+                                            <div class="case-analysis-result-snippet">${preserveLineBreaks(escapeHtml(match.snippet))}</div>
+                                        </div>
+                                        <button class="btn btn-secondary case-analysis-go-btn" onclick="goToCaseAnalysisResult('${escapeJsForSingleQuotedString(match.docId)}', '${escapeJsForSingleQuotedString(match.segmentId)}')">Go to</button>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+            </section>
+
+            <section class="case-analysis-panel">
+                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('summary')">
+                    <span>Case summary</span>
+                    <span>${panelSummaryOpen ? '▾' : '▸'}</span>
+                </button>
+                ${panelSummaryOpen ? `
+                    <div class="case-analysis-panel-body">
+                        <div class="case-analysis-controls-grid">
+                            <div class="case-analysis-control">
+                                <label class="form-label">Case</label>
+                                <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.summary.caseQuery)}" oninput="updateCaseAnalysisField('summary.caseQuery', this.value)">
+                                <div class="case-analysis-picker-list">
+                                    ${summaryCaseRows.length === 0
+                                        ? '<div class="empty-state-hint">No matching cases.</div>'
+                                        : summaryCaseRows.map((row) => `
+                                            <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
+                                                <input type="radio" name="caseAnalysisSummaryCase" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.summary.caseId === row.caseId ? 'checked' : ''} onchange="updateCaseAnalysisField('summary.caseId', this.value)">
+                                                <span>${escapeHtml(row.name)}</span>
+                                            </label>
+                                        `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                        ${summaryData ? `
+                            <div class="case-analysis-summary-card">
+                                <div class="case-analysis-summary-title">${escapeHtml(summaryData.name)}${summaryData.type ? ` · ${escapeHtml(summaryData.type)}` : ''}</div>
+                                <div class="case-analysis-summary-meta">
+                                    <span>${summaryData.linkedDocCount} linked document${summaryData.linkedDocCount === 1 ? '' : 's'}</span>
+                                    <span>${summaryData.totalSegments} coded segment${summaryData.totalSegments === 1 ? '' : 's'}</span>
+                                </div>
+                                ${summaryData.attrPreview.length > 0 ? `
+                                    <div class="case-analysis-attr-preview">
+                                        ${summaryData.attrPreview.map((entry) => `<span>${escapeHtml(entry.key)}: ${escapeHtml(entry.value)}</span>`).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                            <div class="case-analysis-results-list">
+                                ${summaryData.topCodes.length === 0
+                                    ? '<div class="empty-state-hint">No coded segments found in linked documents.</div>'
+                                    : summaryData.topCodes.map((row) => `
+                                        <button class="case-analysis-summary-code-row" onclick="openCaseSummaryCodeInFilter('${escapeJsForSingleQuotedString(row.codeId)}', '${escapeJsForSingleQuotedString(summaryData.caseId)}')">
+                                            <span>${escapeHtml(row.codeName)}</span>
+                                            <span>${row.count}</span>
+                                        </button>
+                                    `).join('')}
+                            </div>
+                        ` : '<div class="empty-state-hint">Select a case to see summary details.</div>'}
+                    </div>
+                ` : ''}
+            </section>
+
+            <section class="case-analysis-panel">
+                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('matrix')">
+                    <span>Code × case matrix</span>
+                    <span>${panelMatrixOpen ? '▾' : '▸'}</span>
+                </button>
+                ${panelMatrixOpen ? `
+                    <div class="case-analysis-panel-body">
+                        <div class="case-analysis-controls-grid">
+                            <div class="case-analysis-control">
+                                <label class="form-label">Row dimension</label>
+                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.rowMode', this.value)">
+                                    <option value="cases" ${caseAnalysisUiState.matrix.rowMode === 'cases' ? 'selected' : ''}>Cases</option>
+                                    <option value="attribute" ${caseAnalysisUiState.matrix.rowMode === 'attribute' ? 'selected' : ''}>Case attribute</option>
+                                </select>
+                                ${caseAnalysisUiState.matrix.rowMode === 'attribute' ? `
+                                    <select class="form-select" onchange="updateCaseAnalysisField('matrix.rowAttributeKey', this.value)">
+                                        <option value="">Select attribute key</option>
+                                        ${attrKeys.map((key) => `<option value="${escapeHtmlAttrValue(key)}" ${caseAnalysisUiState.matrix.rowAttributeKey === key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
+                                    </select>
+                                ` : ''}
+                            </div>
+                            <div class="case-analysis-control">
+                                <label class="form-label">Column dimension</label>
+                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.codeMode', this.value)">
+                                    <option value="selected" ${caseAnalysisUiState.matrix.codeMode === 'selected' ? 'selected' : ''}>Selected codes</option>
+                                    <option value="group" ${caseAnalysisUiState.matrix.codeMode === 'group' ? 'selected' : ''}>Code group</option>
+                                </select>
+                                ${caseAnalysisUiState.matrix.codeMode === 'group' ? `
+                                    <select class="form-select" onchange="updateCaseAnalysisField('matrix.codeGroupId', this.value)">
+                                        <option value="">Select code group</option>
+                                        ${matrixCodeRows.filter((row) => appData.codes.some((codeItem) => codeItem.parentId === row.codeId)).map((row) => `<option value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.matrix.codeGroupId === row.codeId ? 'selected' : ''}>${escapeHtml(row.name)}</option>`).join('')}
+                                    </select>
+                                ` : `
+                                    <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.matrix.codeQuery)}" oninput="updateCaseAnalysisField('matrix.codeQuery', this.value)">
+                                    <div class="case-analysis-picker-list">
+                                        ${matrixCodeRows.length === 0
+                                            ? '<div class="empty-state-hint">No matching codes.</div>'
+                                            : matrixCodeRows.map((row) => `
+                                                <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
+                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.matrix.selectedCodeIds.includes(row.codeId) ? 'checked' : ''} onchange="toggleCaseAnalysisMatrixCode('${escapeJsForSingleQuotedString(row.codeId)}', this.checked)">
+                                                    <span>${escapeHtml(row.name)}</span>
+                                                </label>
+                                            `).join('')}
+                                    </div>
+                                `}
+                            </div>
+                            <div class="case-analysis-control">
+                                <label class="form-label">Metric</label>
+                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.metric', this.value)">
+                                    <option value="references" ${caseAnalysisUiState.matrix.metric === 'references' ? 'selected' : ''}>References (count)</option>
+                                </select>
+                            </div>
+                        </div>
+                        ${matrixData.columns.length === 0 || matrixData.rows.length === 0
+                            ? '<div class="empty-state-hint">Choose rows and codes to render the matrix.</div>'
+                            : `
+                                <div class="case-analysis-matrix-wrap">
+                                    <table class="case-analysis-matrix">
+                                        <thead>
+                                            <tr>
+                                                <th>Case</th>
+                                                ${matrixData.columns.map((col) => `<th>${escapeHtml(col.codeName)}</th>`).join('')}
+                                                <th>Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${matrixData.rows.map((row) => `
+                                                <tr>
+                                                    <th>${escapeHtml(row.label)}</th>
+                                                    ${row.cells.map((cell) => `
+                                                        <td><button class="case-analysis-matrix-cell" onclick="openMatrixCellInFilter('${escapeJsForSingleQuotedString(cell.codeId)}', '${escapeJsForSingleQuotedString(cell.caseIds.join(','))}')">${cell.count}</button></td>
+                                                    `).join('')}
+                                                    <td class="case-analysis-matrix-total">${row.total}</td>
+                                                </tr>
+                                            `).join('')}
+                                            <tr class="case-analysis-matrix-footer">
+                                                <th>Total</th>
+                                                ${matrixData.columnTotals.map((count) => `<td class="case-analysis-matrix-total">${count}</td>`).join('')}
+                                                <td class="case-analysis-matrix-total">${matrixData.grandTotal}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            `}
+                    </div>
+                ` : ''}
+            </section>
+
+            <section class="case-analysis-panel">
+                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('cooccurrence')">
+                    <span>Code co-occurrence</span>
+                    <span>${panelCooccurrenceOpen ? '▾' : '▸'}</span>
+                </button>
+                ${panelCooccurrenceOpen ? `
+                    <div class="case-analysis-panel-body">
+                        <div class="cooc-layout">
+                            <div class="cooc-matrix-wrap">
+                                <div id="cooccurrenceMatrix"></div>
+                            </div>
+                            <div class="cooc-side">
+                                <div class="cooc-controls">
+                                    <select id="coocCodeA" class="form-select" onchange="updateCaseAnalysisCooccurrenceSelection('A', this.value)"></select>
+                                    <select id="coocCodeB" class="form-select" onchange="updateCaseAnalysisCooccurrenceSelection('B', this.value)"></select>
+                                </div>
+                                <div id="cooccurrenceOverlaps" class="cooc-overlaps"></div>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            </section>
+        </div>
+    `;
+
+    if (panelCooccurrenceOpen) renderCooccurrenceMatrix();
+}
+
+function toggleCaseAnalysisPanel(panelKey) {
+    if (!Object.prototype.hasOwnProperty.call(caseAnalysisUiState.expandedPanels, panelKey)) return;
+    caseAnalysisUiState.expandedPanels[panelKey] = !caseAnalysisUiState.expandedPanels[panelKey];
+    renderCaseAnalysisInStats();
+}
+
+function updateCaseAnalysisCooccurrenceSelection(which, value) {
+    const normalized = String(value || '');
+    if (which === 'A') caseAnalysisUiState.cooccurrence.codeAId = normalized;
+    if (which === 'B') caseAnalysisUiState.cooccurrence.codeBId = normalized;
+    renderCooccurrenceOverlaps();
+}
+
+function updateCaseAnalysisField(path, value) {
+    const parts = String(path || '').split('.');
+    if (parts.length !== 2) return;
+    const [group, key] = parts;
+    if (!caseAnalysisUiState[group] || !Object.prototype.hasOwnProperty.call(caseAnalysisUiState[group], key)) return;
+    caseAnalysisUiState[group][key] = String(value == null ? '' : value);
+
+    if (group === 'filter' && key === 'caseMode' && caseAnalysisUiState.filter.caseMode !== 'specific') {
+        caseAnalysisUiState.filter.caseIds = [];
+        caseAnalysisUiState.filter.caseQuery = '';
+    }
+    if (group === 'filter' && key === 'attrKey') {
+        caseAnalysisUiState.filter.attrValue = '';
+    }
+    if (group === 'matrix' && key === 'rowMode' && caseAnalysisUiState.matrix.rowMode !== 'attribute') {
+        caseAnalysisUiState.matrix.rowAttributeKey = '';
+    }
+
+    renderCaseAnalysisInStats();
+}
+
+function toggleCaseAnalysisFilterCase(caseId, checked) {
+    const next = new Set(caseAnalysisUiState.filter.caseIds);
+    if (checked) next.add(caseId);
+    else next.delete(caseId);
+    caseAnalysisUiState.filter.caseIds = Array.from(next);
+    renderCaseAnalysisInStats();
+}
+
+function toggleCaseAnalysisMatrixCode(codeId, checked) {
+    const next = new Set(caseAnalysisUiState.matrix.selectedCodeIds);
+    if (checked) next.add(codeId);
+    else next.delete(codeId);
+    caseAnalysisUiState.matrix.selectedCodeIds = Array.from(next);
+    renderCaseAnalysisInStats();
+}
+
+function getDocIdSetForCaseIds(caseIds) {
+    const cache = rebuildCaseAnalysisCacheIfNeeded();
+    const out = new Set();
+    caseIds.forEach((caseId) => {
+        const docs = cache.caseDocIds.get(caseId);
+        if (!docs) return;
+        docs.forEach((docId) => out.add(docId));
+    });
+    return out;
+}
+
+function getCaseIdsFromAttributeFilter(key, value) {
+    if (!key || !value) return null;
+    const cache = rebuildCaseAnalysisCacheIfNeeded();
+    return new Set(cache.caseIdsByAttrPair.get(`${key}\u0000${value}`) || []);
+}
+
+function getCaseAnalysisFilterDocSet() {
+    const specificCaseSet = caseAnalysisUiState.filter.caseMode === 'specific'
+        ? new Set(caseAnalysisUiState.filter.caseIds)
+        : null;
+    const attrCaseSet = getCaseIdsFromAttributeFilter(
+        caseAnalysisUiState.filter.attrKey,
+        caseAnalysisUiState.filter.attrValue
+    );
+
+    let effectiveCaseSet = null;
+    if (specificCaseSet && attrCaseSet) {
+        effectiveCaseSet = new Set(Array.from(specificCaseSet).filter((caseId) => attrCaseSet.has(caseId)));
+    } else if (specificCaseSet) {
+        effectiveCaseSet = specificCaseSet;
+    } else if (attrCaseSet) {
+        effectiveCaseSet = attrCaseSet;
+    }
+
+    if (!effectiveCaseSet) return null;
+    return getDocIdSetForCaseIds(Array.from(effectiveCaseSet));
+}
+
+function getCaseAnalysisFilterResults() {
+    const codeId = caseAnalysisUiState.filter.codeId;
+    if (!codeId) {
+        return { matches: [], totalCount: 0, truncated: false };
+    }
+    const code = appData.codes.find((item) => item.id === codeId);
+    if (!code) return { matches: [], totalCount: 0, truncated: false };
+
+    const allowedDocSet = getCaseAnalysisFilterDocSet();
+    const allMatches = getSegmentsForCode(codeId).filter((segment) => {
+        if (!allowedDocSet) return true;
+        return allowedDocSet.has(segment.docId);
+    });
+
+    allMatches.sort((a, b) => {
+        const aDoc = appData.documents.find((doc) => doc.id === a.docId)?.title || '';
+        const bDoc = appData.documents.find((doc) => doc.id === b.docId)?.title || '';
+        const titleCmp = aDoc.localeCompare(bDoc, undefined, { sensitivity: 'base' });
+        if (titleCmp !== 0) return titleCmp;
+        return Number(a.startIndex || 0) - Number(b.startIndex || 0);
+    });
+
+    const limited = allMatches.slice(0, caseAnalysisUiState.filter.resultLimit).map((segment) => {
+        const doc = appData.documents.find((d) => d.id === segment.docId);
+        const snippet = String(segment.text || '').trim() || '[No text available]';
+        return {
+            segmentId: segment.id,
+            docId: segment.docId,
+            docTitle: doc?.title || 'Unknown document',
+            codeId,
+            codeName: code.name,
+            snippet: snippet.length > 240 ? `${snippet.slice(0, 237)}...` : snippet
+        };
+    });
+
+    return {
+        matches: limited,
+        totalCount: allMatches.length,
+        truncated: allMatches.length > limited.length
+    };
+}
+
+function getCaseSummaryData(caseId) {
+    const caseItem = appData.cases.find((item) => item.id === caseId);
+    if (!caseItem) return null;
+
+    const linkedDocIds = Array.isArray(caseItem.linkedDocumentIds) ? caseItem.linkedDocumentIds : [];
+    const linkedDocIdSet = new Set(linkedDocIds);
+    const codeCounts = new Map();
+    let totalSegments = 0;
+
+    linkedDocIds.forEach((docId) => {
+        const segments = getSegmentsForDoc(docId);
+        totalSegments += segments.length;
+        segments.forEach((segment) => {
+            (segment.codeIds || []).forEach((codeId) => {
+                codeCounts.set(codeId, (codeCounts.get(codeId) || 0) + 1);
+            });
+        });
+    });
+
+    const topCodes = Array.from(codeCounts.entries())
+        .map(([codeId, count]) => {
+            const code = appData.codes.find((item) => item.id === codeId);
+            return code ? { codeId, codeName: code.name, count } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.codeName.localeCompare(b.codeName, undefined, { sensitivity: 'base' });
+        })
+        .slice(0, 15);
+
+    const attrPreview = Object.entries(caseItem.attributes || {})
+        .slice(0, 3)
+        .map(([key, value]) => ({ key, value: String(value == null ? '' : value) }));
+
+    return {
+        caseId: caseItem.id,
+        name: caseItem.name,
+        type: caseItem.type || '',
+        attrPreview,
+        linkedDocCount: linkedDocIdSet.size,
+        totalSegments,
+        topCodes
+    };
+}
+
+function getCaseCodeReferenceCount(caseId, codeId) {
+    if (!caseId || !codeId) return 0;
+    rebuildCaseAnalysisCacheIfNeeded();
+    const cacheKey = `${caseId}\u0000${codeId}`;
+    if (caseCodeReferenceCountCache.revision === appDataRevision && caseCodeReferenceCountCache.values.has(cacheKey)) {
+        return caseCodeReferenceCountCache.values.get(cacheKey) || 0;
+    }
+
+    const docSet = getDocIdSetForCaseIds([caseId]);
+    let count = 0;
+    getSegmentsForCode(codeId).forEach((segment) => {
+        if (docSet.has(segment.docId)) count += 1;
+    });
+    caseCodeReferenceCountCache.values.set(cacheKey, count);
+    return count;
+}
+
+function getCodeColumnsForMatrix() {
+    if (caseAnalysisUiState.matrix.codeMode === 'group') {
+        const rootId = caseAnalysisUiState.matrix.codeGroupId;
+        const root = appData.codes.find((code) => code.id === rootId);
+        if (!root) return [];
+        let codeIds = [rootId];
+        if (typeof getDescendantCodeIds === 'function') {
+            codeIds = codeIds.concat(getDescendantCodeIds(rootId));
+        }
+        return Array.from(new Set(codeIds))
+            .map((codeId) => appData.codes.find((code) => code.id === codeId))
+            .filter(Boolean)
+            .map((code) => ({ codeId: code.id, codeName: code.name }));
+    }
+
+    const valid = new Set(appData.codes.map((code) => code.id));
+    return caseAnalysisUiState.matrix.selectedCodeIds
+        .filter((codeId) => valid.has(codeId))
+        .map((codeId) => appData.codes.find((code) => code.id === codeId))
+        .filter(Boolean)
+        .map((code) => ({ codeId: code.id, codeName: code.name }));
+}
+
+function getMatrixRowBuckets() {
+    if (caseAnalysisUiState.matrix.rowMode === 'attribute') {
+        const key = caseAnalysisUiState.matrix.rowAttributeKey;
+        if (!key) return [];
+        const groups = new Map();
+        appData.cases.forEach((caseItem) => {
+            const rawValue = caseItem.attributes && Object.prototype.hasOwnProperty.call(caseItem.attributes, key)
+                ? caseItem.attributes[key]
+                : '(missing)';
+            const value = String(rawValue == null ? '(missing)' : rawValue).trim() || '(missing)';
+            if (!groups.has(value)) groups.set(value, []);
+            groups.get(value).push(caseItem.id);
+        });
+        return Array.from(groups.entries())
+            .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+            .map(([label, caseIds]) => ({ label, caseIds }));
+    }
+
+    return getSortedCasesByHierarchy()
+        .map((row) => ({
+            label: `${row.depth > 0 ? `${' '.repeat(row.depth * 2)}↳ ` : ''}${row.name}`,
+            caseIds: [row.caseId]
+        }));
+}
+
+function getMatrixCodeDocCountMap(columns) {
+    const map = new Map();
+    columns.forEach((col) => {
+        const perDoc = new Map();
+        getSegmentsForCode(col.codeId).forEach((segment) => {
+            const docId = segment.docId;
+            perDoc.set(docId, (perDoc.get(docId) || 0) + 1);
+        });
+        map.set(col.codeId, perDoc);
+    });
+    return map;
+}
+
+function getCaseCodeMatrixData() {
+    const columns = getCodeColumnsForMatrix();
+    const rowBuckets = getMatrixRowBuckets();
+    if (columns.length === 0 || rowBuckets.length === 0) {
+        return { columns: [], rows: [], columnTotals: [], grandTotal: 0 };
+    }
+
+    const perCodePerDoc = getMatrixCodeDocCountMap(columns);
+    const rows = [];
+    const columnTotals = Array(columns.length).fill(0);
+    let grandTotal = 0;
+
+    rowBuckets.forEach((bucket) => {
+        const docSet = getDocIdSetForCaseIds(bucket.caseIds);
+        const cells = columns.map((col, idx) => {
+            let count = 0;
+            if (caseAnalysisUiState.matrix.rowMode === 'cases' && bucket.caseIds.length === 1) {
+                count = getCaseCodeReferenceCount(bucket.caseIds[0], col.codeId);
+            } else {
+                const perDoc = perCodePerDoc.get(col.codeId) || new Map();
+                docSet.forEach((docId) => {
+                    count += (perDoc.get(docId) || 0);
+                });
+            }
+            columnTotals[idx] += count;
+            grandTotal += count;
+            return {
+                codeId: col.codeId,
+                caseIds: bucket.caseIds,
+                count
+            };
+        });
+        const total = cells.reduce((sum, cell) => sum + cell.count, 0);
+        rows.push({
+            label: bucket.label,
+            caseIds: bucket.caseIds,
+            cells,
+            total
+        });
+    });
+
+    return { columns, rows, columnTotals, grandTotal };
+}
+
+function goToCaseAnalysisResult(docId, segmentId) {
+    closeStatsModal();
+    goToSegmentLocation(docId, segmentId);
+}
+
+function openCaseSummaryCodeInFilter(codeId, caseId) {
+    caseAnalysisUiState.filter.codeId = codeId;
+    caseAnalysisUiState.filter.caseMode = 'specific';
+    caseAnalysisUiState.filter.caseIds = [caseId];
+    caseAnalysisUiState.expandedPanels.filter = true;
+    caseAnalysisUiState.expandedPanels.summary = false;
+    renderCaseAnalysisInStats();
+}
+
+function openMatrixCellInFilter(codeId, caseIdsCsv) {
+    const caseIds = String(caseIdsCsv || '')
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean);
+    caseAnalysisUiState.filter.codeId = codeId;
+    if (caseIds.length > 0) {
+        caseAnalysisUiState.filter.caseMode = 'specific';
+        caseAnalysisUiState.filter.caseIds = caseIds;
+    } else {
+        caseAnalysisUiState.filter.caseMode = 'any';
+        caseAnalysisUiState.filter.caseIds = [];
+    }
+    caseAnalysisUiState.expandedPanels.filter = true;
+    caseAnalysisUiState.expandedPanels.matrix = false;
+    renderCaseAnalysisInStats();
 }
 
 let lastHealthCheckReport = null;
@@ -999,18 +1838,6 @@ function applySelectedHealthFixes() {
     renderProjectHealthCheckModal(lastHealthCheckReport);
 }
 
-function openCooccurrenceModal() {
-    const modal = document.getElementById('cooccurrenceModal');
-    if (!modal) return;
-    renderCooccurrenceMatrix();
-    modal.classList.add('show');
-}
-
-function closeCooccurrenceModal() {
-    const modal = document.getElementById('cooccurrenceModal');
-    if (modal) modal.classList.remove('show');
-}
-
 function getTopCodesForCooccurrence(limit = 24) {
     return appData.codes
         .map(code => ({ code, count: getCodeSegmentCountFast(code.id) }))
@@ -1039,8 +1866,16 @@ function renderCooccurrenceMatrix() {
         .join('');
     selectA.innerHTML = codeOptions;
     selectB.innerHTML = codeOptions;
+    if (caseAnalysisUiState.cooccurrence.codeAId && codes.some((c) => c.id === caseAnalysisUiState.cooccurrence.codeAId)) {
+        selectA.value = caseAnalysisUiState.cooccurrence.codeAId;
+    }
+    if (caseAnalysisUiState.cooccurrence.codeBId && codes.some((c) => c.id === caseAnalysisUiState.cooccurrence.codeBId)) {
+        selectB.value = caseAnalysisUiState.cooccurrence.codeBId;
+    }
     if (!selectA.value && codes[0]) selectA.value = codes[0].id;
     if (!selectB.value && codes[1]) selectB.value = codes[1].id;
+    caseAnalysisUiState.cooccurrence.codeAId = selectA.value || '';
+    caseAnalysisUiState.cooccurrence.codeBId = selectB.value || '';
 
     const indexById = new Map(codes.map((c, idx) => [c.id, idx]));
     const matrix = Array.from({ length: codes.length }, () => Array(codes.length).fill(0));
@@ -1066,7 +1901,7 @@ function renderCooccurrenceMatrix() {
                 html += '<td>—</td>';
             } else {
                 const v = matrix[i][j];
-                html += `<td class="cooc-cell" data-code-a="${escapeHtmlAttrValue(rowCode.id)}" data-code-b="${escapeHtmlAttrValue(codes[j].id)}" title="Find overlaps">${v}</td>`;
+                html += `<td class="cooc-cell" title="Find overlaps" onclick="selectCooccurrencePair('${escapeJsForSingleQuotedString(rowCode.id)}','${escapeJsForSingleQuotedString(codes[j].id)}')">${v}</td>`;
             }
         }
         html += '</tr>';
@@ -1082,6 +1917,8 @@ function selectCooccurrencePair(codeAId, codeBId) {
     if (!selectA || !selectB) return;
     selectA.value = codeAId;
     selectB.value = codeBId;
+    caseAnalysisUiState.cooccurrence.codeAId = selectA.value || '';
+    caseAnalysisUiState.cooccurrence.codeBId = selectB.value || '';
     renderCooccurrenceOverlaps();
 }
 
@@ -1092,6 +1929,8 @@ function renderCooccurrenceOverlaps() {
     if (!selectA || !selectB || !out) return;
     const codeAId = selectA.value;
     const codeBId = selectB.value;
+    caseAnalysisUiState.cooccurrence.codeAId = codeAId || '';
+    caseAnalysisUiState.cooccurrence.codeBId = codeBId || '';
     if (!codeAId || !codeBId || codeAId === codeBId) {
         out.innerHTML = '<p style="color: var(--text-secondary); margin: 4px;">Select two different codes.</p>';
         return;
@@ -1121,7 +1960,7 @@ function renderCooccurrenceOverlaps() {
             const doc = appData.documents.find(d => d.id === seg.docId);
             const loc = seg.pdfRegion ? `Page ${seg.pdfRegion.pageNum || '?'}` : `Char ${seg.startIndex || 0}`;
             const snippet = escapeHtml(String(seg.text || '').slice(0, 220));
-            return `<div class="cooc-overlap-item" data-doc-id="${escapeHtmlAttrValue(seg.docId)}" data-segment-id="${escapeHtmlAttrValue(seg.id)}">
+            return `<div class="cooc-overlap-item" onclick="goToCaseAnalysisResult('${escapeJsForSingleQuotedString(seg.docId)}','${escapeJsForSingleQuotedString(seg.id)}')">
                 <div><strong>${escapeHtml(doc?.title || 'Document')}</strong> · ${escapeHtml(loc)}</div>
                 <div>${snippet}${snippet.length >= 220 ? '…' : ''}</div>
             </div>`;

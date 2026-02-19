@@ -163,7 +163,6 @@ function setupStaticActionBindings() {
             case 'manualSaveAsAndCloseHeaderDropdown': manualSave(true); closeHeaderDropdown(); break;
             case 'openStatsModalAndCloseHeaderDropdown': openStatsModal(); closeHeaderDropdown(); break;
             case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
-            case 'openCooccurrenceModalAndCloseHeaderDropdown': openCooccurrenceModal(); closeHeaderDropdown(); break;
             case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
             case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
             case 'openCodeModal': openCodeModal(); break;
@@ -185,7 +184,6 @@ function setupStaticActionBindings() {
             case 'closeStatsModal': closeStatsModal(); break;
             case 'closeHealthCheckModal': closeHealthCheckModal(); break;
             case 'applySelectedHealthFixes': applySelectedHealthFixes(); break;
-            case 'closeCooccurrenceModal': closeCooccurrenceModal(); break;
             case 'closeSearchResults': closeSearchResults(); break;
             case 'inPageSearchPrev': inPageSearchPrev(); break;
             case 'inPageSearchNext': inPageSearchNext(); break;
@@ -216,7 +214,6 @@ function setupStaticActionBindings() {
         if (!el) return;
         switch (el.dataset.action) {
             case 'importProjectChange': importProject(event); break;
-            case 'renderCooccurrenceOverlaps': renderCooccurrenceOverlaps(); break;
             case 'toggleCodeColorPaletteContrast': toggleCodeColorPaletteContrast(event.target.checked); break;
             default: break;
         }
@@ -301,12 +298,6 @@ function closeUiOnEscape() {
     if (isModalOpen('statsModal')) {
         if (typeof closeStatsModal === 'function') closeStatsModal();
         else document.getElementById('statsModal').classList.remove('show');
-        return true;
-    }
-
-    if (isModalOpen('cooccurrenceModal')) {
-        if (typeof closeCooccurrenceModal === 'function') closeCooccurrenceModal();
-        else document.getElementById('cooccurrenceModal').classList.remove('show');
         return true;
     }
 

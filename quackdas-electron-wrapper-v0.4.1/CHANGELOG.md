@@ -2173,3 +2173,133 @@ Files touched:
 - `package.json`
 - `package-lock.json`
 - `CHANGELOG.md`
+
+## Version 0.6.0-build-2026-02-19cm
+Date: 2026-02-19
+
+What changed:
+- Extended the Statistics Dashboard with a new **Case Analysis** section containing three collapsible panels:
+  - `Filter coded references`
+  - `Case summary`
+  - `Code × Case matrix`
+- Implemented NVivo-like retrieval semantics using case-document links:
+  - Code retrieval filtered by specific cases and/or case attribute exact match.
+  - Case + attribute filters are intersected when both are set.
+  - No case/attribute filter falls back to normal code retrieval behaviour.
+- Added click-through results list in the filter panel:
+  - shows document, snippet, code, and `Go to` action opening the exact coded segment.
+- Added case summary tooling:
+  - searchable hierarchical case selector,
+  - case metadata header (name/type/attributes preview),
+  - linked document + coded segment totals,
+  - top codes list with click-to-prefill retrieval filtering.
+- Added Code × Case matrix tooling:
+  - rows by individual cases or grouped by case attribute value (with `(missing)` bucket),
+  - columns by selected codes or a code group (hierarchy-based),
+  - clickable cells that prefill the retrieval panel for underlying extracts,
+  - totals row/column.
+- Added lightweight indexing/caching for case analysis:
+  - cached case/doc/attribute mappings per revision,
+  - cached `(caseId, codeId)` reference counts with automatic invalidation on state revision changes.
+- Added dedicated stats modal container and new styles for pickers, result lists, and matrix tables while preserving existing dashboard cards/charts.
+
+Why (one line):
+- To turn Statistics into a practical NVivo-like analysis/query surface where aggregated case/code counts always drill through to underlying coded extracts.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.1-build-2026-02-19cn
+Date: 2026-02-19
+
+What changed:
+- Increased Statistics Dashboard usable width and viewport use:
+  - `#statsModal` now opens at near-full width (`96vw`, max `1560px`) with scrollable height (`92vh`).
+- Resized dashboard contents for medium/large datasets:
+  - summary cards now render in a wider five-column layout on desktop,
+  - chart label column widened substantially to reduce truncation and improve readability.
+- Improved Case Analysis panel usability in the Statistics view:
+  - controls grid now auto-fits with sensible minimum widths,
+  - picker list height increased for longer code/case lists,
+  - results list height increased to show more rows per panel.
+- Added responsive fallbacks for smaller screens so the expanded desktop layout still degrades cleanly.
+
+Why (one line):
+- To make the Statistics and Case Analysis tools practically usable with medium-sized datasets by reducing cramped layouts and truncation.
+
+Files touched:
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.2-build-2026-02-19co
+Date: 2026-02-19
+
+What changed:
+- Updated Statistics dashboard chart lists to show only top 4 items by default:
+  - `Most used codes` now shows top 4 entries initially.
+  - `Coding progress by document` now shows top 4 entries initially.
+- Added a toggle button under each chart list:
+  - `Show more` expands to full list.
+  - `Show less` collapses back to top 4.
+- Updated Statistics dashboard heading and label capitalisation to initial-letter style:
+  - modal title, chart headings, and Case analysis heading text updated,
+  - stats card labels now use sentence-style casing,
+  - form labels inside the Statistics dashboard no longer force uppercase.
+
+Why (one line):
+- To reduce visual overload in stats lists and align heading/label casing with the requested initial-letter style.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.3-build-2026-02-19cp
+Date: 2026-02-19
+
+What changed:
+- Renamed the Statistics dashboard modal title to `Analysis dashboard`.
+- Renamed the corresponding header dropdown menu item from `Statistics` to `Analysis`.
+- Removed the leading `+` character from `New project` in the same header dropdown menu.
+
+Why (one line):
+- To align naming with the new analysis-focused dashboard purpose and simplify the menu label styling.
+
+Files touched:
+- `index.html`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+## Version 0.6.4-build-2026-02-19cq
+Date: 2026-02-19
+
+What changed:
+- Moved `Code co-occurrence` into the `Analysis dashboard` as an embedded collapsible panel under Case analysis.
+- Removed `Code co-occurrence` as a separate header menu option.
+- Removed the standalone Code Co-occurrence modal/overlay from the app shell.
+- Updated co-occurrence interactions to work inline in Analysis dashboard:
+  - matrix cell click selects code pairs directly,
+  - overlap rows click through to source segment via existing `Go to` behaviour.
+- Removed now-obsolete app action bindings for opening/closing separate co-occurrence modal.
+
+Why (one line):
+- To consolidate analysis workflows in one place and eliminate duplicate modal navigation.
+
+Files touched:
+- `index.html`
+- `js/ui.js`
+- `js/app.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
