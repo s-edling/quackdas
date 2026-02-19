@@ -41,7 +41,7 @@ function renderDocuments() {
         const memoCount = getMemoCountForTarget('document', doc.id);
         const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭${memoCount}</span>` : '';
         const metaPreview = doc.metadata?.participantId ? ` • ID: ${escapeHtml(doc.metadata.participantId)}` : '';
-        const indentStyle = indent > 0 ? `style="padding-left: ${12 + indent * 16}px;"` : '';
+        const indentStyle = indent > 0 ? `style="margin-left: ${12 + indent * 16}px;"` : '';
         const isPdf = doc.type === 'pdf';
         const typeIndicator = isPdf ? '<span class="doc-type-badge" title="PDF document">PDF</span>' : '';
         const contentInfo = isPdf ? `${doc.pdfPages?.length || '?'} pages` : `${doc.content.length} chars`;

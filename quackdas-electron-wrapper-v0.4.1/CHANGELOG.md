@@ -2324,3 +2324,23 @@ Files touched:
 - `package.json`
 - `package-lock.json`
 - `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19cs
+Date: 2026-02-19
+
+What changed:
+- Changed folder/subfolder document indentation to apply to the full card footprint instead of text inside the card:
+  - document tree cards now use left `margin` indentation by depth,
+  - internal card content no longer gets extra left padding from folder depth.
+- Removed bold styling from document names in document cards:
+  - title font weight changed to normal (`400`).
+
+Why (one line):
+- To make hierarchy visually cleaner by offsetting card boundaries themselves and to reduce visual heaviness in document titles.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
