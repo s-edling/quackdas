@@ -9,6 +9,58 @@ let projectBackupTimer = null;
 let projectBackupInFlight = false;
 let lastBackedUpRevision = 0;
 let cooccurrenceDelegationBound = false;
+let qdpxExportCache = {
+    projectRef: null,
+    revision: null,
+    base64: null,
+    inFlight: null
+};
+
+function ensureQdpxExportCacheContext() {
+    if (qdpxExportCache.projectRef === appData) return;
+    qdpxExportCache.projectRef = appData;
+    qdpxExportCache.revision = null;
+    qdpxExportCache.base64 = null;
+    qdpxExportCache.inFlight = null;
+}
+
+async function getProjectQdpxBase64(options = {}) {
+    const providedBase64 = options.base64 || null;
+    if (providedBase64) return providedBase64;
+    if (typeof exportToQdpx !== 'function') {
+        throw new Error('QDPX export not available');
+    }
+
+    ensureQdpxExportCacheContext();
+    const revision = (typeof appDataRevision === 'number') ? appDataRevision : -1;
+
+    if (!options.force && qdpxExportCache.base64 && qdpxExportCache.revision === revision) {
+        return qdpxExportCache.base64;
+    }
+
+    if (qdpxExportCache.inFlight && qdpxExportCache.revision === revision) {
+        return qdpxExportCache.inFlight;
+    }
+
+    qdpxExportCache.revision = revision;
+    qdpxExportCache.inFlight = (async () => {
+        const blob = await exportToQdpx();
+        const arrayBuffer = await blob.arrayBuffer();
+        const base64 = arrayBufferToBase64(arrayBuffer);
+        if (qdpxExportCache.projectRef === appData && qdpxExportCache.revision === revision) {
+            qdpxExportCache.base64 = base64;
+        }
+        return base64;
+    })();
+
+    try {
+        return await qdpxExportCache.inFlight;
+    } finally {
+        if (qdpxExportCache.projectRef === appData && qdpxExportCache.revision === revision) {
+            qdpxExportCache.inFlight = null;
+        }
+    }
+}
 
 function initCooccurrenceDelegatedHandlers() {
     if (cooccurrenceDelegationBound) return;
@@ -32,7 +84,7 @@ function initCooccurrenceDelegatedHandlers() {
 }
 
 function hasAnyProjectData() {
-    return (appData.documents.length + appData.codes.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
+    return (appData.documents.length + appData.codes.length + appData.cases.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
 }
 
 function scheduleProjectBackup(reason = 'state-change') {
@@ -55,13 +107,7 @@ async function createProjectBackup(reason = 'auto', options = {}) {
 
     projectBackupInFlight = true;
     try {
-        let base64 = options.base64 || null;
-        if (!base64) {
-            if (typeof exportToQdpx !== 'function') return false;
-            const blob = await exportToQdpx();
-            const arrayBuffer = await blob.arrayBuffer();
-            base64 = arrayBufferToBase64(arrayBuffer);
-        }
+        const base64 = await getProjectQdpxBase64({ base64: options.base64 });
 
         const result = await window.electronAPI.createProjectBackup(base64, {
             reason,
@@ -117,7 +163,7 @@ function closeHeaderDropdownOnOutsideClick(event) {
 }
 
 function hasProjectDataLoaded() {
-    return (appData.documents.length + appData.codes.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
+    return (appData.documents.length + appData.codes.length + appData.cases.length + appData.segments.length + appData.folders.length + appData.memos.length) > 0;
 }
 
 function updateHeaderPrimaryAction() {
@@ -340,6 +386,7 @@ function openDocumentContextMenu(docId, event) {
     const items = [
         { label: `Rename document: ${doc.title}`, onClick: () => renameDocument(docId) },
         { label: 'Move to folder...', onClick: () => openMoveToFolderModal(docId) },
+        { label: 'Assign to case...', onClick: () => openDocumentAssignCasesModal(docId) },
         { label: `Delete document: ${doc.title}`, onClick: () => deleteDocument(docId), danger: true }
     ];
     if (doc.type === 'pdf' && typeof extractPdfTextAsDocument === 'function') {
@@ -572,25 +619,18 @@ async function manualSave(saveAs = false) {
     // If running inside Electron wrapper, use native save with QDPX format
     if (window.electronAPI && window.electronAPI.saveProject) {
         try {
-            // Generate QDPX blob
-            if (typeof exportToQdpx !== 'function') {
-                throw new Error('QDPX export not available');
-            }
-            
-            const blob = await exportToQdpx();
-            const arrayBuffer = await blob.arrayBuffer();
-            const base64 = arrayBufferToBase64(arrayBuffer);
+            const base64 = await getProjectQdpxBase64();
             
             const result = await window.electronAPI.saveProject({
                 qdpxBase64: base64
             }, { saveAs, format: 'qdpx' });
             if (result && result.ok) {
+                if (typeof createProjectBackup === 'function') {
+                    createProjectBackup(saveAs ? 'manual-save-as' : 'manual-save', { base64 }).catch(() => {});
+                }
                 appData.lastSaveTime = new Date().toISOString();
                 appData.hasUnsavedChanges = false;
                 updateSaveStatus();
-                if (typeof createProjectBackup === 'function') {
-                    createProjectBackup(saveAs ? 'manual-save-as' : 'manual-save', { force: true, base64 }).catch(() => {});
-                }
                 return;
             }
             // If user cancelled, do nothing.
@@ -759,7 +799,14 @@ function getHealthIssueReport() {
         if (!memo.targetId) return false;
         if (memo.type === 'document') return !docIds.has(memo.targetId);
         if (memo.type === 'code') return !codeIds.has(memo.targetId);
-        if (memo.type === 'segment') return !segmentIds.has(memo.targetId);
+        if (memo.type === 'segment') {
+            if (!segmentIds.has(memo.targetId)) return true;
+            const memoCodeId = String(memo.codeId || '').trim();
+            if (!memoCodeId) return false;
+            if (!codeIds.has(memoCodeId)) return true;
+            const segment = appData.segments.find(seg => seg.id === memo.targetId);
+            return !(segment && Array.isArray(segment.codeIds) && segment.codeIds.includes(memoCodeId));
+        }
         return false;
     });
 
@@ -835,7 +882,7 @@ function renderProjectHealthCheckModal(report) {
     } else {
         fixesEl.innerHTML = report.fixes.map((fix, idx) => `
             <label class="health-fix-item">
-                <input type="checkbox" class="health-fix-checkbox" value="${escapeHtml(fix.id)}" ${idx === 0 ? 'checked' : ''}>
+                <input type="checkbox" class="health-fix-checkbox" value="${escapeHtmlAttrValue(fix.id)}" ${idx === 0 ? 'checked' : ''}>
                 <span>${escapeHtml(fix.label)}</span>
             </label>
         `).join('');
@@ -912,7 +959,14 @@ function applySelectedHealthFixes() {
             if (!memo.targetId) return true;
             if (memo.type === 'document') return appData.documents.some(doc => doc.id === memo.targetId);
             if (memo.type === 'code') return appData.codes.some(code => code.id === memo.targetId);
-            if (memo.type === 'segment') return appData.segments.some(seg => seg.id === memo.targetId);
+            if (memo.type === 'segment') {
+                const segment = appData.segments.find(seg => seg.id === memo.targetId);
+                if (!segment) return false;
+                const memoCodeId = String(memo.codeId || '').trim();
+                if (!memoCodeId) return true;
+                if (!appData.codes.some(code => code.id === memoCodeId)) return false;
+                return Array.isArray(segment.codeIds) && segment.codeIds.includes(memoCodeId);
+            }
             return true;
         });
         changed += (before - appData.memos.length);
@@ -981,7 +1035,7 @@ function renderCooccurrenceMatrix() {
     }
 
     const codeOptions = '<option value="">Select code</option>' + codes
-        .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
+        .map(c => `<option value="${escapeHtmlAttrValue(c.id)}">${escapeHtml(c.name)}</option>`)
         .join('');
     selectA.innerHTML = codeOptions;
     selectB.innerHTML = codeOptions;
@@ -1003,10 +1057,10 @@ function renderCooccurrenceMatrix() {
     });
 
     let html = '<table class="cooc-table"><thead><tr><th>Code</th>';
-    html += codes.map(c => `<th title="${escapeHtml(c.name)}">${escapeHtml(c.name).slice(0, 18)}</th>`).join('');
+    html += codes.map(c => `<th title="${escapeHtmlAttrValue(c.name)}">${escapeHtml(c.name).slice(0, 18)}</th>`).join('');
     html += '</tr></thead><tbody>';
     codes.forEach((rowCode, i) => {
-        html += `<tr><th title="${escapeHtml(rowCode.name)}">${escapeHtml(rowCode.name).slice(0, 18)}</th>`;
+        html += `<tr><th title="${escapeHtmlAttrValue(rowCode.name)}">${escapeHtml(rowCode.name).slice(0, 18)}</th>`;
         for (let j = 0; j < codes.length; j++) {
             if (i === j) {
                 html += '<td>—</td>';

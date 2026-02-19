@@ -22,6 +22,167 @@ function generateGUID() {
 let idToGuid = {};
 let guidToId = {};
 
+// QDPX import safety limits (defense-in-depth for untrusted files).
+const QDPX_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024; // 512 MB compressed archive
+const QDPX_MAX_XML_BYTES = 25 * 1024 * 1024; // 25 MB project.qde
+const QDPX_MAX_ZIP_ENTRIES = 5000;
+const QDPX_MAX_SINGLE_SOURCE_BYTES = 256 * 1024 * 1024; // 256 MB per source
+const QDPX_MAX_EXPANDED_READ_BYTES = 768 * 1024 * 1024; // 768 MB total decompressed read
+
+function getBinaryByteLength(data) {
+    if (data instanceof ArrayBuffer) return data.byteLength;
+    if (ArrayBuffer.isView(data)) return data.byteLength;
+    if (typeof Blob !== 'undefined' && data instanceof Blob) return data.size;
+    return null;
+}
+
+function getStringByteLength(text) {
+    const value = String(text || '');
+    if (typeof TextEncoder !== 'undefined') {
+        return new TextEncoder().encode(value).byteLength;
+    }
+    // Fallback if TextEncoder is unavailable.
+    return value.length * 2;
+}
+
+function getZipObjectDeclaredUncompressedBytes(zipObject) {
+    const n = Number(zipObject && zipObject._data && zipObject._data.uncompressedSize);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function normalizeQdpxSourcePath(rawPath) {
+    const normalized = String(rawPath || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .trim();
+    if (!normalized) return '';
+    if (normalized.includes('..')) return '';
+    if (/^[a-zA-Z]:/.test(normalized)) return '';
+    return normalized;
+}
+
+function buildZipFileLookup(zipEntries) {
+    const byLowerName = new Map();
+    (zipEntries || []).forEach(entry => {
+        if (!entry || entry.dir) return;
+        const normalizedName = normalizeQdpxSourcePath(entry.name);
+        if (!normalizedName) return;
+        const key = normalizedName.toLowerCase();
+        if (!byLowerName.has(key)) byLowerName.set(key, entry);
+    });
+    return { byLowerName };
+}
+
+function resolveZipSourceFile(rawPath, zipLookup) {
+    const normalized = normalizeQdpxSourcePath(rawPath);
+    if (!normalized) return null;
+
+    const candidates = [];
+    const addCandidate = (value) => {
+        const candidate = normalizeQdpxSourcePath(value);
+        if (!candidate) return;
+        if (!candidates.includes(candidate)) candidates.push(candidate);
+    };
+
+    addCandidate(normalized);
+
+    const internalPrefix = 'internal://';
+    if (normalized.toLowerCase().startsWith(internalPrefix)) {
+        const internalName = normalized.slice(internalPrefix.length);
+        addCandidate(internalName);
+        addCandidate(`sources/${internalName}`);
+        addCandidate(`Sources/${internalName}`);
+    }
+
+    const normalizedNoPrefix = normalized.replace(/^sources\//i, '');
+    addCandidate(`sources/${normalizedNoPrefix}`);
+    addCandidate(`Sources/${normalizedNoPrefix}`);
+
+    for (const candidate of candidates) {
+        const resolved = zipLookup && zipLookup.byLowerName
+            ? zipLookup.byLowerName.get(candidate.toLowerCase())
+            : null;
+        if (resolved) {
+            return { file: resolved, path: candidate };
+        }
+    }
+
+    return null;
+}
+
+function getSelectionCodeGuids(selectionEl) {
+    const codeGuids = [];
+    if (!selectionEl) return codeGuids;
+
+    const codingElements = selectionEl.querySelectorAll(':scope > Coding');
+    codingElements.forEach(codingEl => {
+        const directGuid = getAttrFirst(codingEl, ['codeGUID', 'targetGUID']);
+        if (directGuid && !codeGuids.includes(directGuid)) {
+            codeGuids.push(directGuid);
+        }
+
+        const codeRefElements = codingEl.querySelectorAll(':scope > CodeRef');
+        codeRefElements.forEach(codeRefEl => {
+            const refGuid = getAttrFirst(codeRefEl, ['targetGUID', 'codeGUID']);
+            if (refGuid && !codeGuids.includes(refGuid)) {
+                codeGuids.push(refGuid);
+            }
+        });
+    });
+
+    return codeGuids;
+}
+
+function collectPlainTextSelections(xmlDoc) {
+    const entries = [];
+    const seen = new Set();
+
+    const pushSelection = (selectionEl, sourceGuidHint = '') => {
+        if (!selectionEl) return;
+        const guid = getAttrFirst(selectionEl, ['guid']);
+        const sourceGuid = getAttrFirst(selectionEl, ['sourceGUID']) || sourceGuidHint || '';
+        const start = getAttrFirst(selectionEl, ['startPosition']);
+        const end = getAttrFirst(selectionEl, ['endPosition']);
+        const dedupeKey = guid || `${sourceGuid}|${start}|${end}`;
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+        entries.push({ selectionEl, sourceGuid });
+    };
+
+    xmlDoc.querySelectorAll('Selections > PlainTextSelection').forEach(selectionEl => {
+        pushSelection(selectionEl);
+    });
+
+    xmlDoc.querySelectorAll('Sources > TextSource > PlainTextSelection').forEach(selectionEl => {
+        const sourceEl = selectionEl.closest('TextSource');
+        const sourceGuid = getAttrFirst(sourceEl, ['guid']);
+        pushSelection(selectionEl, sourceGuid);
+    });
+
+    xmlDoc.querySelectorAll('Sources > PDFSource > Representation > PlainTextSelection').forEach(selectionEl => {
+        const sourceEl = selectionEl.closest('PDFSource');
+        const sourceGuid = getAttrFirst(sourceEl, ['guid']);
+        pushSelection(selectionEl, sourceGuid);
+    });
+
+    return entries;
+}
+
+function normalizeSelectionRange(startPos, endPos, docLength) {
+    if (!Number.isFinite(startPos) || !Number.isFinite(endPos) || !Number.isFinite(docLength)) return null;
+    let start = Math.trunc(startPos);
+    let end = Math.trunc(endPos);
+    if (end < start) {
+        const tmp = start;
+        start = end;
+        end = tmp;
+    }
+    start = Math.max(0, Math.min(start, docLength));
+    end = Math.max(0, Math.min(end, docLength));
+    if (!(end > start)) return null;
+    return { start, end };
+}
+
 function getOrCreateGuid(id) {
     if (!idToGuid[id]) {
         idToGuid[id] = generateGUID();
@@ -62,11 +223,12 @@ function formatColor(hexColor) {
 // Parse QDPX color to hex
 function parseColor(qdpxColor) {
     if (!qdpxColor) return '#808080';
+    let color = String(qdpxColor).trim().replace(/^#/, '');
     // Remove alpha channel if present (first 2 chars)
-    let color = qdpxColor;
     if (color.length === 8) {
         color = color.substring(2);
     }
+    if (!/^[0-9a-fA-F]{6}$/.test(color)) return '#808080';
     return '#' + color.toLowerCase();
 }
 
@@ -92,37 +254,45 @@ function applyMetadataValue(doc, key, value) {
     return true;
 }
 
-function buildUniqueSourceFileName(title, extension, usedNames, uniqueSeed) {
-    const safeBase = String(title || 'untitled')
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .trim() || 'untitled';
-    const ext = String(extension || '').replace(/^\./, '').toLowerCase();
-    const normalizedExt = ext || 'txt';
-    const seed = String(uniqueSeed || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8);
+function normalizeVariableType(rawType) {
+    const value = String(rawType || '').trim().toLowerCase();
+    if (value === 'integer' || value === 'int') return 'Integer';
+    if (value === 'decimal' || value === 'float' || value === 'double' || value === 'numeric' || value === 'number') return 'Decimal';
+    if (value === 'boolean' || value === 'bool' || value === 'logical') return 'Boolean';
+    if (value === 'date' || value === 'datetime' || value === 'time') return 'DateTime';
+    return 'Text';
+}
 
-    let candidate = `${safeBase}.${normalizedExt}`;
-    if (!usedNames.has(candidate.toLowerCase())) {
-        usedNames.add(candidate.toLowerCase());
-        return candidate;
-    }
+function buildVariableDefinitionsForExport(project) {
+    const byName = new Map();
+    const addVariable = (name, type, idHint = '') => {
+        const normalizedName = String(name || '').trim();
+        if (!normalizedName) return;
+        const key = normalizedName.toLowerCase();
+        if (byName.has(key)) return;
+        byName.set(key, {
+            id: String(idHint || '').trim() || buildQdpxId('var'),
+            name: normalizedName,
+            type: normalizeVariableType(type)
+        });
+    };
 
-    const suffixBase = seed || Math.random().toString(36).slice(2, 8);
-    candidate = `${safeBase}_${suffixBase}.${normalizedExt}`;
-    if (!usedNames.has(candidate.toLowerCase())) {
-        usedNames.add(candidate.toLowerCase());
-        return candidate;
-    }
+    (Array.isArray(project.variableDefinitions) ? project.variableDefinitions : []).forEach(variableDef => {
+        if (!variableDef || typeof variableDef !== 'object') return;
+        addVariable(variableDef.name, variableDef.type, variableDef.id);
+    });
 
-    let n = 2;
-    while (true) {
-        candidate = `${safeBase}_${suffixBase}_${n}.${normalizedExt}`;
-        const key = candidate.toLowerCase();
-        if (!usedNames.has(key)) {
-            usedNames.add(key);
-            return candidate;
-        }
-        n += 1;
-    }
+    (Array.isArray(project.documents) ? project.documents : []).forEach(doc => {
+        if (!doc || !doc.metadata || typeof doc.metadata !== 'object') return;
+        Object.keys(doc.metadata).forEach(key => addVariable(key, 'Text'));
+    });
+
+    (Array.isArray(project.cases) ? project.cases : []).forEach(caseItem => {
+        if (!caseItem || !caseItem.attributes || typeof caseItem.attributes !== 'object') return;
+        Object.keys(caseItem.attributes).forEach(key => addVariable(key, 'Text'));
+    });
+
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -135,8 +305,7 @@ async function exportToQdpx() {
     }
     
     const zip = new JSZip();
-    const sourcesFolder = zip.folder('Sources');
-    const usedSourceNames = new Set();
+    const sourcesFolder = zip.folder('sources');
     
     // Reset GUID mappings
     idToGuid = {};
@@ -151,6 +320,8 @@ async function exportToQdpx() {
     appData.segments.forEach(seg => getOrCreateGuid(seg.id));
     appData.memos.forEach(memo => getOrCreateGuid(memo.id));
     appData.folders.forEach(folder => getOrCreateGuid(folder.id));
+    (Array.isArray(appData.cases) ? appData.cases : []).forEach(caseItem => getOrCreateGuid(caseItem.id));
+    (Array.isArray(appData.variableDefinitions) ? appData.variableDefinitions : []).forEach(variableDef => getOrCreateGuid(variableDef.id));
     
     // Add source files and build source list
     const sources = [];
@@ -158,36 +329,40 @@ async function exportToQdpx() {
         const guid = getOrCreateGuid(doc.id);
         
         if (doc.type === 'pdf' && doc.pdfData) {
-            // PDF document - store original PDF
-            const fileName = buildUniqueSourceFileName(doc.title, 'pdf', usedSourceNames, doc.id);
+            const pdfFileName = `${guid}.pdf`;
+            const textFileName = `${guid}.txt`;
             const pdfBinary = base64ToArrayBuffer(doc.pdfData);
-            sourcesFolder.file(fileName, pdfBinary);
+            sourcesFolder.file(pdfFileName, pdfBinary);
+            sourcesFolder.file(textFileName, doc.content || '');
             
             sources.push({
                 type: 'PDFSource',
                 guid: guid,
                 name: doc.title,
-                path: `Sources/${fileName}`,
+                path: `internal://${pdfFileName}`,
+                representationTextPath: `internal://${textFileName}`,
                 plainTextContent: doc.content, // Extracted text for searching
                 created: doc.created,
                 modified: doc.lastAccessed
             });
         } else {
-            // Text document - store as plain text
-            const fileName = buildUniqueSourceFileName(doc.title, 'txt', usedSourceNames, doc.id);
-            sourcesFolder.file(fileName, doc.content || '');
+            const textFileName = `${guid}.txt`;
+            sourcesFolder.file(textFileName, doc.content || '');
             
             sources.push({
                 type: 'TextSource',
                 guid: guid,
                 name: doc.title,
-                path: `Sources/${fileName}`,
+                path: `internal://${textFileName}`,
                 plainTextContent: doc.content,
                 created: doc.created,
                 modified: doc.lastAccessed
             });
         }
     }
+
+    // NVivo exports include this marker entry; harmless in other tools.
+    zip.file('sources/.root', '');
     
     // Build XML
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
@@ -257,8 +432,7 @@ async function exportToQdpx() {
             xml += `creationDateTime="${formatDateTime(source.created)}" `;
             xml += `modifyingUserGUID="${userGuid}" `;
             xml += `modifiedDateTime="${formatDateTime(source.modified)}">\n`;
-            // Include plain text representation for text-based operations
-            xml += `      <PlainTextContent>${escapeXml(source.plainTextContent)}</PlainTextContent>\n`;
+            xml += `      <Representation guid="${source.guid}" plainTextPath="${escapeXml(source.representationTextPath)}"/>\n`;
             xml += '    </PDFSource>\n';
         } else {
             xml += `    <TextSource guid="${source.guid}" `;
@@ -272,22 +446,55 @@ async function exportToQdpx() {
     });
     xml += '  </Sources>\n';
     
-    // Variables (document metadata keys as variable definitions)
-    xml += '  <Variables>\n';
-    const metadataKeys = new Set();
-    appData.documents.forEach(doc => {
-        if (!doc.metadata || typeof doc.metadata !== 'object') return;
-        Object.keys(doc.metadata).forEach(key => {
-            const value = doc.metadata[key];
-            if (value !== null && value !== undefined && String(value).trim() !== '') {
-                metadataKeys.add(key);
-            }
-        });
+    const variableDefinitions = buildVariableDefinitionsForExport(appData);
+    const variableGuidByName = new Map();
+    variableDefinitions.forEach(variableDef => {
+        const variableGuid = getOrCreateGuid(variableDef.id);
+        variableGuidByName.set(variableDef.name.toLowerCase(), variableGuid);
     });
-    Array.from(metadataKeys).sort().forEach(varName => {
-        xml += `    <Variable guid="${generateGUID()}" name="${escapeXml(varName)}" typeOfVariable="Text"/>\n`;
+
+    // Variables
+    xml += '  <Variables>\n';
+    variableDefinitions.forEach(variableDef => {
+        const variableGuid = variableGuidByName.get(variableDef.name.toLowerCase()) || generateGUID();
+        xml += `    <Variable guid="${variableGuid}" name="${escapeXml(variableDef.name)}" typeOfVariable="${escapeXml(normalizeVariableType(variableDef.type))}"/>\n`;
     });
     xml += '  </Variables>\n';
+
+    // Cases
+    xml += '  <Cases>\n';
+    (Array.isArray(appData.cases) ? appData.cases : []).forEach(caseItem => {
+        if (!caseItem || typeof caseItem !== 'object') return;
+        const caseGuid = getOrCreateGuid(caseItem.id);
+        const caseName = String(caseItem.name || '').trim() || 'Unnamed Case';
+        const linkedDocumentIds = Array.isArray(caseItem.linkedDocumentIds)
+            ? caseItem.linkedDocumentIds
+            : (Array.isArray(caseItem.docIds) ? caseItem.docIds : []);
+        const attrs = (caseItem.attributes && typeof caseItem.attributes === 'object') ? caseItem.attributes : {};
+        const parentGuid = caseItem.parentId ? getOrCreateGuid(caseItem.parentId) : '';
+        const caseType = String(caseItem.type || '').trim();
+
+        xml += `    <Case guid="${caseGuid}" name="${escapeXml(caseName)}"`;
+        if (parentGuid) xml += ` parentGUID="${escapeXml(parentGuid)}"`;
+        if (caseType) xml += ` type="${escapeXml(caseType)}"`;
+        xml += '>\n';
+        if (caseItem.description) {
+            xml += `      <Description>${escapeXml(caseItem.description)}</Description>\n`;
+        }
+        linkedDocumentIds.forEach(docId => {
+            const docGuid = getOrCreateGuid(docId);
+            if (docGuid) xml += `      <MemberSource targetGUID="${docGuid}"/>\n`;
+        });
+        Object.entries(attrs).forEach(([key, rawValue]) => {
+            const value = String(rawValue == null ? '' : rawValue).trim();
+            if (!value) return;
+            const variableGuid = variableGuidByName.get(String(key || '').trim().toLowerCase());
+            if (!variableGuid) return;
+            xml += `      <VariableValue variableGUID="${escapeXml(variableGuid)}" value="${escapeXml(value)}"/>\n`;
+        });
+        xml += '    </Case>\n';
+    });
+    xml += '  </Cases>\n';
     
     // Selections (coded segments)
     xml += '  <Selections>\n';
@@ -320,11 +527,14 @@ async function exportToQdpx() {
         const targetGuid = memo.targetId ? getOrCreateGuid(memo.targetId) : null;
         const memoTag = String(memo.tag || '').trim();
         const memoEdited = memo.edited || memo.created;
+        const memoCodeId = (memo.type === 'segment') ? String(memo.codeId || '').trim() : '';
+        const memoCodeGuid = memoCodeId ? getOrCreateGuid(memoCodeId) : '';
         
         xml += `    <Note guid="${memoGuid}" `;
         xml += `name="${escapeXml(memo.type + ' memo')}" `;
         if (memoTag) xml += `quackdasTag="${escapeXml(memoTag)}" `;
         if (memoEdited) xml += `quackdasEdited="${escapeXml(String(memoEdited))}" `;
+        if (memoCodeGuid) xml += `quackdasCodeGUID="${escapeXml(memoCodeGuid)}" `;
         xml += `creatingUserGUID="${userGuid}" `;
         xml += `creationDateTime="${formatDateTime(memo.created)}">\n`;
         xml += `      <PlainTextContent>${escapeXml(memo.content)}</PlainTextContent>\n`;
@@ -445,16 +655,36 @@ async function importFromQdpx(qdpxData) {
     if (typeof JSZip === 'undefined') {
         throw new Error('JSZip library not loaded');
     }
-    
+
+    const archiveBytes = getBinaryByteLength(qdpxData);
+    if (Number.isFinite(archiveBytes) && archiveBytes > QDPX_MAX_ARCHIVE_BYTES) {
+        throw new Error(`Invalid QDPX file: archive exceeds ${Math.round(QDPX_MAX_ARCHIVE_BYTES / (1024 * 1024))} MB safety limit.`);
+    }
+
     const zip = await JSZip.loadAsync(qdpxData);
-    
+    const zipEntries = Object.values(zip.files || {}).filter(file => file && !file.dir);
+    const zipLookup = buildZipFileLookup(zipEntries);
+    if (zipEntries.length > QDPX_MAX_ZIP_ENTRIES) {
+        throw new Error(`Invalid QDPX file: too many archive entries (${zipEntries.length}).`);
+    }
+
     // Read project.qde
     const qdeFile = zip.file('project.qde');
     if (!qdeFile) {
         throw new Error('Invalid QDPX file: missing project.qde');
     }
-    
+
+    const declaredQdeBytes = getZipObjectDeclaredUncompressedBytes(qdeFile);
+    if (Number.isFinite(declaredQdeBytes) && declaredQdeBytes > QDPX_MAX_XML_BYTES) {
+        throw new Error('Invalid QDPX file: project metadata is too large.');
+    }
+
     const qdeContent = await qdeFile.async('string');
+    const qdeBytes = getStringByteLength(qdeContent);
+    if (qdeBytes > QDPX_MAX_XML_BYTES) {
+        throw new Error('Invalid QDPX file: project metadata exceeds safety limit.');
+    }
+    let expandedReadBytes = qdeBytes;
     
     // Parse XML
     const parser = new DOMParser();
@@ -528,7 +758,10 @@ async function importFromQdpx(qdpxData) {
         const guid = sourceEl.getAttribute('guid');
         const name = sourceEl.getAttribute('name') || 'Unnamed Document';
         const isPdf = sourceEl.tagName === 'PDFSource';
-        const path = sourceEl.getAttribute('path') || sourceEl.getAttribute('plainTextPath');
+        const sourcePathAttr = sourceEl.getAttribute('path');
+        const plainTextPathAttr = sourceEl.getAttribute('plainTextPath');
+        const representationEl = sourceEl.querySelector(':scope > Representation');
+        const representationTextPath = representationEl ? representationEl.getAttribute('plainTextPath') : '';
         
         const docId = buildQdpxId('doc');
         guidToId[guid] = docId;
@@ -538,30 +771,74 @@ async function importFromQdpx(qdpxData) {
         let pdfPages = null;
         
         // Try to read content from file in zip
-        if (path) {
-            const sourceFile = zip.file(path);
-            if (sourceFile) {
-                if (isPdf) {
-                    // Read PDF binary
-                    const pdfBinary = await sourceFile.async('arraybuffer');
-                    pdfData = arrayBufferToBase64(pdfBinary);
-                    
-                    // Try to get text content from XML
+        if (isPdf) {
+            const resolvedPdf = resolveZipSourceFile(sourcePathAttr || plainTextPathAttr, zipLookup);
+            if (resolvedPdf && resolvedPdf.file) {
+                const declaredBytes = getZipObjectDeclaredUncompressedBytes(resolvedPdf.file);
+                if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                // Read PDF binary
+                const pdfBinary = await resolvedPdf.file.async('arraybuffer');
+                const pdfBytes = getBinaryByteLength(pdfBinary) || 0;
+                if (pdfBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                expandedReadBytes += pdfBytes;
+                if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+                    throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+                }
+                pdfData = arrayBufferToBase64(pdfBinary);
+
+                // Prefer representation text files when present (NVivo layout).
+                const resolvedRepText = resolveZipSourceFile(representationTextPath || plainTextPathAttr, zipLookup);
+                if (resolvedRepText && resolvedRepText.file) {
+                    content = await resolvedRepText.file.async('string');
+                    const textBytes = getStringByteLength(content);
+                    if (textBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                        throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                    }
+                    expandedReadBytes += textBytes;
+                    if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+                        throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+                    }
+                }
+
+                // Fallback to inline source content or extracted text.
+                if (!content) {
                     const textEl = sourceEl.querySelector('PlainTextContent');
                     content = textEl ? textEl.textContent : '';
-                    
-                    // If no text in XML and PDF.js available, extract it
-                    if (!content && typeof pdfjsLib !== 'undefined') {
-                        try {
-                            const extractResult = await extractPdfText(pdfBinary);
-                            content = extractResult.text;
-                            pdfPages = extractResult.pages;
-                        } catch (e) {
-                            console.warn('Could not extract PDF text:', e);
-                        }
+                }
+                if (!content && representationEl) {
+                    const textEl = representationEl.querySelector(':scope > PlainTextContent');
+                    content = textEl ? textEl.textContent : '';
+                }
+
+                if (!content && typeof pdfjsLib !== 'undefined') {
+                    try {
+                        const extractResult = await extractPdfText(pdfBinary);
+                        content = extractResult.text;
+                        pdfPages = extractResult.pages;
+                    } catch (e) {
+                        console.warn('Could not extract PDF text:', e);
                     }
-                } else {
-                    content = await sourceFile.async('string');
+                }
+            }
+        } else {
+            const resolvedText = resolveZipSourceFile(plainTextPathAttr || sourcePathAttr, zipLookup);
+            if (resolvedText && resolvedText.file) {
+                const declaredBytes = getZipObjectDeclaredUncompressedBytes(resolvedText.file);
+                if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                content = await resolvedText.file.async('string');
+                const textBytes = getStringByteLength(content);
+                if (textBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                expandedReadBytes += textBytes;
+                if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+                    throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
                 }
             }
         }
@@ -571,6 +848,10 @@ async function importFromQdpx(qdpxData) {
             const textEl = sourceEl.querySelector('PlainTextContent');
             if (textEl) {
                 content = textEl.textContent;
+                const inlineBytes = getStringByteLength(content);
+                if (inlineBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: inline content for "${name}" exceeds safety limit.`);
+                }
             }
         }
         
@@ -608,15 +889,28 @@ async function importFromQdpx(qdpxData) {
         docsByGuid[guid] = doc;
     }
 
-    // Parse variables/cases/attributes (best effort for cross-tool imports)
-    const variableNameByGuid = {};
+    // Parse variables/cases/attributes
+    const variableByGuid = {};
     xmlDoc.querySelectorAll('Variables > Variable').forEach(variableEl => {
         const guid = getAttrFirst(variableEl, ['guid', 'id', 'variableGUID']);
         const name = getAttrFirst(variableEl, ['name', 'label']);
-        if (guid && name) variableNameByGuid[guid] = name;
+        if (!guid || !name) return;
+        const type = normalizeVariableType(getAttrFirst(variableEl, ['typeOfVariable', 'type']));
+        const variableId = buildQdpxId('var');
+        guidToId[guid] = variableId;
+        variableByGuid[guid] = { id: variableId, name, type };
+        if (!Array.isArray(project.variableDefinitions)) project.variableDefinitions = [];
+        project.variableDefinitions.push({ id: variableId, name, type });
     });
 
-    xmlDoc.querySelectorAll('Cases > Case').forEach(caseEl => {
+    const pendingCaseParents = [];
+    xmlDoc.querySelectorAll('Cases Case').forEach(caseEl => {
+        const caseGuid = getAttrFirst(caseEl, ['guid', 'id']);
+        const caseId = buildQdpxId('case');
+        if (caseGuid) guidToId[caseGuid] = caseId;
+        const caseName = getAttrFirst(caseEl, ['name', 'label']) || 'Unnamed Case';
+        const caseDescEl = caseEl.querySelector(':scope > Description');
+        const caseDescription = caseDescEl ? caseDescEl.textContent : '';
         const memberGuids = [];
         caseEl.querySelectorAll(':scope > MemberSource, :scope > SourceRef, :scope > CaseSourceRef').forEach(memberEl => {
             const sourceGuid = getAttrFirst(memberEl, ['targetGUID', 'sourceGUID', 'guid', 'id']);
@@ -628,20 +922,60 @@ async function importFromQdpx(qdpxData) {
             if (sourceGuid) memberGuids.push(sourceGuid);
         }
 
-        if (memberGuids.length === 0) return;
+        const linkedDocumentIds = [];
+        memberGuids.forEach(sourceGuid => {
+            const doc = docsByGuid[sourceGuid];
+            if (!doc) return;
+            linkedDocumentIds.push(doc.id);
+            if (!Array.isArray(doc.caseIds)) doc.caseIds = [];
+            if (!doc.caseIds.includes(caseId)) doc.caseIds.push(caseId);
+        });
+
+        const caseAttributes = {};
 
         caseEl.querySelectorAll(':scope > VariableValue, :scope > AttributeValue, :scope > CaseVariableValue').forEach(valueEl => {
             const variableGuid = getAttrFirst(valueEl, ['variableGUID', 'variableGuid', 'variableId']);
-            const key = variableNameByGuid[variableGuid] || getAttrFirst(valueEl, ['variableName', 'name', 'key']);
+            const variableDef = variableByGuid[variableGuid];
+            const key = (variableDef && variableDef.name) || getAttrFirst(valueEl, ['variableName', 'name', 'key']);
             const value = getAttrFirst(valueEl, ['value', 'text', 'content']) || (valueEl.textContent || '').trim();
             if (!key || !value) return;
 
+            caseAttributes[key] = value;
             memberGuids.forEach(sourceGuid => {
                 const doc = docsByGuid[sourceGuid];
                 if (!doc) return;
                 applyMetadataValue(doc, key, value);
             });
         });
+
+        const directParentGuid = getAttrFirst(caseEl, ['parentGUID', 'parentGuid', 'parentID', 'parentId']);
+        const nestedParentEl = caseEl.parentElement ? caseEl.parentElement.closest('Case') : null;
+        const nestedParentGuid = nestedParentEl ? getAttrFirst(nestedParentEl, ['guid', 'id']) : null;
+        const parentGuid = directParentGuid || nestedParentGuid || null;
+        if (parentGuid) pendingCaseParents.push({ caseId, parentGuid });
+
+        const typeFromAttr = getAttrFirst(caseEl, ['type', 'classification', 'class']) || '';
+        const typeFromVariable = String(caseAttributes.Type || caseAttributes.type || '').trim();
+
+        if (!Array.isArray(project.cases)) project.cases = [];
+        project.cases.push({
+            id: caseId,
+            name: caseName,
+            type: String(typeFromAttr || typeFromVariable || '').trim(),
+            parentId: null,
+            description: caseDescription,
+            linkedDocumentIds: Array.from(new Set(linkedDocumentIds)),
+            attributes: caseAttributes,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString()
+        });
+    });
+
+    pendingCaseParents.forEach(({ caseId, parentGuid }) => {
+        const caseItem = project.cases.find(c => c.id === caseId);
+        const parentId = guidToId[parentGuid];
+        if (!caseItem || !parentId || parentId === caseId) return;
+        caseItem.parentId = parentId;
     });
 
     // Parse Quackdas document metadata extension
@@ -673,28 +1007,29 @@ async function importFromQdpx(qdpxData) {
     });
     
     // Parse selections (coded segments)
-    const selectionElements = xmlDoc.querySelectorAll('Selections > PlainTextSelection');
+    const selectionEntries = collectPlainTextSelections(xmlDoc);
     
-    selectionElements.forEach(selEl => {
+    selectionEntries.forEach(({ selectionEl: selEl, sourceGuid: sourceGuidHint }) => {
         const guid = selEl.getAttribute('guid');
-        const sourceGuid = selEl.getAttribute('sourceGUID');
-        const startPos = parseInt(selEl.getAttribute('startPosition'), 10);
-        const endPos = parseInt(selEl.getAttribute('endPosition'), 10);
+        const sourceGuid = selEl.getAttribute('sourceGUID') || sourceGuidHint;
+        const startPos = Number.parseInt(selEl.getAttribute('startPosition'), 10);
+        const endPos = Number.parseInt(selEl.getAttribute('endPosition'), 10);
         
         const docId = guidToId[sourceGuid];
         if (!docId) return;
         
         const doc = project.documents.find(d => d.id === docId);
         if (!doc) return;
+        const range = normalizeSelectionRange(startPos, endPos, doc.content.length);
+        if (!range) return;
         
         const segId = buildQdpxId('seg');
-        guidToId[guid] = segId;
+        if (guid) guidToId[guid] = segId;
         
         // Get codes applied to this selection
-        const codingElements = selEl.querySelectorAll('Coding');
+        const codeGuids = getSelectionCodeGuids(selEl);
         const codeIds = [];
-        codingElements.forEach(codingEl => {
-            const codeGuid = codingEl.getAttribute('codeGUID');
+        codeGuids.forEach(codeGuid => {
             const codeId = guidToId[codeGuid];
             if (codeId && !codeIds.includes(codeId)) {
                 codeIds.push(codeId);
@@ -706,10 +1041,10 @@ async function importFromQdpx(qdpxData) {
         const segment = {
             id: segId,
             docId: docId,
-            text: doc.content.substring(startPos, endPos),
+            text: doc.content.substring(range.start, range.end),
             codeIds: codeIds,
-            startIndex: startPos,
-            endIndex: endPos,
+            startIndex: range.start,
+            endIndex: range.end,
             created: new Date().toISOString()
         };
         
@@ -722,6 +1057,8 @@ async function importFromQdpx(qdpxData) {
         const sourceGuid = getAttrFirst(selEl, ['sourceGUID']);
         const docId = guidToId[sourceGuid];
         if (!docId) return;
+        const doc = project.documents.find(d => d.id === docId);
+        if (!doc) return;
 
         const codingElements = selEl.querySelectorAll(':scope > Coding');
         const codeIds = [];
@@ -735,8 +1072,8 @@ async function importFromQdpx(qdpxData) {
         const segId = buildQdpxId('seg');
         if (guid) guidToId[guid] = segId;
 
-        const startPosition = parseInt(getAttrFirst(selEl, ['startPosition']), 10);
-        const endPosition = parseInt(getAttrFirst(selEl, ['endPosition']), 10);
+        const startPosition = Number.parseInt(getAttrFirst(selEl, ['startPosition']), 10);
+        const endPosition = Number.parseInt(getAttrFirst(selEl, ['endPosition']), 10);
         const segment = {
             id: segId,
             docId: docId,
@@ -757,8 +1094,11 @@ async function importFromQdpx(qdpxData) {
                 hNorm: parseFloat(getAttrFirst(selEl, ['hNorm', 'height'])) || 0
             })
         };
-        if (Number.isFinite(startPosition)) segment.startIndex = startPosition;
-        if (Number.isFinite(endPosition)) segment.endIndex = endPosition;
+        const optionalRange = normalizeSelectionRange(startPosition, endPosition, doc.content.length);
+        if (optionalRange) {
+            segment.startIndex = optionalRange.start;
+            segment.endIndex = optionalRange.end;
+        }
 
         project.segments.push(segment);
     });
@@ -772,6 +1112,8 @@ async function importFromQdpx(qdpxData) {
         const content = contentEl ? contentEl.textContent : '';
         const noteRefEl = noteEl.querySelector('NoteRef');
         const targetGuid = noteRefEl ? noteRefEl.getAttribute('targetGUID') : null;
+        const memoCodeGuid = noteEl.getAttribute('quackdasCodeGUID') || '';
+        const memoCodeIdLegacy = noteEl.getAttribute('quackdasCodeId') || '';
         
         const memoId = buildQdpxId('memo');
         
@@ -790,6 +1132,21 @@ async function importFromQdpx(qdpxData) {
                 memoType = 'segment';
             }
         }
+
+        let memoCodeId = '';
+        if (memoType === 'segment') {
+            if (memoCodeGuid && guidToId[memoCodeGuid] && project.codes.some(c => c.id === guidToId[memoCodeGuid])) {
+                memoCodeId = guidToId[memoCodeGuid];
+            } else if (memoCodeIdLegacy && project.codes.some(c => c.id === memoCodeIdLegacy)) {
+                memoCodeId = memoCodeIdLegacy;
+            }
+            if (memoCodeId) {
+                const segment = project.segments.find(s => s.id === targetId);
+                if (!segment || !Array.isArray(segment.codeIds) || !segment.codeIds.includes(memoCodeId)) {
+                    memoCodeId = '';
+                }
+            }
+        }
         
         const memo = {
             id: memoId,
@@ -800,6 +1157,7 @@ async function importFromQdpx(qdpxData) {
             created: noteEl.getAttribute('creationDateTime') || new Date().toISOString(),
             edited: noteEl.getAttribute('quackdasEdited') || noteEl.getAttribute('creationDateTime') || new Date().toISOString()
         };
+        if (memoCodeId) memo.codeId = memoCodeId;
         
         project.memos.push(memo);
     });

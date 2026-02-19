@@ -421,6 +421,7 @@ function selectDocument(docId, options = {}) {
     
     updateDocumentSelection(docId, options);
     appData.currentDocId = docId;
+    appData.selectedCaseId = null;
     appData.filterCodeId = null;
     renderAll();
     
@@ -480,8 +481,10 @@ async function importDocument(e) {
             importPdf(arrayBuffer, title)
                 .then(function(pdfDoc) {
                     saveHistory();
+                    if (!Array.isArray(pdfDoc.caseIds)) pdfDoc.caseIds = [];
                     appData.documents.push(pdfDoc);
                     appData.currentDocId = pdfDoc.id;
+                    appData.selectedCaseId = null;
                     saveData();
                     closeImportModal();
                     renderAll();
@@ -522,8 +525,10 @@ async function importDocument(e) {
             importPdf(arrayBuffer, title)
                 .then(function(pdfDoc) {
                     saveHistory();
+                    if (!Array.isArray(pdfDoc.caseIds)) pdfDoc.caseIds = [];
                     appData.documents.push(pdfDoc);
                     appData.currentDocId = pdfDoc.id;
+                    appData.selectedCaseId = null;
                     saveData();
                     closeImportModal();
                     renderAll();
@@ -619,11 +624,13 @@ function addDocument(title, content) {
         title: title,
         content: content,
         metadata: {},
+        caseIds: [],
         created: new Date().toISOString(),
         lastAccessed: new Date().toISOString()
     };
     appData.documents.push(doc);
     appData.currentDocId = doc.id;
+    appData.selectedCaseId = null;
     saveData();
     renderAll();
 }
@@ -646,6 +653,7 @@ function extractPdfTextAsDocument(docId) {
         title: nextTitle,
         content: source.content || '',
         metadata: Object.assign({}, source.metadata || {}),
+        caseIds: Array.isArray(source.caseIds) ? source.caseIds.slice() : [],
         folderId: source.folderId || null,
         created: new Date().toISOString(),
         lastAccessed: new Date().toISOString()
@@ -653,6 +661,7 @@ function extractPdfTextAsDocument(docId) {
 
     appData.documents.push(doc);
     appData.currentDocId = doc.id;
+    appData.selectedCaseId = null;
     appData.filterCodeId = null;
     saveData();
     renderAll();
@@ -662,8 +671,13 @@ function deleteDocument(docId) {
     const doc = appData.documents.find(d => d.id === docId);
     if (!doc) return;
     
-    const segmentCount = appData.segments.filter(s => s.docId === docId).length;
-    const memoCount = appData.memos.filter(m => m.type === 'document' && m.targetId === docId).length;
+    const segmentsToDelete = appData.segments.filter(s => s.docId === docId);
+    const segmentIdsToDelete = new Set(segmentsToDelete.map(s => s.id));
+    const segmentCount = segmentsToDelete.length;
+    const memoCount = appData.memos.filter((m) => (
+        (m.type === 'document' && m.targetId === docId) ||
+        (m.type === 'segment' && segmentIdsToDelete.has(m.targetId))
+    )).length;
     
     let message = `Are you sure you want to delete "${doc.title}"?`;
     if (segmentCount > 0 || memoCount > 0) {
@@ -676,8 +690,18 @@ function deleteDocument(docId) {
     
     // Remove document and related data
     appData.documents = appData.documents.filter(d => d.id !== docId);
-    appData.segments = appData.segments.filter(s => s.docId !== docId);
-    appData.memos = appData.memos.filter(m => !(m.type === 'document' && m.targetId === docId));
+    appData.segments = appData.segments.filter(s => !segmentIdsToDelete.has(s.id));
+    appData.memos = appData.memos.filter((m) => {
+        if (m.type === 'document' && m.targetId === docId) return false;
+        if (m.type === 'segment' && segmentIdsToDelete.has(m.targetId)) return false;
+        return true;
+    });
+    if (Array.isArray(appData.cases)) {
+        appData.cases.forEach((caseItem) => {
+            if (!caseItem || !Array.isArray(caseItem.linkedDocumentIds)) return;
+            caseItem.linkedDocumentIds = caseItem.linkedDocumentIds.filter((linkedDocId) => linkedDocId !== docId);
+        });
+    }
     
     // Clear selection if this was the current document
     if (appData.currentDocId === docId) {
@@ -780,8 +804,10 @@ function handleDroppedDocument(file) {
             importPdf(arrayBuffer, title)
                 .then(function(pdfDoc) {
                     saveHistory();
+                    if (!Array.isArray(pdfDoc.caseIds)) pdfDoc.caseIds = [];
                     appData.documents.push(pdfDoc);
                     appData.currentDocId = pdfDoc.id;
+                    appData.selectedCaseId = null;
                     saveData();
                     renderAll();
                 })

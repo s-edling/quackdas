@@ -35,7 +35,11 @@ function renderExistingMemos(type, targetId) {
     if (memos.length > 0) {
         existingList.style.display = 'block';
         existingList.innerHTML = '<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Existing annotations:</div>' +
-            memos.map(memo => `
+            memos.map(memo => {
+                const memoCodeId = memo.type === 'segment' ? String(memo.codeId || '').trim() : '';
+                const memoCode = memoCodeId ? appData.codes.find(c => c.id === memoCodeId) : null;
+                const memoCodeLabel = memoCode ? memoCode.name : memoCodeId;
+                return `
                 <div class="memo-item">
                     <div class="memo-item-header">
                         <span>${escapeHtml(formatMemoDate(memo.created))}${memo.edited && memo.edited !== memo.created ? ` · edited ${escapeHtml(formatMemoDate(memo.edited))}` : ''}</span>
@@ -44,10 +48,12 @@ function renderExistingMemos(type, targetId) {
                             <button class="memo-delete-btn" onclick="deleteMemo('${escapeJsForSingleQuotedString(memo.id)}')" title="Delete annotation">×</button>
                         </span>
                     </div>
+                    ${memoCodeLabel ? `<div class="memo-tag-badge">Code: ${escapeHtml(memoCodeLabel)}</div>` : ''}
                     ${memo.tag ? `<div class="memo-tag-badge">${escapeHtml(memo.tag)}</div>` : ''}
                     <div class="memo-item-content">${escapeHtml(memo.content)}</div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
     } else {
         existingList.style.display = 'none';
     }
@@ -133,8 +139,13 @@ function deleteMemo(memoId) {
     saveHistory();
     appData.memos = appData.memos.filter(m => m.id !== memoId);
     saveData();
-    
-    // Refresh the modal
+
+    // Keep marker gutters and memo indicators in sync immediately.
+    renderDocuments();
+    renderCodes();
+    renderCurrentDocument();
+
+    // Refresh the modal list
     renderExistingMemos(currentMemoTarget.type, currentMemoTarget.id);
 }
 

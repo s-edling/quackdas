@@ -269,6 +269,11 @@ function closeTopmostShownModalFallback() {
 }
 
 function closeUiOnEscape() {
+    if (typeof closeDocumentCasesPicker === 'function' && typeof documentCasePickerState !== 'undefined' && documentCasePickerState && documentCasePickerState.open) {
+        closeDocumentCasesPicker();
+        return true;
+    }
+
     const contextMenu = document.getElementById('contextMenu');
     if (contextMenu && contextMenu.classList.contains('show')) {
         hideContextMenu();
@@ -503,21 +508,26 @@ if (window.electronAPI && window.electronAPI.hasProjectHandle) {
     setInterval(async () => {
         try {
             if (appData && appData.hasUnsavedChanges && await window.electronAPI.hasProjectHandle()) {
-                // Generate QDPX for autosave
-                if (typeof exportToQdpx === 'function') {
+                let base64 = null;
+                if (typeof getProjectQdpxBase64 === 'function') {
+                    base64 = await getProjectQdpxBase64();
+                } else if (typeof exportToQdpx === 'function') {
                     const blob = await exportToQdpx();
                     const arrayBuffer = await blob.arrayBuffer();
-                    const base64 = arrayBufferToBase64(arrayBuffer);
-                    await window.electronAPI.saveProject({
-                        qdpxBase64: base64
-                    }, { saveAs: false, silent: true, format: 'qdpx' });
-                    appData.lastSaveTime = new Date().toISOString();
-                    appData.hasUnsavedChanges = false;
-                    if (typeof updateSaveStatus === 'function') updateSaveStatus();
-                    if (typeof createProjectBackup === 'function') {
-                        createProjectBackup('autosave', { force: true, base64 }).catch(() => {});
-                    }
+                    base64 = arrayBufferToBase64(arrayBuffer);
                 }
+                if (!base64) return;
+
+                await window.electronAPI.saveProject({
+                    qdpxBase64: base64
+                }, { saveAs: false, silent: true, format: 'qdpx' });
+
+                if (typeof createProjectBackup === 'function') {
+                    createProjectBackup('autosave', { base64 }).catch(() => {});
+                }
+                appData.lastSaveTime = new Date().toISOString();
+                appData.hasUnsavedChanges = false;
+                if (typeof updateSaveStatus === 'function') updateSaveStatus();
             }
         } catch (e) {
             // Don't spam the user; just log.

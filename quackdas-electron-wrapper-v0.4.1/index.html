@@ -2,7 +2,7 @@
 <html lang="en">
 <!--
     Quackdas - Qualitative Data Analysis Software
-    Version 0.4.3
+    Version 0.5.0
     
     MIT License
     
@@ -118,6 +118,13 @@
             <div class="codes-list" id="codesList">
                 <!-- Codes will be populated here -->
             </div>
+            <div class="panel-header cases-panel-header">
+                <div class="panel-title">Cases</div>
+                <button class="add-code-btn add-case-btn" onclick="openCaseModal()">+ New Case</button>
+            </div>
+            <div class="codes-list cases-list" id="casesList">
+                <!-- Cases will be populated here -->
+            </div>
         </aside>
 
         <!-- Content Panel -->
@@ -149,6 +156,7 @@
                     <div class="pdf-selection-status" id="pdfSelectionStatus" hidden>
                         Region selected. Click a code to apply. Press Esc to clear.
                     </div>
+                    <div class="document-cases-control" id="documentCasesControl" hidden></div>
                     <div class="zoom-controls" id="docZoomControls">
                         <button class="zoom-btn" id="docZoomOutBtn" data-action="adjustZoomOut" title="Zoom out">−</button>
                         <span class="zoom-level" id="zoomLevel">100%</span>
@@ -483,6 +491,61 @@
         </div>
     </div>
 
+    <!-- Add Case Modal -->
+    <div id="caseModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">New Case</h2>
+            <form id="caseForm" onsubmit="saveCase(event)">
+                <div class="form-group">
+                    <label class="form-label">Case Name</label>
+                    <input type="text" class="form-input" id="caseName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Type (optional)</label>
+                    <input type="text" class="form-input" id="caseType" placeholder="e.g. Person, Organisation, Site, Event">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parent Case (optional)</label>
+                    <select class="form-select" id="caseParent">
+                        <option value="">None (Top-level case)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCaseModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Case</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Case Add Documents Modal -->
+    <div id="caseAddDocumentsModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Add Documents to Case</h2>
+            <form id="caseAddDocumentsForm" onsubmit="saveCaseAddDocuments(event)">
+                <div class="case-doc-picker-list" id="caseAddDocumentsList"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCaseAddDocumentsModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Assign Document to Cases Modal -->
+    <div id="documentAssignCasesModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Assign to Cases</h2>
+            <form id="documentAssignCasesForm" onsubmit="saveDocumentAssignCases(event)">
+                <div class="case-doc-picker-list" id="documentAssignCasesList"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeDocumentAssignCasesModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Code Colour Modal -->
     <div id="codeColorModal" class="modal">
         <div class="modal-content code-color-modal-content">
@@ -700,6 +763,7 @@
     <script src="js/render.js"></script>
     <script src="js/documents.js"></script>
     <script src="js/codes.js"></script>
+    <script src="js/cases.js"></script>
     <script src="js/coding.js"></script>
     <script src="js/search.js"></script>
     <script src="js/memos.js"></script>

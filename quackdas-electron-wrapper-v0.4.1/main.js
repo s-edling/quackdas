@@ -14,6 +14,8 @@ const BACKUP_MAX_RECENT = 20;
 const BACKUP_DAILY_DAYS = 14;
 const BACKUP_DIR_NAME = 'project-backups';
 const LAST_PROJECT_FILE = 'last-project-path.json';
+const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
+const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -44,6 +46,29 @@ function sanitizeName(name, fallback = 'untitled-project') {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 64) || fallback;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  const precision = value >= 100 || idx === 0 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[idx]}`;
+}
+
+async function ensureFileWithinLimit(filePath, maxBytes, label) {
+  const stat = await fs.promises.stat(filePath);
+  if (!stat.isFile()) {
+    throw new Error(`${label} is not a regular file.`);
+  }
+  if (stat.size > maxBytes) {
+    throw new Error(`${label} is too large (${formatBytes(stat.size)}). Maximum supported size is ${formatBytes(maxBytes)}.`);
+  }
 }
 
 function getLastProjectPathFile() {
@@ -215,7 +240,13 @@ function createWindow() {
         {
           label: 'Open Project…',
           accelerator: 'CmdOrCtrl+O',
-          click: () => openProject()
+          click: async () => {
+            try {
+              await openProject();
+            } catch (err) {
+              dialog.showErrorBox('Open Project Failed', err?.message || String(err));
+            }
+          }
         },
         { type: 'separator' },
         {
@@ -268,6 +299,8 @@ async function openProject() {
     dialog.showErrorBox('Unsupported project format', 'Quackdas now supports QDPX projects only. Please open a .qdpx file.');
     return;
   }
+
+  await ensureFileWithinLimit(filePath, MAX_QDPX_FILE_BYTES, 'Selected project file');
 
   // QDPX file - read as binary and send to renderer
   const buffer = await fs.promises.readFile(filePath);
@@ -354,6 +387,7 @@ ipcMain.handle('project:openLastUsed', async () => {
       await persistLastProjectPath(null);
       return { ok: false, reason: 'unsupported' };
     }
+    await ensureFileWithinLimit(rememberedPath, MAX_QDPX_FILE_BYTES, 'Last opened project file');
     const buffer = await fs.promises.readFile(rememberedPath);
     return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
@@ -424,12 +458,13 @@ ipcMain.handle('file:openProjectFile', async () => {
   try {
     const filePath = filePaths[0];
     const ext = path.extname(filePath).toLowerCase();
-    currentProjectPath = filePath;
-    await persistLastProjectPath(currentProjectPath);
-    
+
     if (ext !== '.qdpx') {
       return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
     }
+    await ensureFileWithinLimit(filePath, MAX_QDPX_FILE_BYTES, 'Selected project file');
+    currentProjectPath = filePath;
+    await persistLastProjectPath(currentProjectPath);
     const buffer = await fs.promises.readFile(filePath);
     return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
@@ -451,6 +486,7 @@ ipcMain.handle('file:openDocumentFile', async () => {
   const ext = path.extname(p).toLowerCase().replace('.', '');
   const name = path.basename(p);
   try {
+    await ensureFileWithinLimit(p, MAX_DOCUMENT_FILE_BYTES, 'Selected document file');
     if (ext === 'docx') {
       const buf = await fs.promises.readFile(p);
       return { ok: true, kind: 'docx', name, data: buf.toString('base64') };

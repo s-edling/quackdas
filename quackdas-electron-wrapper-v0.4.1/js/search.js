@@ -77,7 +77,17 @@ function getSearchIndexEntriesSnapshot() {
         } else if (memo.type === 'segment') {
             const segment = appData.segments.find(s => s.id === memo.targetId);
             const doc = segment ? appData.documents.find(d => d.id === segment.docId) : null;
-            targetLabel = doc ? doc.title : 'Segment';
+            const memoCodeId = String(memo.codeId || '').trim();
+            const linkedCode = memoCodeId ? appData.codes.find(c => c.id === memoCodeId) : null;
+            if (doc && linkedCode) {
+                targetLabel = `${doc.title} • ${linkedCode.name}`;
+            } else if (doc) {
+                targetLabel = doc.title;
+            } else if (linkedCode) {
+                targetLabel = linkedCode.name;
+            } else {
+                targetLabel = 'Segment';
+            }
             docId = segment?.docId || '';
         }
 
@@ -254,8 +264,11 @@ function convertWildcardToRegex(term) {
 }
 
 function searchAllDocuments(query) {
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) return [];
+
     ensureSearchIndexCurrent();
-    const parsed = parseSearchQuery(query);
+    const parsed = parseSearchQuery(normalizedQuery);
     const results = [];
     
     // Pre-compile all regex patterns once (avoid recompilation per document)
@@ -359,7 +372,7 @@ function showSearchResults(query, results) {
         <span class="search-summary-label">Found ${results.length} result${results.length !== 1 ? 's' : ''} for</span>
         <div class="search-summary-input-wrapper">
             <svg class="toolbar-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" class="search-summary-input" id="modalSearchInput" value="${escapeHtml(query)}" placeholder="Refine search...">
+            <input type="text" class="search-summary-input" id="modalSearchInput" value="${escapeHtmlAttrValue(query)}" placeholder="Refine search...">
         </div>
     `;
     
