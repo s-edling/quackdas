@@ -1,6 +1,33 @@
+# macOS
 .DS_Store
 
-# Quackdas build/dependency artifacts
-quackdas-electron-wrapper-v0.4.1/node_modules/
-quackdas-electron-wrapper-v0.4.1/dist/
+# Node / Electron dependencies
+node_modules/
+**/node_modules/
 
+# Build / packaged outputs
+dist/
+build/
+out/
+release/
+**/dist/
+**/build/
+**/out/
+**/release/
+*.dmg
+*.zip
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors / IDEs
+.vscode/
+.idea/
+
+# Environment files
+.env*
