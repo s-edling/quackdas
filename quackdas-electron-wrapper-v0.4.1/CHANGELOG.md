@@ -2303,3 +2303,24 @@ Files touched:
 - `package.json`
 - `package-lock.json`
 - `CHANGELOG.md`
+
+## Version 0.6.5-build-2026-02-19cr
+Date: 2026-02-19
+
+What changed:
+- Compacted document cards in the right-hand panel lists (`Recent` and `All documents`) to show more items at once:
+  - reduced list padding,
+  - reduced card internal padding and inter-card spacing,
+  - tightened title/meta line spacing.
+- Reduced document card text size by roughly one point:
+  - title font size from `13px` to `12px`,
+  - meta font size from `11px` to `10px`.
+
+Why (one line):
+- To maximize visible document count per viewport and minimize wasted vertical space in the right-side document panels.
+
+Files touched:
+- `styles.css`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
