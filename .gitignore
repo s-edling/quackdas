@@ -32,6 +32,11 @@ pnpm-debug.log*
 # Environment files
 .env*
 
-# Local AI tooling instructions (kept out of repo)
-AGENTS.md
+# Local AI tooling overrides (kept out of repo)
 AGENTS.local.md
+
+# Local changelog scratchpad (rolled into CHANGELOG.md when committing)
+quackdas/CHANGELOG_UNRELEASED.md
+
+# Local technical scratchpad (not pushed)
+quackdas/WORKLOG_LOCAL.md
