@@ -16,6 +16,7 @@ const BACKUP_DIR_NAME = 'project-backups';
 const LAST_PROJECT_FILE = 'last-project-path.json';
 const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
 const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
+const MAX_OCR_IMAGE_BYTES = 32 * 1024 * 1024; // 32 MB
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -59,6 +60,15 @@ function formatBytes(bytes) {
   }
   const precision = value >= 100 || idx === 0 ? 0 : 1;
   return `${value.toFixed(precision)} ${units[idx]}`;
+}
+
+function estimateBase64DecodedBytes(base64Value) {
+  const base64 = String(base64Value || '');
+  if (!base64) return 0;
+  let padding = 0;
+  if (base64.endsWith('==')) padding = 2;
+  else if (base64.endsWith('=')) padding = 1;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
 async function ensureFileWithinLimit(filePath, maxBytes, label) {
@@ -550,7 +560,23 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
     }
 
     const imageBase64 = dataUrl.substring('data:image/png;base64,'.length);
+    const estimatedImageBytes = estimateBase64DecodedBytes(imageBase64);
+    if (!estimatedImageBytes) {
+      return { ok: false, error: 'Invalid OCR image payload.' };
+    }
+    if (estimatedImageBytes > MAX_OCR_IMAGE_BYTES) {
+      return {
+        ok: false,
+        error: `OCR image is too large (${formatBytes(estimatedImageBytes)}). Maximum supported size is ${formatBytes(MAX_OCR_IMAGE_BYTES)}.`
+      };
+    }
     const imageBuffer = Buffer.from(imageBase64, 'base64');
+    if (!imageBuffer.length || imageBuffer.length > MAX_OCR_IMAGE_BYTES) {
+      return {
+        ok: false,
+        error: `OCR image is too large (${formatBytes(imageBuffer.length)}). Maximum supported size is ${formatBytes(MAX_OCR_IMAGE_BYTES)}.`
+      };
+    }
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-ocr-'));
     const imgPath = path.join(tmpDir, 'page.png');

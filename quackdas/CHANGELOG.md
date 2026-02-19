@@ -2674,3 +2674,68 @@ Why (one line):
 Files touched:
 - `styles.css`
 - `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dn
+Date: 2026-02-19
+
+What changed:
+- Constrained the document viewer header layout so the document title cannot encroach into the toolbar button area.
+- Updated header title rendering to clamp at 2 lines with ellipsis and handle long unbroken words safely.
+- Kept toolbar actions as a fixed-width flex block on the right, with the title flexing/shrinking before the undo button.
+- Added a full-title tooltip on the header title element for truncated names.
+
+Why (one line):
+- To prevent long document titles from pushing toolbar controls or expanding the header beyond the intended compact layout.
+
+Files touched:
+- `styles.css`
+- `js/render.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dp
+Date: 2026-02-19
+
+What changed:
+- Fixed undo/redo state restoration to re-sync `document.caseIds` from restored case links, preventing stale case-document mapping after history navigation.
+- Added renderer-side file size guards for manual file import and drag-and-drop document import, with explicit user-facing size-limit errors.
+- Added a main-process OCR payload size cap before/after base64 decode to reject oversized OCR images early and avoid memory spikes.
+
+Why (one line):
+- To harden core data integrity and input safety with minimal behavioral change and low regression risk.
+
+Files touched:
+- `js/state.js`
+- `js/documents.js`
+- `main.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dq
+Date: 2026-02-19
+
+What changed:
+- Hardened PDF text-layer offset annotation so span-to-textItem offsets are only assigned when the rendered span structure and stored item structure align closely.
+- Added mapped-selection consistency checks before trusting `data-start`/`data-end` offsets for PDF text coding.
+- Kept existing DOM-offset fallback path and now clear stale selection state when both mapped and fallback resolution fail.
+
+Why (one line):
+- To prevent incorrect coded ranges when PDF.js text spans diverge from stored PDF text-item boundaries.
+
+Files touched:
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dr
+Date: 2026-02-19
+
+What changed:
+- Optimized case-analysis filter result generation by replacing repeated document/code linear scans with local ID lookup maps in sorting and row assembly paths.
+- Optimized case-code matrix column building to reuse a code lookup map instead of repeated `appData.codes.find(...)` calls.
+- Optimized code-view snippet rendering by caching code lookups per render pass before building segment visual styles.
+
+Why (one line):
+- To reduce avoidable repeated lookups in common analysis/render flows and keep UI responsiveness stable on larger projects.
+
+Files touched:
+- `js/ui.js`
+- `js/render.js`
+- `CHANGELOG.md`

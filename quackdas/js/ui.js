@@ -1356,22 +1356,25 @@ function getCaseAnalysisFilterResults() {
         if (!allowedDocSet) return true;
         return allowedDocSet.has(segment.docId);
     });
+    const docTitleById = new Map(
+        appData.documents.map((doc) => [doc.id, String(doc.title || '')])
+    );
 
     allMatches.sort((a, b) => {
-        const aDoc = appData.documents.find((doc) => doc.id === a.docId)?.title || '';
-        const bDoc = appData.documents.find((doc) => doc.id === b.docId)?.title || '';
+        const aDoc = docTitleById.get(a.docId) || '';
+        const bDoc = docTitleById.get(b.docId) || '';
         const titleCmp = aDoc.localeCompare(bDoc, undefined, { sensitivity: 'base' });
         if (titleCmp !== 0) return titleCmp;
         return Number(a.startIndex || 0) - Number(b.startIndex || 0);
     });
 
     const limited = allMatches.slice(0, caseAnalysisUiState.filter.resultLimit).map((segment) => {
-        const doc = appData.documents.find((d) => d.id === segment.docId);
+        const docTitle = docTitleById.get(segment.docId);
         const snippet = String(segment.text || '').trim() || '[No text available]';
         return {
             segmentId: segment.id,
             docId: segment.docId,
-            docTitle: doc?.title || 'Unknown document',
+            docTitle: docTitle || 'Unknown document',
             codeId,
             codeName: code.name,
             snippet: snippet.length > 240 ? `${snippet.slice(0, 237)}...` : snippet
@@ -1403,11 +1406,12 @@ function getCaseSummaryData(caseId) {
             });
         });
     });
+    const codeNameById = new Map(appData.codes.map((item) => [item.id, item.name]));
 
     const topCodes = Array.from(codeCounts.entries())
         .map(([codeId, count]) => {
-            const code = appData.codes.find((item) => item.id === codeId);
-            return code ? { codeId, codeName: code.name, count } : null;
+            const codeName = codeNameById.get(codeId);
+            return codeName ? { codeId, codeName, count } : null;
         })
         .filter(Boolean)
         .sort((a, b) => {
@@ -1449,16 +1453,18 @@ function getCaseCodeReferenceCount(caseId, codeId) {
 }
 
 function getCodeColumnsForMatrix() {
+    const codeById = new Map(appData.codes.map((code) => [code.id, code]));
+
     if (caseAnalysisUiState.matrix.codeMode === 'group') {
         const rootId = caseAnalysisUiState.matrix.codeGroupId;
-        const root = appData.codes.find((code) => code.id === rootId);
+        const root = codeById.get(rootId);
         if (!root) return [];
         let codeIds = [rootId];
         if (typeof getDescendantCodeIds === 'function') {
             codeIds = codeIds.concat(getDescendantCodeIds(rootId));
         }
         return Array.from(new Set(codeIds))
-            .map((codeId) => appData.codes.find((code) => code.id === codeId))
+            .map((codeId) => codeById.get(codeId))
             .filter(Boolean)
             .map((code) => ({ codeId: code.id, codeName: code.name }));
     }
@@ -1466,7 +1472,7 @@ function getCodeColumnsForMatrix() {
     const valid = new Set(appData.codes.map((code) => code.id));
     return caseAnalysisUiState.matrix.selectedCodeIds
         .filter((codeId) => valid.has(codeId))
-        .map((codeId) => appData.codes.find((code) => code.id === codeId))
+        .map((codeId) => codeById.get(codeId))
         .filter(Boolean)
         .map((code) => ({ codeId: code.id, codeName: code.name }));
 }

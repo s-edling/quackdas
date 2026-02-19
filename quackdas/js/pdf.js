@@ -118,6 +118,77 @@ function getPdfPageTextOffset(doc, pageNum) {
     return offset;
 }
 
+function normalizePdfSelectionText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function compactPdfSelectionText(value) {
+    return normalizePdfSelectionText(value).replace(/\s+/g, '');
+}
+
+function isMappedPdfSelectionConsistent(doc, startPos, endPos, selectedText) {
+    if (!doc || typeof doc.content !== 'string') return false;
+    if (!Number.isFinite(startPos) || !Number.isFinite(endPos) || endPos <= startPos) return false;
+
+    const mapped = normalizePdfSelectionText(doc.content.slice(startPos, endPos));
+    const selected = normalizePdfSelectionText(selectedText);
+    if (!mapped || !selected) return false;
+
+    if (mapped === selected) return true;
+    if (mapped.includes(selected) || selected.includes(mapped)) return true;
+
+    const mappedCompact = compactPdfSelectionText(mapped);
+    const selectedCompact = compactPdfSelectionText(selected);
+    if (!mappedCompact || !selectedCompact) return false;
+    if (mappedCompact === selectedCompact) return true;
+    if (mappedCompact.includes(selectedCompact) || selectedCompact.includes(mappedCompact)) return true;
+    return false;
+}
+
+function annotatePdfTextLayerWithStoredOffsets(textLayer, pageInfo) {
+    if (!textLayer || !pageInfo || !Array.isArray(pageInfo.textItems)) return false;
+
+    const spans = Array.from(textLayer.querySelectorAll('span'))
+        .filter(span => (span.textContent || '').trim().length > 0);
+    const items = pageInfo.textItems.filter((item) => (
+        item &&
+        Number.isFinite(Number(item.start)) &&
+        Number.isFinite(Number(item.end)) &&
+        Number(item.end) >= Number(item.start) &&
+        String(item.text || '').length > 0
+    ));
+
+    if (spans.length === 0 || items.length === 0) return false;
+    if (spans.length !== items.length) return false;
+
+    const allowedMismatches = Math.floor(items.length * 0.08);
+    let mismatches = 0;
+    for (let i = 0; i < spans.length; i++) {
+        const spanText = normalizePdfSelectionText(spans[i].textContent || '');
+        const itemText = normalizePdfSelectionText(items[i].text || '');
+        if (!spanText && !itemText) continue;
+        if (spanText === itemText) continue;
+
+        const spanCompact = compactPdfSelectionText(spanText);
+        const itemCompact = compactPdfSelectionText(itemText);
+        const closeEnough = !!(
+            spanCompact &&
+            itemCompact &&
+            (spanCompact === itemCompact || spanCompact.includes(itemCompact) || itemCompact.includes(spanCompact))
+        );
+        if (!closeEnough) {
+            mismatches += 1;
+            if (mismatches > allowedMismatches) return false;
+        }
+    }
+
+    for (let i = 0; i < spans.length; i++) {
+        spans[i].dataset.start = String(items[i].start);
+        spans[i].dataset.end = String(items[i].end);
+    }
+    return true;
+}
+
 function buildPageCharRangesFromStoredOffsets(doc) {
     if (!doc || !Array.isArray(doc.pdfPages) || doc.pdfPages.length === 0) return null;
     const ranges = [];
@@ -1290,19 +1361,10 @@ async function renderPdfPage(pageNum, doc, expectedToken = currentPdfState.rende
 
     if (expectedToken !== currentPdfState.renderToken) return;
 
-    // Annotate text layer spans with absolute document indices for robust coding selection.
+    // Annotate text layer spans with absolute document indices only when mapping is plausible.
+    // When PDF.js span structure diverges from stored textItems, selection falls back to DOM offsets.
     if (pageInfo && Array.isArray(pageInfo.textItems)) {
-        const textSpans = Array.from(textLayer.querySelectorAll('span'));
-        let itemIndex = 0;
-        for (const span of textSpans) {
-            const txt = span.textContent || '';
-            if (!txt.length) continue;
-            const mapped = pageInfo.textItems[itemIndex];
-            if (!mapped) break;
-            span.dataset.start = String(mapped.start);
-            span.dataset.end = String(mapped.end);
-            itemIndex += 1;
-        }
+        annotatePdfTextLayerWithStoredOffsets(textLayer, pageInfo);
     }
 
     // Region-based PDF coding overlays and interaction
@@ -1358,26 +1420,46 @@ function handlePdfTextSelection(doc) {
     const endItem = findTextItem(endContainer.parentElement || endContainer);
     
     if (startItem && endItem) {
-        startPos = parseInt(startItem.dataset.start) + range.startOffset;
-        endPos = parseInt(endItem.dataset.start) + range.endOffset;
-        
-        // Ensure valid range
-        if (startPos > endPos) {
-            [startPos, endPos] = [endPos, startPos];
+        const startBase = Number.parseInt(startItem.dataset.start, 10);
+        const endBase = Number.parseInt(endItem.dataset.start, 10);
+
+        if (Number.isFinite(startBase) && Number.isFinite(endBase)) {
+            const startItemEnd = Number.parseInt(startItem.dataset.end, 10);
+            const endItemEnd = Number.parseInt(endItem.dataset.end, 10);
+            const maxStartOffset = Number.isFinite(startItemEnd)
+                ? Math.max(0, startItemEnd - startBase)
+                : range.startOffset;
+            const maxEndOffset = Number.isFinite(endItemEnd)
+                ? Math.max(0, endItemEnd - endBase)
+                : range.endOffset;
+
+            const safeStartOffset = Math.max(0, Math.min(range.startOffset, maxStartOffset));
+            const safeEndOffset = Math.max(0, Math.min(range.endOffset, maxEndOffset));
+
+            startPos = startBase + safeStartOffset;
+            endPos = endBase + safeEndOffset;
+
+            // Ensure valid range
+            if (startPos > endPos) {
+                [startPos, endPos] = [endPos, startPos];
+            }
+
+            // Clamp to document bounds
+            startPos = Math.max(0, Math.min(startPos, doc.content.length));
+            endPos = Math.max(0, Math.min(endPos, doc.content.length));
+
+            if (
+                endPos > startPos &&
+                isMappedPdfSelectionConsistent(doc, startPos, endPos, text)
+            ) {
+                appData.selectedText = {
+                    text: text,
+                    startIndex: startPos,
+                    endIndex: endPos
+                };
+                return;
+            }
         }
-        
-        // Clamp to document bounds
-        startPos = Math.max(0, Math.min(startPos, doc.content.length));
-        endPos = Math.max(0, Math.min(endPos, doc.content.length));
-        
-        if (endPos > startPos) {
-            appData.selectedText = {
-                text: text,
-                startIndex: startPos,
-                endIndex: endPos
-            };
-        }
-        return;
     }
 
     // Fallback: if PDF.js text spans don't map cleanly, use DOM text offsets.
@@ -1393,8 +1475,11 @@ function handlePdfTextSelection(doc) {
                 startIndex: startIndex,
                 endIndex: endIndex
             };
+            return;
         }
     }
+
+    appData.selectedText = null;
 }
 
 /**

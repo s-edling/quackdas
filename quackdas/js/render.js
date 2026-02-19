@@ -329,6 +329,14 @@ function renderCurrentDocument() {
     }
     
     // If in filtered view, we show all documents regardless of current selection
+    const setDocumentTitleText = (titleText) => {
+        const titleEl = document.getElementById('documentTitle');
+        if (!titleEl) return;
+        const safeTitle = String(titleText || '');
+        titleEl.textContent = safeTitle;
+        titleEl.title = safeTitle;
+    };
+
     if (appData.filterCodeId) {
         if (contentElement) contentElement.classList.add('code-view-mode');
         if (contentBody) contentBody.classList.add('code-view-mode');
@@ -336,7 +344,7 @@ function renderCurrentDocument() {
         setZoomControlsVisible(false);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         const code = appData.codes.find(c => c.id === appData.filterCodeId);
-        document.getElementById('documentTitle').textContent = `Code view · ${code ? code.name : 'Code'}`;
+        setDocumentTitleText(`Code view · ${code ? code.name : 'Code'}`);
         renderFilteredView();
         renderCodeInspector();
         return;
@@ -349,7 +357,7 @@ function renderCurrentDocument() {
         setZoomControlsVisible(false);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         const selectedCase = appData.cases.find(c => c.id === appData.selectedCaseId);
-        document.getElementById('documentTitle').textContent = selectedCase ? `Case view · ${selectedCase.name}` : 'Case view';
+        setDocumentTitleText(selectedCase ? `Case view · ${selectedCase.name}` : 'Case view');
         renderCaseSheet(appData.selectedCaseId);
         renderCodeInspector();
         return;
@@ -372,13 +380,13 @@ function renderCurrentDocument() {
                 <p class="empty-state-hint">Or drag and drop a .txt, .docx, or .pdf file anywhere</p>
             </div>
         `;
-        document.getElementById('documentTitle').textContent = 'Select or add a document';
+        setDocumentTitleText('Select or add a document');
         // Clean up any PDF state
         if (typeof cleanupPdfState === 'function') cleanupPdfState();
         return;
     }
 
-    document.getElementById('documentTitle').textContent = doc.title;
+    setDocumentTitleText(doc.title);
     if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
     
     // Check if this is a PDF document
@@ -1596,6 +1604,7 @@ function renderFilteredView() {
         html += '<p style="color: var(--text-secondary);">No segments found for this code.</p>';
     } else {
         const rows = [];
+        const codeById = new Map(appData.codes.map((code) => [code.id, code]));
         sortedDocs.forEach(doc => {
             const docSegments = segmentsByDoc[doc.id];
             const segmentCreatedMs = (segment) => {
@@ -1636,6 +1645,9 @@ function renderFilteredView() {
                 const inlineTextMemoHtml = (!segment.pdfRegion && memos.length > 0)
                     ? `<div class="filter-snippet-memo-inline">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
                     : '';
+                const segmentCodes = Array.isArray(segment.codeIds)
+                    ? segment.codeIds.map((id) => codeById.get(id)).filter(Boolean)
+                    : [];
                 const previewHtml = segment.pdfRegion
                     ? `<div class="filter-pdf-row">
                             <div class="filter-pdf-preview" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">
@@ -1653,7 +1665,7 @@ function renderFilteredView() {
                     html: `<div class="filter-snippet ${segment.pdfRegion ? 'pdf-snippet' : ''} ${codeInspectorState.segmentId === segment.id ? 'inspector-selected' : ''}" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">
                         ${previewHtml}
                         <div class="filter-snippet-main">
-                            <span class="coded-segment" style="${buildSegmentVisualStyleFromCodes(segment.codeIds.map(id => appData.codes.find(c => c.id === id)).filter(Boolean))}"><span class="coded-segment-text">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span><span class="coded-segment-marker" aria-hidden="true"></span></span>
+                            <span class="coded-segment" style="${buildSegmentVisualStyleFromCodes(segmentCodes)}"><span class="coded-segment-text">${preserveLineBreaks(escapeHtml(snippetText))}${inlineTextMemoHtml}</span><span class="coded-segment-marker" aria-hidden="true"></span></span>
                         </div>
                     </div>`
                 });

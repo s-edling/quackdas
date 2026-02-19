@@ -9,6 +9,29 @@ let electronPickedDocument = null;
 // Folder management
 const MAX_FOLDER_DEPTH = 5;
 const MAX_ITERATIONS = 100; // Safety limit to prevent infinite loops
+const MAX_IMPORTED_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
+
+function formatDocumentBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+        value /= 1024;
+        idx += 1;
+    }
+    const precision = value >= 100 || idx === 0 ? 0 : 1;
+    return `${value.toFixed(precision)} ${units[idx]}`;
+}
+
+function ensureImportFileWithinLimit(file) {
+    if (!file || !Number.isFinite(file.size)) return true;
+    if (file.size <= MAX_IMPORTED_DOCUMENT_FILE_BYTES) return true;
+
+    const fileName = file.name || 'Selected file';
+    alert(`"${fileName}" is too large (${formatDocumentBytes(file.size)}). Maximum supported size is ${formatDocumentBytes(MAX_IMPORTED_DOCUMENT_FILE_BYTES)}.`);
+    return false;
+}
 
 function getFolderDepth(folderId) {
     let depth = 0;
@@ -511,6 +534,7 @@ async function importDocument(e) {
         alert('Please select a file to import.');
         return;
     }
+    if (!ensureImportFileWithinLimit(file)) return;
     const fileName = file.name.toLowerCase();
     
     if (fileName.endsWith('.pdf')) {
@@ -790,6 +814,7 @@ function handleDroppedFiles(files) {
 }
 
 function handleDroppedDocument(file) {
+    if (!ensureImportFileWithinLimit(file)) return;
     const fileName = file.name.toLowerCase();
     const title = file.name.replace(/\.[^/.]+$/, '');
     

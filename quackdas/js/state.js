@@ -653,6 +653,9 @@ function undo() {
     appData.currentDocId = restored.currentDocId;
     appData.selectedCaseId = restored.selectedCaseId || null;
     appData.filterCodeId = restored.filterCodeId;
+    if (typeof syncDocumentCaseIdsFromCases === 'function') {
+        syncDocumentCaseIdsFromCases();
+    }
     
     saveData();
     renderAll();
@@ -690,6 +693,9 @@ function redo() {
     appData.currentDocId = restored.currentDocId;
     appData.selectedCaseId = restored.selectedCaseId || null;
     appData.filterCodeId = restored.filterCodeId;
+    if (typeof syncDocumentCaseIdsFromCases === 'function') {
+        syncDocumentCaseIdsFromCases();
+    }
     
     saveData();
     renderAll();
