@@ -2468,3 +2468,209 @@ Files touched:
 - `js/pdf.js`
 - `js/search.js`
 - `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19da
+Date: 2026-02-19
+
+What changed:
+- Changed PDF initial render behavior for pending global-search navigation to render the target page first (instead of rendering page 1 and then jumping).
+- Preserved region-hit highlight behavior without forcing an unnecessary second render when initial target page already matches.
+- Limited first-page stabilization retry to true default page-1 initial render only (no retry when navigation target page is explicit).
+
+Why (one line):
+- To remove the visible page-1 flash before jump and make global-search PDF navigation feel immediate.
+
+Files touched:
+- `js/pdf.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19db
+Date: 2026-02-19
+
+What changed:
+- Added quoted-phrase support in global search parsing so multi-word queries in quotes are treated as a single term.
+- Updated boolean parsing to recognize `AND`, `OR`, and `NOT` operators outside quotes while preserving quoted text literally.
+- Updated one-letter-query detection to use the same tokenizer, so quoted one-letter queries (for example `"a"`) are still blocked.
+
+Why (one line):
+- To make global search support precise multi-word phrase matching without breaking existing boolean search behavior.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dc
+Date: 2026-02-19
+
+What changed:
+- Added page-number display for PDF document hits in global search result rows.
+- Mapped each PDF hit index to a page using stored text offsets when available, with fallback to legacy cumulative text-length mapping.
+- Updated PDF hit result labels to include page number (for example, `Document · page 7 · hit 2/9`).
+
+Why (one line):
+- To make multi-hit PDF global search easier to scan by showing where each hit is located before clicking.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dd
+Date: 2026-02-19
+
+What changed:
+- Compacted document cards in both right-hand document lists (`Recent` and `All`) by tightening vertical padding, reducing card gaps, and keeping the existing rounded/selected look.
+- Added a compact card structure with a dense title row:
+  - title clamped to 2 lines with ellipsis (`-webkit-line-clamp`),
+  - full title exposed via browser tooltip (`title` attribute),
+  - right-aligned codes-count badge shown by default.
+- Kept the PDF badge inline with the title row and aligned it for compact height.
+- Changed metadata visibility behavior:
+  - by default, only the codes-count badge is shown,
+  - chars/pages (+ participant ID when present) are hidden by default and revealed on hover, active/selected state, or focus-within (accessibility).
+- Kept metadata/settings affordances compact and discoverable by revealing the metadata button on hover/active/selected/focus.
+
+Why (one line):
+- To fit significantly more document items in the same viewport while preserving readable titles and surfacing secondary metadata only when context demands it.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19de
+Date: 2026-02-19
+
+What changed:
+- Removed the inserted separator gap between a folder’s subfolder block and that same folder’s own document items, so parent documents now follow directly after the last subfolder document.
+- Restored bold document title text in compact document cards.
+
+Why (one line):
+- To reduce unnecessary vertical whitespace in nested folder views and improve document title scannability.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19df
+Date: 2026-02-19
+
+What changed:
+- Removed bold styling from compact document title text.
+- Increased compact document title font size by 1px (from `12px` to `13px`).
+
+Why (one line):
+- To restore regular title weight while keeping readability higher in compact lists.
+
+Files touched:
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dg
+Date: 2026-02-19
+
+What changed:
+- Fixed global-search PDF hit page labels showing `page 0` by normalizing page numbers to valid 1-based values.
+- Updated page-label rendering to only show page text when a valid page number exists.
+- Added safer fallbacks in PDF hit page mapping for missing/invalid page metadata.
+
+Why (one line):
+- To ensure PDF search results display correct page labels and never show invalid `page 0`.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dh
+Date: 2026-02-19
+
+What changed:
+- Fixed global-search PDF page labels that were collapsing to page 1 by improving page-number resolution for legacy page metadata.
+- Added support for multiple page-number field names and 0-based legacy page numbering, with deterministic fallback to page array order.
+- Updated PDF page-range sorting for label mapping to use character start offset ordering when offset data exists.
+
+Why (one line):
+- To make PDF hit labels reflect the correct page across both current and older stored PDF page schemas.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19di
+Date: 2026-02-19
+
+What changed:
+- Fixed PDF global-search page labels always showing page 1 by prioritizing `pdfTextPositions` absolute offsets for hit-to-page mapping.
+- Added compatibility fallbacks for legacy text item schemas in page mapping:
+  - supports `start/end` and `startIndex/endIndex`,
+  - supports text fields `text` and `str` when estimating page lengths.
+
+Why (one line):
+- To produce accurate per-hit PDF page labels across both current and legacy project formats.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dj
+Date: 2026-02-19
+
+What changed:
+- Implemented a shared PDF hit-to-page resolver function (`pdfResolvePageForCharPos`) in `pdf.js` and used it for both:
+  - actual navigation (`pdfGoToPosition`), and
+  - global-search PDF page labels.
+- Extended resolver fallbacks to support unopened PDFs by optionally reading text directly from stored PDF binary data and caching computed page ranges.
+- Updated global search flow to await async page-resolution so labels reflect the same mapping logic used for navigation.
+
+Why (one line):
+- To ensure PDF page labels in global search are derived from the exact same resolver as navigation, eliminating inconsistent page reporting.
+
+Files touched:
+- `js/pdf.js`
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dk
+Date: 2026-02-19
+
+What changed:
+- Added persistence for the last global-search session (query + result list) so reopening the app/project restores the previous global-search view.
+- Restored the saved global-search state when opening the global search modal, instead of always starting from an empty prompt.
+- Scoped persisted search state by current project signature to avoid showing unrelated results across projects.
+
+Why (one line):
+- To keep global-search context available across window closes so users can continue where they left off.
+
+Files touched:
+- `js/search.js`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dl
+Date: 2026-02-19
+
+What changed:
+- Added post-render single-line detection for compact document card titles in both right-hand document lists.
+- Applied a dedicated class (`document-item-single-line-title`) to cards whose titles render on one line.
+- Vertically centered title-row content only for those single-line cards (title row elements, code badge, PDF/memo badges, metadata button).
+
+Why (one line):
+- To improve visual balance and readability by centering short document titles without affecting two-line title cards.
+
+Files touched:
+- `js/render.js`
+- `styles.css`
+- `CHANGELOG.md`
+
+## Version 0.6.6-build-2026-02-19dm
+Date: 2026-02-19
+
+What changed:
+- Standardized compact document-card PDF badge vertical alignment so it is always centered in the title row.
+- Removed the PDF badge top-offset style that caused inconsistent positioning between cards.
+
+Why (one line):
+- To ensure consistent, predictable badge alignment across document cards regardless of title wrapping.
+
+Files touched:
+- `styles.css`
+- `CHANGELOG.md`

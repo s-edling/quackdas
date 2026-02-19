@@ -13,6 +13,17 @@ function renderAll() {
     if (typeof updateHeaderPrimaryAction === 'function') updateHeaderPrimaryAction();
 }
 
+function updateCompactDocumentTitleLineClasses(scope) {
+    const root = scope || document;
+    const titleEls = root.querySelectorAll('.document-item.document-item-compact .document-item-title-text');
+    titleEls.forEach((titleEl) => {
+        const card = titleEl.closest('.document-item.document-item-compact');
+        if (!card) return;
+        const isSingleLine = Math.ceil(titleEl.scrollHeight) <= Math.ceil(titleEl.clientHeight) + 1;
+        card.classList.toggle('document-item-single-line-title', isSingleLine);
+    });
+}
+
 function renderDocuments() {
     const allList = document.getElementById('documentsList');
     const recentList = document.getElementById('recentDocumentsList');
@@ -40,15 +51,22 @@ function renderDocuments() {
         const safeDocIdAttr = escapeHtmlAttrValue(doc.id);
         const memoCount = getMemoCountForTarget('document', doc.id);
         const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭${memoCount}</span>` : '';
-        const metaPreview = doc.metadata?.participantId ? ` • ID: ${escapeHtml(doc.metadata.participantId)}` : '';
+        const titleText = String(doc.title || 'Untitled document');
         const indentStyle = indent > 0 ? `style="margin-left: ${12 + indent * 16}px;"` : '';
         const isPdf = doc.type === 'pdf';
         const typeIndicator = isPdf ? '<span class="doc-type-badge" title="PDF document">PDF</span>' : '';
         const contentInfo = isPdf ? `${doc.pdfPages?.length || '?'} pages` : `${doc.content.length} chars`;
+        const codeCount = getDocSegmentCountFast(doc.id);
+        const codeLabel = `${codeCount} code${codeCount !== 1 ? 's' : ''}`;
+        const metaParts = [contentInfo];
+        if (doc.metadata?.participantId) {
+            metaParts.push(`ID: ${escapeHtml(doc.metadata.participantId)}`);
+        }
+        const extraMeta = metaParts.join(' • ');
         
         const isSelected = Array.isArray(appData.selectedDocIds) && appData.selectedDocIds.includes(doc.id);
         return `
-            <div class="document-item ${doc.id === appData.currentDocId ? 'active' : ''} ${isSelected ? 'selected' : ''}" 
+            <div class="document-item document-item-compact ${doc.id === appData.currentDocId ? 'active' : ''} ${isSelected ? 'selected' : ''}" 
                  ${indentStyle} 
                  draggable="true"
                  data-doc-id="${safeDocIdAttr}"
@@ -56,11 +74,16 @@ function renderDocuments() {
                  ondragend="handleDocDragEnd(event)"
                 onclick="selectDocumentFromList(event, '${safeDocIdJs}')" 
                 oncontextmenu="openDocumentContextMenu('${safeDocIdJs}', event)">
-                <div class="document-item-title">
-                    ${typeIndicator}${escapeHtml(doc.title)}${memoIndicator}
-                    <button class="code-action-btn" onclick="openDocumentMetadata('${safeDocIdJs}', event)" title="Edit metadata" style="float: right;"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+                <div class="document-item-main-row">
+                    <div class="document-item-title-wrap">
+                        ${typeIndicator}
+                        <span class="document-item-title-text" title="${escapeHtmlAttrValue(titleText)}">${escapeHtml(titleText)}</span>
+                        ${memoIndicator}
+                    </div>
+                    <span class="document-item-code-badge" title="${escapeHtmlAttrValue(`${codeCount} coded segment${codeCount !== 1 ? 's' : ''}`)}">${escapeHtml(codeLabel)}</span>
+                    <button class="code-action-btn document-item-settings-btn" onclick="openDocumentMetadata('${safeDocIdJs}', event)" title="Edit metadata"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
                 </div>
-                <div class="document-item-meta">${contentInfo} • ${getDocSegmentCountFast(doc.id)} codes${metaPreview}</div>
+                <div class="document-item-meta">${extraMeta}</div>
             </div>
         `;
     };
@@ -114,10 +137,6 @@ function renderDocuments() {
 
                 // Render documents in this folder
                 const docsInFolder = docsByFolder.get(folder.id) || [];
-                const subfoldersInFolder = folderChildrenByParent.get(folder.id) || [];
-                if (subfoldersInFolder.length > 0 && docsInFolder.length > 0) {
-                    html += `<div class="folder-level-separator" style="margin-left: ${12 + (indent + 1) * 16}px;"></div>`;
-                }
                 docsInFolder.forEach(doc => {
                     html += renderDocItem(doc, indent + 1);
                 });
@@ -161,6 +180,7 @@ function renderDocuments() {
     `;
     
     allList.innerHTML = allHtml;
+    updateCompactDocumentTitleLineClasses(allList);
     
     // Render recent documents (5 most recently accessed)
     const recentDocs = appData.documents
@@ -174,6 +194,7 @@ function renderDocuments() {
         recentList.style.maxHeight = 'none';
     } else {
         recentList.innerHTML = recentDocs.map(doc => renderDocItem(doc, 0)).join('');
+        updateCompactDocumentTitleLineClasses(recentList);
         sizeRecentDocumentsListViewport(recentList);
     }
 }

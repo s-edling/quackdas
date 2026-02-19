@@ -8,6 +8,8 @@ const globalSearchIndex = {
     entries: new Map() // key -> { kind, kindLabel, primaryId, docId, title, searchText }
 };
 let searchResultsDelegationBound = false;
+const GLOBAL_SEARCH_SESSION_STORAGE_PREFIX = 'quackdas-global-search-session-v1:';
+const MAX_PERSISTED_GLOBAL_RESULTS = 1000;
 
 function initSearchResultsDelegatedHandlers() {
     if (searchResultsDelegationBound) return;
@@ -132,16 +134,66 @@ function ensureSearchIndexCurrent() {
     globalSearchIndex.dirty = false;
 }
 
+function tokenizeSearchQuery(query) {
+    const src = String(query || '');
+    const tokens = [];
+    let current = '';
+    let inQuotes = false;
+
+    const pushToken = (text, quoted) => {
+        const value = String(text || '').trim();
+        if (!value) return;
+        tokens.push({ text: value, quoted: !!quoted });
+    };
+
+    for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === '"') {
+            if (inQuotes) {
+                pushToken(current, true);
+                current = '';
+                inQuotes = false;
+            } else {
+                pushToken(current, false);
+                current = '';
+                inQuotes = true;
+            }
+            continue;
+        }
+        if (!inQuotes && /\s/.test(ch)) {
+            pushToken(current, false);
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+
+    pushToken(current, inQuotes);
+    return tokens;
+}
+
+function isBooleanOperatorToken(token, operator) {
+    if (!token || token.quoted) return false;
+    return String(token.text || '').toUpperCase() === operator;
+}
+
+function isAnyBooleanOperatorToken(token) {
+    return (
+        isBooleanOperatorToken(token, 'AND') ||
+        isBooleanOperatorToken(token, 'OR') ||
+        isBooleanOperatorToken(token, 'NOT')
+    );
+}
+
 function isSingleLetterGlobalSearchQuery(query) {
     const normalized = String(query || '').trim();
     if (!normalized) return false;
-    const tokens = normalized
-        .split(/\s+/)
-        .map(t => t.trim())
-        .filter(Boolean)
-        .filter(t => !/^(AND|OR|NOT)$/i.test(t));
-    if (tokens.length !== 1) return false;
-    const core = tokens[0].replace(/\*/g, '').trim();
+    const valueTokens = tokenizeSearchQuery(normalized).filter(token => !isAnyBooleanOperatorToken(token));
+    if (valueTokens.length !== 1) return false;
+    const core = String(valueTokens[0].text || '')
+        .replace(/\*/g, '')
+        .replace(/\s+/g, '')
+        .trim();
     return core.length === 1;
 }
 
@@ -151,6 +203,71 @@ function showGlobalSearchQueryValidationMessage(message) {
     list.innerHTML = `<p style="color: var(--text-secondary); text-align: center; padding: 40px;">${escapeHtml(message)}</p>`;
 }
 
+function getGlobalSearchSessionStorageKey() {
+    const projectName = String(appData?.projectName || 'untitled-project').trim().toLowerCase();
+    const docSignature = Array.isArray(appData?.documents)
+        ? appData.documents
+            .map((doc) => `${String(doc?.id || '')}:${String(doc?.type || 'text')}:${String(doc?.title || '')}`)
+            .join('|')
+        : '';
+    return `${GLOBAL_SEARCH_SESSION_STORAGE_PREFIX}${projectName}:${docSignature.length}`;
+}
+
+function sanitizeGlobalSearchResultForPersistence(result) {
+    if (!result || typeof result !== 'object') return null;
+    const snippets = Array.isArray(result.snippets)
+        ? result.snippets.slice(0, 3).map((snippet) => ({
+            text: String(snippet?.text || '').slice(0, 600)
+        }))
+        : [];
+    return {
+        kind: String(result.kind || ''),
+        kindLabel: String(result.kindLabel || ''),
+        primaryId: String(result.primaryId || ''),
+        docId: String(result.docId || ''),
+        title: String(result.title || ''),
+        groupTitle: String(result.groupTitle || ''),
+        matchCount: Number.isFinite(result.matchCount) ? result.matchCount : 0,
+        hitOrdinal: Number.isFinite(result.hitOrdinal) ? result.hitOrdinal : null,
+        matchIndex: Number.isFinite(result.matchIndex) ? result.matchIndex : null,
+        pageNum: normalizePdfPageNumber(result.pageNum),
+        snippets,
+        firstMatchIndex: Number.isFinite(result.firstMatchIndex) ? result.firstMatchIndex : -1
+    };
+}
+
+function persistGlobalSearchSession(query, results) {
+    if (typeof localStorage === 'undefined') return;
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) return;
+
+    const payload = {
+        query: normalizedQuery,
+        savedAt: new Date().toISOString(),
+        results: Array.isArray(results)
+            ? results.slice(0, MAX_PERSISTED_GLOBAL_RESULTS).map(sanitizeGlobalSearchResultForPersistence).filter(Boolean)
+            : []
+    };
+    try {
+        localStorage.setItem(getGlobalSearchSessionStorageKey(), JSON.stringify(payload));
+    } catch (_) {}
+}
+
+function loadPersistedGlobalSearchSession() {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        const raw = localStorage.getItem(getGlobalSearchSessionStorageKey());
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const query = String(parsed?.query || '').trim();
+        if (!query) return null;
+        const results = Array.isArray(parsed?.results) ? parsed.results.map(sanitizeGlobalSearchResultForPersistence).filter(Boolean) : [];
+        return { query, results };
+    } catch (_) {
+        return null;
+    }
+}
+
 function openSearchModal() {
     if (typeof closeInPageSearch === 'function') closeInPageSearch();
     if (appData.documents.length === 0) {
@@ -158,10 +275,21 @@ function openSearchModal() {
         return;
     }
     
-    // Show modal with empty search
+    const persistedSession = loadPersistedGlobalSearchSession();
+
+    // Show modal with saved search if available
     const modal = document.getElementById('searchResultsModal');
     const summary = document.getElementById('searchSummary');
     const list = document.getElementById('searchResultsList');
+
+    if (persistedSession && persistedSession.query) {
+        showSearchResults(persistedSession.query, persistedSession.results);
+        setTimeout(() => {
+            const input = document.getElementById('modalSearchInput');
+            if (input) input.focus();
+        }, 50);
+        return;
+    }
     
     summary.innerHTML = `
         <span class="search-summary-label">Search</span>
@@ -174,7 +302,7 @@ function openSearchModal() {
     list.innerHTML = '<p style="color: var(--text-tertiary); text-align: center; padding: 40px;">Type to search across documents, code descriptions, and annotations</p>';
     
     // Add enter key handler
-    document.getElementById('modalSearchInput').addEventListener('keydown', function(e) {
+    document.getElementById('modalSearchInput').addEventListener('keydown', async function(e) {
         if (e.key === 'Enter') {
             const query = this.value.trim();
             if (query) {
@@ -182,7 +310,7 @@ function openSearchModal() {
                     showGlobalSearchQueryValidationMessage('Search must be at least 2 characters.');
                     return;
                 }
-                const results = searchAllDocuments(query);
+                const results = await searchAllDocuments(query);
                 showSearchResults(query, results);
             }
         }
@@ -196,7 +324,7 @@ function openSearchModal() {
     }, 50);
 }
 
-function performSearch(query) {
+async function performSearch(query) {
     if (appData.documents.length === 0) {
         alert('No documents to search.');
         return;
@@ -206,83 +334,49 @@ function performSearch(query) {
         return;
     }
     
-    const results = searchAllDocuments(query);
+    const results = await searchAllDocuments(query);
     showSearchResults(query, results);
 }
 
 function parseSearchQuery(query) {
     // Parse Boolean operators and wildcards
     // Returns an object with { type: 'AND'|'OR'|'SIMPLE', terms: [...], notTerms: [...] }
-    
-    const upperQuery = query.toUpperCase();
-    let type = 'SIMPLE';
-    let terms = [];
-    let notTerms = [];
-    
-    // Check for OR
-    if (upperQuery.includes(' OR ')) {
-        type = 'OR';
-        const parts = query.split(/\s+OR\s+/i);
-        parts.forEach(part => {
-            const parsed = parseSimpleTerm(part.trim());
-            if (parsed.not) {
-                notTerms.push(parsed.term);
-            } else {
-                terms.push(parsed.term);
-            }
-        });
-    }
-    // Check for AND (explicit or implicit with multiple words)
-    else if (upperQuery.includes(' AND ')) {
-        type = 'AND';
-        const parts = query.split(/\s+AND\s+/i);
-        parts.forEach(part => {
-            const parsed = parseSimpleTerm(part.trim());
-            if (parsed.not) {
-                notTerms.push(parsed.term);
-            } else {
-                terms.push(parsed.term);
-            }
-        });
-    }
-    // Check for NOT only
-    else if (upperQuery.startsWith('NOT ')) {
-        type = 'AND';
-        notTerms.push(convertWildcardToRegex(query.substring(4).trim()));
-    }
-    // Simple term or multiple words (treat as AND)
-    else {
-        const words = query.split(/\s+/).filter(w => w.length > 0);
-        if (words.length > 1) {
-            type = 'AND';
-            words.forEach(word => {
-                const parsed = parseSimpleTerm(word);
-                if (parsed.not) {
-                    notTerms.push(parsed.term);
-                } else {
-                    terms.push(parsed.term);
-                }
-            });
-        } else {
-            type = 'SIMPLE';
-            const parsed = parseSimpleTerm(query);
-            if (parsed.not) {
-                notTerms.push(parsed.term);
-            } else {
-                terms.push(parsed.term);
-            }
-        }
-    }
-    
-    return { type, terms, notTerms };
-}
 
-function parseSimpleTerm(term) {
-    // Check for NOT prefix
-    if (term.toUpperCase().startsWith('NOT ')) {
-        return { not: true, term: convertWildcardToRegex(term.substring(4)) };
-    }
-    return { not: false, term: convertWildcardToRegex(term) };
+    const tokens = tokenizeSearchQuery(query);
+    const terms = [];
+    const notTerms = [];
+    if (tokens.length === 0) return { type: 'SIMPLE', terms, notTerms };
+
+    const hasOr = tokens.some(token => isBooleanOperatorToken(token, 'OR'));
+    const hasAnd = tokens.some(token => isBooleanOperatorToken(token, 'AND'));
+    const valueTokenCount = tokens.filter(token => !isAnyBooleanOperatorToken(token)).length;
+
+    let type = 'SIMPLE';
+    if (hasOr) type = 'OR';
+    else if (hasAnd || valueTokenCount > 1) type = 'AND';
+
+    let pendingNot = false;
+    tokens.forEach((token) => {
+        if (isBooleanOperatorToken(token, 'NOT')) {
+            pendingNot = true;
+            return;
+        }
+        if (isBooleanOperatorToken(token, 'AND') || isBooleanOperatorToken(token, 'OR')) {
+            pendingNot = false;
+            return;
+        }
+        const pattern = convertWildcardToRegex(token.text);
+        if (!pattern) return;
+        if (pendingNot) {
+            notTerms.push(pattern);
+            pendingNot = false;
+        } else {
+            terms.push(pattern);
+        }
+    });
+
+    if (terms.length === 0 && notTerms.length > 0) type = 'AND';
+    return { type, terms, notTerms };
 }
 
 function convertWildcardToRegex(term) {
@@ -291,7 +385,100 @@ function convertWildcardToRegex(term) {
     return escaped.replace(/\*/g, '.*');
 }
 
-function searchAllDocuments(query) {
+function normalizePdfPageNumber(value) {
+    const pageNum = Number.parseInt(value, 10);
+    if (!Number.isFinite(pageNum)) return null;
+    return pageNum >= 1 ? pageNum : null;
+}
+
+function resolvePdfPageNumberForSearch(pageInfo, index) {
+    const candidates = [
+        pageInfo?.pageNum,
+        pageInfo?.pageNumber,
+        pageInfo?.page
+    ];
+    for (const candidate of candidates) {
+        const normalized = normalizePdfPageNumber(candidate);
+        if (normalized) return normalized;
+        const parsed = Number.parseInt(candidate, 10);
+        if (Number.isFinite(parsed) && parsed === 0) {
+            return index + 1; // legacy 0-based page numbering
+        }
+    }
+    return index + 1; // fallback to page order in array
+}
+
+function getPdfPageForCharPos(doc, charPos) {
+    if (!doc || doc.type !== 'pdf') return null;
+    const target = Math.max(0, Number.parseInt(charPos, 10) || 0);
+
+    // Best source: absolute text positions collected at PDF import time.
+    if (Array.isArray(doc.pdfTextPositions) && doc.pdfTextPositions.length > 0) {
+        let selectedPage = null;
+        for (const pos of doc.pdfTextPositions) {
+            const start = Number(pos?.start);
+            if (!Number.isFinite(start)) continue;
+            if (start > target) break;
+            const pageNum = normalizePdfPageNumber(pos?.pageNum);
+            if (pageNum) selectedPage = pageNum;
+        }
+        if (selectedPage) return selectedPage;
+    }
+
+    if (!Array.isArray(doc.pdfPages) || doc.pdfPages.length === 0) return 1;
+
+    const rangesFromOffsets = [];
+    for (let idx = 0; idx < doc.pdfPages.length; idx++) {
+        const pageInfo = doc.pdfPages[idx];
+        if (!pageInfo || !Array.isArray(pageInfo.textItems) || pageInfo.textItems.length === 0) continue;
+        let start = Infinity;
+        let end = -Infinity;
+        for (const item of pageInfo.textItems) {
+            const s = Number(item?.start ?? item?.startIndex);
+            const e = Number(item?.end ?? item?.endIndex);
+            if (Number.isFinite(s) && s < start) start = s;
+            if (Number.isFinite(e) && e > end) end = e;
+        }
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        const pageNum = resolvePdfPageNumberForSearch(pageInfo, idx);
+        if (!pageNum) continue;
+        rangesFromOffsets.push({
+            pageNum,
+            start,
+            end: Math.max(start, end)
+        });
+    }
+
+    if (rangesFromOffsets.length > 0) {
+        rangesFromOffsets.sort((a, b) => a.start - b.start);
+        let selected = rangesFromOffsets[0];
+        for (const range of rangesFromOffsets) {
+            if (target < range.start) break;
+            selected = range;
+            if (target <= range.end) break;
+        }
+        return selected.pageNum;
+    }
+
+    let cursor = 0;
+    for (let idx = 0; idx < doc.pdfPages.length; idx++) {
+        const pageInfo = doc.pdfPages[idx];
+        let pageLength = 0;
+        if (Array.isArray(pageInfo?.textItems)) {
+            for (const item of pageInfo.textItems) {
+                const textValue = (item?.text ?? item?.str ?? '');
+                pageLength += String(textValue).length;
+            }
+        }
+        const pageNum = resolvePdfPageNumberForSearch(pageInfo, idx);
+        if (target <= cursor + pageLength) return pageNum;
+        cursor += pageLength + 2; // '\n\n' page break marker
+    }
+
+    return resolvePdfPageNumberForSearch(doc.pdfPages[doc.pdfPages.length - 1], doc.pdfPages.length - 1);
+}
+
+async function searchAllDocuments(query) {
     const normalizedQuery = String(query || '').trim();
     if (!normalizedQuery) return [];
     if (isSingleLetterGlobalSearchQuery(normalizedQuery)) return [];
@@ -372,11 +559,29 @@ function searchAllDocuments(query) {
         return { matches, matchCount, snippets, mentions, firstMatchIndex };
     };
 
-    globalSearchIndex.entries.forEach((entry) => {
+    const indexEntries = Array.from(globalSearchIndex.entries.values());
+    for (const entry of indexEntries) {
         const result = collectMatchData(entry.searchText);
-        if (!result.matches) return;
+        if (!result.matches) continue;
         if (entry.kind === 'document') {
+            const doc = appData.documents.find(d => d.id === entry.primaryId);
+            const isPdfDoc = !!(doc && doc.type === 'pdf');
+            let resolvedPages = [];
+            if (
+                isPdfDoc &&
+                typeof pdfResolvePageForCharPos === 'function' &&
+                Array.isArray(result.mentions) &&
+                result.mentions.length > 0
+            ) {
+                resolvedPages = await Promise.all(
+                    result.mentions.map((mention) => pdfResolvePageForCharPos(doc, mention.index, {
+                        allowLive: true,
+                        allowBinaryLoad: true
+                    }))
+                );
+            }
             result.mentions.forEach((mention, index) => {
+                const resolved = normalizePdfPageNumber(resolvedPages[index]);
                 results.push({
                     kind: entry.kind,
                     kindLabel: 'Document hit',
@@ -387,11 +592,12 @@ function searchAllDocuments(query) {
                     matchCount: result.matchCount,
                     hitOrdinal: index + 1,
                     matchIndex: Number.isFinite(mention.index) ? mention.index : -1,
+                    pageNum: isPdfDoc ? (resolved || getPdfPageForCharPos(doc, mention.index)) : null,
                     snippets: [{ text: mention.snippet }],
                     firstMatchIndex: Number.isFinite(mention.index) ? mention.index : -1
                 });
             });
-            return;
+            continue;
         }
         results.push({
             kind: entry.kind,
@@ -403,7 +609,7 @@ function searchAllDocuments(query) {
             snippets: result.snippets,
             firstMatchIndex: Number.isFinite(result.firstMatchIndex) ? result.firstMatchIndex : -1
         });
-    });
+    }
     
     // Sort by document then hit position for document hits; others by match count desc.
     results.sort((a, b) => {
@@ -501,10 +707,17 @@ function showSearchResults(query, results) {
             `;
             group.items.forEach((result, idx) => {
                 const snippet = Array.isArray(result.snippets) && result.snippets[0] ? result.snippets[0].text : '';
+                const safePageNum = normalizePdfPageNumber(result.pageNum);
+                const pageLabel = safePageNum
+                    ? `page ${safePageNum}`
+                    : null;
+                const label = pageLabel
+                    ? `Document · ${pageLabel} · hit ${idx + 1}/${group.items.length}`
+                    : `Document · hit ${idx + 1}/${group.items.length}`;
                 html += renderResultItem(
                     result,
                     highlightSnippet(snippet),
-                    `Document · hit ${idx + 1}/${group.items.length}`
+                    label
                 );
             });
         });
@@ -527,9 +740,10 @@ function showSearchResults(query, results) {
     }
     
     modal.classList.add('show');
+    persistGlobalSearchSession(query, results);
 }
 
-function handleSearchInputKeydown(e) {
+async function handleSearchInputKeydown(e) {
     if (e.key === 'Enter') {
         const newQuery = e.target.value.trim();
         if (newQuery) {
@@ -537,7 +751,7 @@ function handleSearchInputKeydown(e) {
                 showGlobalSearchQueryValidationMessage('Search must be at least 2 characters.');
                 return;
             }
-            const newResults = searchAllDocuments(newQuery);
+            const newResults = await searchAllDocuments(newQuery);
             showSearchResults(newQuery, newResults);
         }
     }

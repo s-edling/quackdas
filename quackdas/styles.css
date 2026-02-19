@@ -1069,8 +1069,8 @@
         }
 
         .document-item {
-            padding: 6px 8px;
-            margin-bottom: var(--space-1);
+            padding: 4px 6px;
+            margin-bottom: 4px;
             border-radius: 4px;
             cursor: pointer;
             transition: background 0.15s, border-color 0.15s;
@@ -1092,31 +1092,116 @@
             border-color: #dcb9ab;
         }
 
-        .document-item-title {
-            font-size: 12px;
+        .document-item-main-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 4px;
+            min-height: 18px;
+        }
+
+        .document-item-title-wrap {
+            display: flex;
+            align-items: flex-start;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .document-item-title-text {
+            font-size: 13px;
             font-weight: 400;
-            margin-bottom: 2px;
-            line-height: 1.25;
+            line-height: 1.15;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            word-break: break-word;
+        }
+
+        .document-item-code-badge {
+            flex-shrink: 0;
+            align-self: flex-start;
+            font-size: 10px;
+            line-height: 1.1;
+            font-weight: 600;
+            color: var(--text-secondary);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 2px 6px;
+            white-space: nowrap;
+            margin-top: 1px;
         }
 
         .document-item-meta {
+            display: none;
+            margin-top: 2px;
             font-size: 10px;
             color: var(--text-tertiary);
             line-height: 1.2;
+        }
+
+        .document-item.document-item-compact:hover .document-item-meta,
+        .document-item.document-item-compact.active .document-item-meta,
+        .document-item.document-item-compact.selected .document-item-meta,
+        .document-item.document-item-compact:focus-within .document-item-meta {
+            display: block;
         }
 
         /* Document settings button - hidden until hover */
         .document-item .code-action-btn {
             opacity: 0;
             transition: opacity 0.15s;
+            padding: 2px;
         }
 
-        .document-item:hover .code-action-btn {
+        .document-item:hover .code-action-btn,
+        .document-item:focus-within .code-action-btn,
+        .document-item.active .code-action-btn,
+        .document-item.selected .code-action-btn {
             opacity: 0.6;
         }
 
         .document-item .code-action-btn:hover {
             opacity: 1;
+        }
+
+        .document-item-settings-btn {
+            flex-shrink: 0;
+            margin-top: -1px;
+        }
+
+        .document-item.document-item-compact .memo-indicator {
+            margin-left: 2px;
+            font-size: 10px;
+            line-height: 1;
+            opacity: 0.55;
+            align-self: flex-start;
+            margin-top: 1px;
+        }
+
+        .document-item.document-item-compact .doc-type-badge {
+            margin-right: 0;
+            flex-shrink: 0;
+            align-self: center;
+            margin-top: 0;
+        }
+
+        .document-item.document-item-compact.document-item-single-line-title .document-item-main-row {
+            align-items: center;
+        }
+
+        .document-item.document-item-compact.document-item-single-line-title .document-item-title-wrap {
+            align-items: center;
+        }
+
+        .document-item.document-item-compact.document-item-single-line-title .document-item-code-badge,
+        .document-item.document-item-compact.document-item-single-line-title .document-item-settings-btn,
+        .document-item.document-item-compact.document-item-single-line-title .memo-indicator,
+        .document-item.document-item-compact.document-item-single-line-title .doc-type-badge {
+            align-self: center;
+            margin-top: 0;
         }
 
         /* Folder styles - folder-actions is now in header */
