@@ -225,12 +225,20 @@ function parseColor(qdpxColor) {
     if (!qdpxColor) return '#808080';
     const raw = String(qdpxColor).trim();
 
+    const channelToByte = (value) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return null;
+        // Some tools emit normalized channels (0..1). Scale those to bytes.
+        const normalized = (n >= 0 && n <= 1 && String(value).includes('.')) ? Math.round(n * 255) : Math.round(n);
+        return Math.max(0, Math.min(255, normalized));
+    };
+
     // 1) rgb()/rgba() formats
     const rgbMatch = raw.match(/^rgba?\s*\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/i);
     if (rgbMatch) {
-        const r = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[1], 10) || 0));
-        const g = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[2], 10) || 0));
-        const b = Math.max(0, Math.min(255, Number.parseInt(rgbMatch[3], 10) || 0));
+        const r = channelToByte(rgbMatch[1]) ?? 0;
+        const g = channelToByte(rgbMatch[2]) ?? 0;
+        const b = channelToByte(rgbMatch[3]) ?? 0;
         return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
     }
 
@@ -238,34 +246,53 @@ function parseColor(qdpxColor) {
     const csvParts = raw.split(',').map((p) => p.trim()).filter(Boolean);
     if (csvParts.length === 3 || csvParts.length === 4) {
         const offset = csvParts.length === 4 ? 1 : 0;
-        const r = Number.parseInt(csvParts[offset], 10);
-        const g = Number.parseInt(csvParts[offset + 1], 10);
-        const b = Number.parseInt(csvParts[offset + 2], 10);
-        if ([r, g, b].every((v) => Number.isFinite(v))) {
+        const r = channelToByte(csvParts[offset]);
+        const g = channelToByte(csvParts[offset + 1]);
+        const b = channelToByte(csvParts[offset + 2]);
+        if ([r, g, b].every((v) => v !== null)) {
             return '#' + [r, g, b]
-                .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+                .map((v) => v.toString(16).padStart(2, '0'))
                 .join('');
         }
     }
     const wsParts = raw.split(/\s+/).map((p) => p.trim()).filter(Boolean);
     if (wsParts.length === 3 || wsParts.length === 4) {
         const offset = wsParts.length === 4 ? 1 : 0;
-        const r = Number.parseInt(wsParts[offset], 10);
-        const g = Number.parseInt(wsParts[offset + 1], 10);
-        const b = Number.parseInt(wsParts[offset + 2], 10);
-        if ([r, g, b].every((v) => Number.isFinite(v))) {
+        const r = channelToByte(wsParts[offset]);
+        const g = channelToByte(wsParts[offset + 1]);
+        const b = channelToByte(wsParts[offset + 2]);
+        if ([r, g, b].every((v) => v !== null)) {
             return '#' + [r, g, b]
-                .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+                .map((v) => v.toString(16).padStart(2, '0'))
                 .join('');
         }
     }
 
-    // 3) Hex forms: #RRGGBB, #AARRGGBB, 0xRRGGBB, 0xAARRGGBB
+    // 3) Keyed channel forms (common in .NET/NVivo exports):
+    // "Color [A=255, R=188, G=18, B=18]" or "R:188 G:18 B:18"
+    const keyedMatches = Array.from(raw.matchAll(/\b([argb])\s*[:=]\s*(-?\d*\.?\d+)\b/ig));
+    if (keyedMatches.length > 0) {
+        const channelMap = {};
+        keyedMatches.forEach((m) => {
+            const key = String(m[1] || '').toLowerCase();
+            channelMap[key] = m[2];
+        });
+        const r = channelToByte(channelMap.r);
+        const g = channelToByte(channelMap.g);
+        const b = channelToByte(channelMap.b);
+        if ([r, g, b].every((v) => v !== null)) {
+            return '#' + [r, g, b]
+                .map((v) => v.toString(16).padStart(2, '0'))
+                .join('');
+        }
+    }
+
+    // 4) Hex forms: #RRGGBB, #AARRGGBB, 0xRRGGBB, 0xAARRGGBB
     let color = raw.replace(/^#/, '').replace(/^0x/i, '');
     if (/^[0-9a-fA-F]{8}$/.test(color)) color = color.substring(2); // drop alpha (AARRGGBB -> RRGGBB)
     if (/^[0-9a-fA-F]{6}$/.test(color)) return '#' + color.toLowerCase();
 
-    // 4) Integer forms used by some tools (including signed ARGB values from .NET/NVivo exports).
+    // 5) Integer forms used by some tools (including signed ARGB values from .NET/NVivo exports).
     const numeric = Number(raw);
     if (Number.isFinite(numeric)) {
         const n = Math.trunc(numeric);
@@ -275,11 +302,61 @@ function parseColor(qdpxColor) {
         return '#' + hex.toLowerCase();
     }
 
+    // 6) Named/CSS colors (e.g. "Red", "DarkSlateBlue"), if available in this runtime.
+    if (typeof document !== 'undefined') {
+        const probe = document.createElement('span');
+        probe.style.color = '';
+        probe.style.color = raw;
+        if (probe.style.color && document.body) {
+            document.body.appendChild(probe);
+            const resolved = getComputedStyle(probe).color;
+            probe.remove();
+            const cssRgb = resolved && resolved.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+            if (cssRgb) {
+                const r = Math.max(0, Math.min(255, Number.parseInt(cssRgb[1], 10) || 0));
+                const g = Math.max(0, Math.min(255, Number.parseInt(cssRgb[2], 10) || 0));
+                const b = Math.max(0, Math.min(255, Number.parseInt(cssRgb[3], 10) || 0));
+                return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+            }
+        }
+    }
+
     return '#808080';
 }
 
 function getCodeColorRawValue(codeEl) {
     if (!codeEl) return '';
+    const hasValue = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+    const isColorLikeName = (name) => {
+        const n = String(name || '').toLowerCase();
+        return n.includes('color') || n.includes('colour');
+    };
+
+    const collectColorCandidatesFromElement = (el, out) => {
+        if (!el || !Array.isArray(out)) return;
+        const names = (typeof el.getAttributeNames === 'function') ? el.getAttributeNames() : [];
+        names.forEach((attrName) => {
+            const value = el.getAttribute(attrName);
+            if (!hasValue(value)) return;
+            if (isColorLikeName(attrName)) out.push(String(value).trim());
+        });
+    };
+
+    const pickFirstParseableCandidate = (candidates) => {
+        if (!Array.isArray(candidates) || candidates.length === 0) return '';
+        let first = '';
+        for (const candidate of candidates) {
+            const rawCandidate = String(candidate || '').trim();
+            if (!rawCandidate) continue;
+            if (!first) first = rawCandidate;
+            const parsed = parseColor(rawCandidate);
+            if (parsed !== '#808080') return rawCandidate;
+            if (/(^|[^0-9a-f])(80){3}([^0-9a-f]|$)/i.test(rawCandidate)) return rawCandidate;
+            if (/\b(grey|gray|silver)\b/i.test(rawCandidate)) return rawCandidate;
+        }
+        return first;
+    };
+
     const direct = getAttrFirst(codeEl, [
         'color',
         'Color',
@@ -290,6 +367,19 @@ function getCodeColorRawValue(codeEl) {
         'backgroundColor'
     ]);
     if (direct) return direct;
+
+    const codeR = getAttrFirst(codeEl, ['r', 'red']);
+    const codeG = getAttrFirst(codeEl, ['g', 'green']);
+    const codeB = getAttrFirst(codeEl, ['b', 'blue']);
+    const codeA = getAttrFirst(codeEl, ['a', 'alpha']);
+    if (hasValue(codeR) && hasValue(codeG) && hasValue(codeB)) {
+        return hasValue(codeA) ? `${codeA},${codeR},${codeG},${codeB}` : `${codeR},${codeG},${codeB}`;
+    }
+
+    const codeAttrCandidates = [];
+    collectColorCandidatesFromElement(codeEl, codeAttrCandidates);
+    const codeAttrFallback = pickFirstParseableCandidate(codeAttrCandidates);
+    if (codeAttrFallback) return codeAttrFallback;
 
     const colorEl = codeEl.querySelector(':scope > Color, :scope > Colour, :scope > CodeColor');
     if (colorEl) {
@@ -307,13 +397,92 @@ function getCodeColorRawValue(codeEl) {
         const g = getAttrFirst(colorEl, ['g', 'green']);
         const b = getAttrFirst(colorEl, ['b', 'blue']);
         const a = getAttrFirst(colorEl, ['a', 'alpha']);
-        if (r && g && b) return a ? `${a},${r},${g},${b}` : `${r},${g},${b}`;
+        if (hasValue(r) && hasValue(g) && hasValue(b)) return hasValue(a) ? `${a},${r},${g},${b}` : `${r},${g},${b}`;
 
         const textValue = String(colorEl.textContent || '').trim();
         if (textValue) return textValue;
     }
 
+    // Broad fallback for schema variants:
+    // - attributes containing "color/colour" on descendants
+    // - Property-like elements where key/name indicates color and value/text carries the color
+    const descendantCandidates = [];
+    codeEl.querySelectorAll('*').forEach((el) => {
+        collectColorCandidatesFromElement(el, descendantCandidates);
+
+        const keyHint = getAttrFirst(el, ['key', 'name', 'property', 'type', 'id']);
+        if (!isColorLikeName(keyHint)) return;
+        const valueHint = getAttrFirst(el, ['value', 'val', 'text', 'data']);
+        if (hasValue(valueHint)) descendantCandidates.push(String(valueHint).trim());
+        const text = String(el.textContent || '').trim();
+        if (hasValue(text)) descendantCandidates.push(text);
+    });
+    const descendantFallback = pickFirstParseableCandidate(descendantCandidates);
+    if (descendantFallback) return descendantFallback;
+
     return '';
+}
+
+function escapeXmlAttrSelectorValue(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function isExplicitGrayColorRaw(rawValue) {
+    const raw = String(rawValue || '').trim();
+    if (!raw) return false;
+    if (/^(#|0x)?(?:80){3}$/i.test(raw)) return true;
+    if (/\b(grey|gray|silver)\b/i.test(raw)) return true;
+    if (/^\s*128\s*[, ]\s*128\s*[, ]\s*128\s*$/i.test(raw)) return true;
+    if (/^\s*255\s*[, ]\s*128\s*[, ]\s*128\s*[, ]\s*128\s*$/i.test(raw)) return true;
+    return false;
+}
+
+function getCodeColorRawValueByGuid(xmlDoc, codeGuid, primaryCodeEl = null) {
+    const guid = String(codeGuid || '').trim();
+    if (!xmlDoc || !guid) return '';
+
+    const escapedGuid = escapeXmlAttrSelectorValue(guid);
+    const selectors = [
+        `[guid="${escapedGuid}"]`,
+        `[codeGUID="${escapedGuid}"]`,
+        `[codeGuid="${escapedGuid}"]`,
+        `[targetGUID="${escapedGuid}"]`,
+        `[targetGuid="${escapedGuid}"]`,
+        `[codeId="${escapedGuid}"]`,
+        `[codeID="${escapedGuid}"]`
+    ];
+    const matches = xmlDoc.querySelectorAll(selectors.join(', '));
+    for (const el of matches) {
+        if (!el) continue;
+        if (primaryCodeEl && el === primaryCodeEl) continue;
+        const raw = getCodeColorRawValue(el);
+        if (!raw) continue;
+        const parsed = parseColor(raw);
+        if (parsed !== '#808080' || isExplicitGrayColorRaw(raw)) return raw;
+    }
+
+    return '';
+}
+
+const IMPORT_FALLBACK_CODE_PALETTE = [
+    '#5b8fd9', '#8a64d6', '#d16a8e', '#d38452',
+    '#4fae8c', '#88a843', '#4e9eb8', '#c97362',
+    '#6d79d8', '#d48a4e', '#3ea8a1', '#b56aa5',
+    '#9e9a3f', '#5d93c8', '#c27c54', '#5aa66e'
+];
+
+function getFallbackImportCodeColor(codeGuid, ordinalIndex) {
+    const palette = IMPORT_FALLBACK_CODE_PALETTE;
+    if (!Array.isArray(palette) || palette.length === 0) return '#808080';
+
+    let hash = 0;
+    const guid = String(codeGuid || '');
+    for (let i = 0; i < guid.length; i++) {
+        hash = ((hash << 5) - hash) + guid.charCodeAt(i);
+        hash |= 0;
+    }
+    const seed = Math.abs(hash) + Math.max(0, Number(ordinalIndex) || 0);
+    return palette[seed % palette.length] || '#808080';
 }
 
 function buildQdpxId(prefix) {
@@ -802,10 +971,20 @@ async function importFromQdpx(qdpxData) {
     const codeElements = xmlDoc.querySelectorAll('CodeBook > Codes > Code, CodeBook > Codes Code');
     const codesByGuid = {};
     
+    let importedCodeOrdinal = 0;
     function parseCodeElement(codeEl, parentId = null) {
+        const codeOrdinal = importedCodeOrdinal++;
         const guid = codeEl.getAttribute('guid');
         const name = codeEl.getAttribute('name') || 'Unnamed Code';
-        const color = parseColor(getCodeColorRawValue(codeEl));
+        let rawColor = getCodeColorRawValue(codeEl);
+        if ((!rawColor || (parseColor(rawColor) === '#808080' && !isExplicitGrayColorRaw(rawColor))) && guid) {
+            const fallbackRaw = getCodeColorRawValueByGuid(xmlDoc, guid, codeEl);
+            if (fallbackRaw) rawColor = fallbackRaw;
+        }
+        let color = parseColor(rawColor);
+        if (color === '#808080' && (!rawColor || !isExplicitGrayColorRaw(rawColor))) {
+            color = getFallbackImportCodeColor(guid, codeOrdinal);
+        }
         const rawShortcut = (codeEl.getAttribute('quackdasShortcut') || '').trim();
         const shortcut = /^[1-9]$/.test(rawShortcut) ? rawShortcut : '';
         const notes = codeEl.getAttribute('quackdasNotes') || '';

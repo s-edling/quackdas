@@ -85,6 +85,48 @@ function normalizeCaseAttributes(rawAttributes) {
     return out;
 }
 
+const NORMALIZED_IMPORT_CODE_PALETTE = [
+    '#5b8fd9', '#8a64d6', '#d16a8e', '#d38452',
+    '#4fae8c', '#88a843', '#4e9eb8', '#c97362',
+    '#6d79d8', '#d48a4e', '#3ea8a1', '#b56aa5',
+    '#9e9a3f', '#5d93c8', '#c27c54', '#5aa66e'
+];
+
+function normalizeHexColor(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    const normalized = raw.startsWith('#') ? raw : `#${raw}`;
+    return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '';
+}
+
+function stableColorIndexSeed(input) {
+    const text = String(input || '');
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function assignFallbackCodeColorsIfNeeded(codes) {
+    if (!Array.isArray(codes) || codes.length === 0) return;
+
+    const palette = NORMALIZED_IMPORT_CODE_PALETTE;
+    const hasAnyNonGrayColor = codes.some((code) => {
+        const hex = normalizeHexColor(code && code.color);
+        return hex && hex !== '#808080';
+    });
+    if (hasAnyNonGrayColor) return;
+
+    codes.forEach((code, index) => {
+        if (!code || typeof code !== 'object') return;
+        const key = `${code.id || ''}|${code.name || ''}|${index}`;
+        const pick = palette[stableColorIndexSeed(key) % palette.length] || '#808080';
+        code.color = pick;
+    });
+}
+
 function normalizeCasesForProject(rawCases, validDocIds, buildLocalId) {
     const sourceCases = Array.isArray(rawCases) ? rawCases : [];
     const outCases = [];
@@ -156,6 +198,7 @@ function normaliseProject(p) {
 
     out.documents = Array.isArray(src.documents) ? src.documents : [];
     out.codes = Array.isArray(src.codes) ? src.codes : [];
+    assignFallbackCodeColorsIfNeeded(out.codes);
     out.segments = Array.isArray(src.segments) ? src.segments : [];
     out.memos = Array.isArray(src.memos) ? src.memos : [];
     out.folders = Array.isArray(src.folders) ? src.folders : [];

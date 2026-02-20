@@ -950,6 +950,14 @@ function showSegmentContextMenu(segmentIds, event) {
     const annotationLabel = selectedCodeName ? `Annotations • ${selectedCodeName}` : `Annotations • ${label}`;
     const menuItems = [
         {
+            label: selectedCodeName ? `Coding inspector • ${selectedCodeName}` : 'Coding inspector',
+            onClick: () => {
+                if (!selectedCodeSegment || typeof openCodingInspectorForSegment !== 'function') return;
+                openCodingInspectorForSegment(selectedCodeSegment.id, selectedCodeId);
+            }
+        },
+        { type: 'sep' },
+        {
             label: annotationLabel,
             onClick: () => showPdfRegionAnnotationInline(selectedCodeSegment, {
                 title: selectedCodeName ? `Annotations • ${selectedCodeName}` : 'Annotations',

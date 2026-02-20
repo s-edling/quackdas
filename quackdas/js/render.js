@@ -1908,6 +1908,25 @@ function goToDocumentFromFilter(docId) {
     selectDocument(docId);
 }
 
+function openCodingInspectorForSegment(segmentId, preferredCodeId = '') {
+    const segment = appData.segments.find(s => s.id === segmentId);
+    if (!segment) return;
+
+    const preferred = String(preferredCodeId || '').trim();
+    const availableCodeIds = Array.isArray(segment.codeIds) ? segment.codeIds.filter(Boolean) : [];
+    const targetCodeId = (preferred && availableCodeIds.includes(preferred))
+        ? preferred
+        : (availableCodeIds[0] || '');
+
+    if (!targetCodeId) return;
+
+    appData.filterCodeId = targetCodeId;
+    codeViewUiState.mode = 'segments';
+    codeInspectorState.segmentId = segment.id;
+    codeInspectorState.docId = segment.docId;
+    renderAll();
+}
+
 function showFilterSnippetContextMenu(segmentId, docId, event) {
     event.preventDefault();
     event.stopPropagation();
