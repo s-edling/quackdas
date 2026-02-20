@@ -82,6 +82,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         setupContextMenuDismissal();
         setupStaticActionBindings();
         setupLogoQuackEasterEgg();
+        if (typeof initSemanticTools === 'function') {
+            initSemanticTools();
+        }
         if (typeof startProjectBackupScheduler === 'function') {
             startProjectBackupScheduler();
         }
@@ -191,6 +194,7 @@ function setupStaticActionBindings() {
             case 'adjustZoomIn': adjustZoom(10); break;
             case 'openImportModal': openImportModal(); break;
             case 'openPasteModal': openPasteModal(); break;
+            case 'openSemanticToolsModal': openSemanticToolsModal(); break;
             case 'createFolder': createFolder(); break;
             case 'closeMemoModal': closeMemoModal(); break;
             case 'closeRestoreBackupModal': closeRestoreBackupModal(); break;
@@ -202,9 +206,15 @@ function setupStaticActionBindings() {
             case 'closeHealthCheckModal': closeHealthCheckModal(); break;
             case 'applySelectedHealthFixes': applySelectedHealthFixes(); break;
             case 'closeSearchResults': closeSearchResults(); break;
+            case 'closeSemanticToolsModal': closeSemanticToolsModal(); break;
             case 'inPageSearchPrev': inPageSearchPrev(); break;
             case 'inPageSearchNext': inPageSearchNext(); break;
             case 'closeInPageSearch': closeInPageSearch(); break;
+            case 'saveSemanticModelSetting': saveSemanticModelSetting(); break;
+            case 'refreshSemanticModelList': refreshSemanticModelList(); break;
+            case 'startSemanticIndexing': startSemanticIndexing(); break;
+            case 'cancelSemanticIndexing': cancelSemanticIndexing(); break;
+            case 'runSemanticSearch': runSemanticSearch(); break;
             case 'segmentActionChoiceMemo': segmentActionChoice('memo'); break;
             case 'segmentActionChoiceEdit': segmentActionChoice('edit'); break;
             case 'segmentActionChoiceRemove': segmentActionChoice('remove'); break;

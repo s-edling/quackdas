@@ -1971,12 +1971,8 @@ function goToSegmentLocation(docId, segmentId) {
     }, 50);
 }
 
-function scrollToCharacterPosition(charIndex) {
-    const contentElement = document.getElementById('documentContent');
-    if (!contentElement) return;
-    
-    // Walk through text nodes to find the position
-    const walker = document.createTreeWalker(contentElement, NodeFilter.SHOW_TEXT, {
+function createContentTextWalker(contentElement) {
+    return document.createTreeWalker(contentElement, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {
             const p = node.parentElement;
             if (!p) return NodeFilter.FILTER_ACCEPT;
@@ -1985,41 +1981,54 @@ function scrollToCharacterPosition(charIndex) {
             return NodeFilter.FILTER_ACCEPT;
         }
     });
-    
+}
+
+function getTextNodeBoundaryAtChar(contentElement, charIndex) {
+    const walker = createContentTextWalker(contentElement);
+    const targetIndex = Math.max(0, Number(charIndex || 0));
+
     let currentPos = 0;
-    let targetNode = null;
-    let targetOffset = 0;
-    
+    let fallbackNode = null;
+
     while (walker.nextNode()) {
         const node = walker.currentNode;
         const len = (node.nodeValue || '').length;
-        
-        if (currentPos + len >= charIndex) {
-            targetNode = node;
-            targetOffset = charIndex - currentPos;
-            break;
+        fallbackNode = node;
+        if (currentPos + len >= targetIndex) {
+            return {
+                node,
+                offset: Math.max(0, Math.min(targetIndex - currentPos, len))
+            };
         }
         currentPos += len;
     }
-    
-    if (targetNode) {
-        // Create a temporary range to get position
-        const range = document.createRange();
-        range.setStart(targetNode, Math.min(targetOffset, targetNode.length));
-        range.setEnd(targetNode, Math.min(targetOffset, targetNode.length));
-        
-        const rect = range.getBoundingClientRect();
-        const contentBody = document.querySelector('.content-body');
-        
-        if (contentBody && rect) {
-            // Scroll so the target is roughly in the upper third of the view
-            const containerRect = contentBody.getBoundingClientRect();
-            const scrollOffset = rect.top - containerRect.top + contentBody.scrollTop - (containerRect.height / 3);
-            contentBody.scrollTo({ top: scrollOffset, behavior: 'smooth' });
-            
-            // Briefly highlight the area with a visual indicator
-            flashLocationIndicator(rect.left, rect.top);
-        }
+
+    if (!fallbackNode) return null;
+    return {
+        node: fallbackNode,
+        offset: (fallbackNode.nodeValue || '').length
+    };
+}
+
+function scrollToCharacterPosition(charIndex) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement) return;
+
+    const boundary = getTextNodeBoundaryAtChar(contentElement, charIndex);
+    if (!boundary) return;
+
+    const range = document.createRange();
+    range.setStart(boundary.node, boundary.offset);
+    range.setEnd(boundary.node, boundary.offset);
+
+    const rect = range.getBoundingClientRect();
+    const contentBody = document.querySelector('.content-body');
+
+    if (contentBody && rect) {
+        const containerRect = contentBody.getBoundingClientRect();
+        const scrollOffset = rect.top - containerRect.top + contentBody.scrollTop - (containerRect.height / 3);
+        contentBody.scrollTo({ top: scrollOffset, behavior: 'smooth' });
+        flashLocationIndicator(rect.left, rect.top);
     }
 }
 

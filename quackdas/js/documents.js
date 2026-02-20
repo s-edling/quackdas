@@ -675,13 +675,17 @@ function pasteDocument(e) {
     closePasteModal();
 }
 
+function canonicalizeDocumentContent(input) {
+    return String(input == null ? '' : input).replace(/\r\n?/g, '\n');
+}
+
 function addDocument(title, content) {
     saveHistory();
     
     const doc = {
         id: 'doc_' + Date.now(),
         title: title,
-        content: content,
+        content: canonicalizeDocumentContent(content),
         metadata: {},
         caseIds: [],
         created: new Date().toISOString(),
@@ -710,7 +714,7 @@ function extractPdfTextAsDocument(docId) {
     const doc = {
         id: 'doc_' + Date.now(),
         title: nextTitle,
-        content: source.content || '',
+        content: canonicalizeDocumentContent(source.content || ''),
         metadata: Object.assign({}, source.metadata || {}),
         caseIds: Array.isArray(source.caseIds) ? source.caseIds.slice() : [],
         folderId: source.folderId || null,

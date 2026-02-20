@@ -17,5 +17,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ocrImage: (dataUrl, opts) => ipcRenderer.invoke('ocr:image', Object.assign({ dataUrl }, opts || {})),
 
   // IPC for menu actions
-  onMenuAction: (cb) => ipcRenderer.on('menu:action', (_evt, action, payload) => cb(action, payload))
+  onMenuAction: (cb) => ipcRenderer.on('menu:action', (_evt, action, payload) => cb(action, payload)),
+
+  // Local semantic search tooling
+  semanticGetAvailability: (opts) => ipcRenderer.invoke('semantic:getAvailability', opts || {}),
+  semanticGetProjectSettings: () => ipcRenderer.invoke('semantic:getProjectSettings'),
+  semanticSetProjectModel: (modelName) => ipcRenderer.invoke('semantic:setProjectModel', modelName),
+  semanticGetIndexStatus: (payload) => ipcRenderer.invoke('semantic:getIndexStatus', payload || {}),
+  semanticGetIndexingState: () => ipcRenderer.invoke('semantic:indexingState'),
+  semanticStartIndexing: (payload) => ipcRenderer.invoke('semantic:startIndexing', payload || {}),
+  semanticCancelIndexing: () => ipcRenderer.invoke('semantic:cancelIndexing'),
+  semanticSearch: (payload) => ipcRenderer.invoke('semantic:search', payload || {}),
+  onSemanticIndexProgress: (cb) => ipcRenderer.on('semantic:indexProgress', (_evt, payload) => cb(payload)),
+  onSemanticIndexDone: (cb) => ipcRenderer.on('semantic:indexDone', (_evt, payload) => cb(payload)),
+  onSemanticIndexError: (cb) => ipcRenderer.on('semantic:indexError', (_evt, payload) => cb(payload))
 });

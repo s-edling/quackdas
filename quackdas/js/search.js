@@ -23,7 +23,8 @@ function initSearchResultsDelegatedHandlers() {
             item.dataset.primaryId,
             item.dataset.docId,
             item.dataset.query,
-            item.dataset.firstMatchIndex
+            item.dataset.firstMatchIndex,
+            item.dataset.pageNum
         );
     });
     searchResultsDelegationBound = true;
@@ -478,6 +479,41 @@ function getPdfPageForCharPos(doc, charPos) {
     return resolvePdfPageNumberForSearch(doc.pdfPages[doc.pdfPages.length - 1], doc.pdfPages.length - 1);
 }
 
+function buildPdfSearchPageRanges(doc) {
+    if (!doc || doc.type !== 'pdf' || !Array.isArray(doc.pdfPages) || doc.pdfPages.length === 0) return [];
+    const ranges = [];
+
+    doc.pdfPages.forEach((pageInfo, idx) => {
+        const pageNum = resolvePdfPageNumberForSearch(pageInfo, idx);
+        if (!pageNum) return;
+
+        const textItems = Array.isArray(pageInfo?.textItems) ? pageInfo.textItems : [];
+        let start = Infinity;
+        let end = -Infinity;
+        textItems.forEach((item) => {
+            const s = Number(item?.start ?? item?.startIndex);
+            const e = Number(item?.end ?? item?.endIndex);
+            if (Number.isFinite(s) && s < start) start = s;
+            if (Number.isFinite(e) && e > end) end = e;
+        });
+
+        let text = '';
+        let baseStart = 0;
+        if (Number.isFinite(start) && Number.isFinite(end) && end >= start && typeof doc.content === 'string') {
+            baseStart = Math.max(0, Math.floor(start));
+            const safeEnd = Math.min(doc.content.length, Math.floor(end));
+            text = doc.content.slice(baseStart, safeEnd);
+        } else {
+            baseStart = getPdfPageTextOffset(doc, pageNum);
+            text = textItems.map((item) => String(item?.text || item?.str || '')).join(' ');
+        }
+
+        ranges.push({ pageNum, start: baseStart, text });
+    });
+
+    return ranges;
+}
+
 async function searchAllDocuments(query) {
     const normalizedQuery = String(query || '').trim();
     if (!normalizedQuery) return [];
@@ -566,6 +602,35 @@ async function searchAllDocuments(query) {
         if (entry.kind === 'document') {
             const doc = appData.documents.find(d => d.id === entry.primaryId);
             const isPdfDoc = !!(doc && doc.type === 'pdf');
+            if (isPdfDoc) {
+                const pageRanges = buildPdfSearchPageRanges(doc);
+                let emitted = 0;
+                pageRanges.forEach((pageRange) => {
+                    const pageResult = collectMatchData(pageRange.text);
+                    if (!pageResult.matches || !Array.isArray(pageResult.mentions)) return;
+                    pageResult.mentions.forEach((mention, pageHitIndex) => {
+                        const localIdx = Number.isFinite(mention.index) ? mention.index : -1;
+                        const globalIdx = localIdx >= 0 ? (pageRange.start + localIdx) : pageRange.start;
+                        results.push({
+                            kind: entry.kind,
+                            kindLabel: 'Document hit',
+                            primaryId: entry.primaryId,
+                            docId: entry.docId || entry.primaryId || '',
+                            title: entry.title,
+                            groupTitle: entry.title,
+                            matchCount: pageResult.matchCount,
+                            hitOrdinal: pageHitIndex + 1,
+                            matchIndex: globalIdx,
+                            pageNum: normalizePdfPageNumber(pageRange.pageNum),
+                            snippets: [{ text: mention.snippet }],
+                            firstMatchIndex: globalIdx
+                        });
+                        emitted += 1;
+                    });
+                });
+                if (emitted > 0) continue;
+            }
+
             let resolvedPages = [];
             if (
                 isPdfDoc &&
@@ -663,13 +728,15 @@ function showSearchResults(query, results) {
     };
     const renderResultItem = (result, snippetHtml, countLabel) => {
         const firstMatchIndex = Number.isFinite(result.firstMatchIndex) ? result.firstMatchIndex : -1;
+        const pageNum = normalizePdfPageNumber(result.pageNum);
         return `
             <div class="search-result-item"
                  data-kind="${escapeHtmlAttrValue(result.kind)}"
                  data-primary-id="${escapeHtmlAttrValue(result.primaryId)}"
                  data-doc-id="${escapeHtmlAttrValue(result.docId || '')}"
                  data-query="${escapeHtmlAttrValue(encodeURIComponent(query))}"
-                 data-first-match-index="${escapeHtmlAttrValue(String(firstMatchIndex))}">
+                 data-first-match-index="${escapeHtmlAttrValue(String(firstMatchIndex))}"
+                 data-page-num="${escapeHtmlAttrValue(String(pageNum || ''))}">
                 <div class="search-result-title">
                     ${escapeHtml(result.title)}
                     <span class="search-result-count">${escapeHtml(countLabel)}</span>
@@ -708,8 +775,9 @@ function showSearchResults(query, results) {
             group.items.forEach((result, idx) => {
                 const snippet = Array.isArray(result.snippets) && result.snippets[0] ? result.snippets[0].text : '';
                 const safePageNum = normalizePdfPageNumber(result.pageNum);
+                const approximatePage = !!(safePageNum && safePageNum > 100);
                 const pageLabel = safePageNum
-                    ? `page ${safePageNum}`
+                    ? `page ${approximatePage ? '~' : ''}${safePageNum}`
                     : null;
                 const label = pageLabel
                     ? `Document · ${pageLabel} · hit ${idx + 1}/${group.items.length}`
@@ -1003,9 +1071,10 @@ function highlightSearchTermsInCurrentDocument(query) {
     }, 5000);
 }
 
-function goToSearchResult(kind, primaryId, docId, encodedQuery, firstMatchIndexRaw = '-1') {
+function goToSearchResult(kind, primaryId, docId, encodedQuery, firstMatchIndexRaw = '-1', pageNumRaw = '') {
     const query = decodeURIComponent(encodedQuery || '');
     const firstMatchIndex = Number.parseInt(firstMatchIndexRaw, 10);
+    const pageNum = normalizePdfPageNumber(pageNumRaw);
     closeSearchResults();
 
     if (kind === 'document') {
@@ -1019,7 +1088,10 @@ function goToSearchResult(kind, primaryId, docId, encodedQuery, firstMatchIndexR
             if (!isSamePdfContext) {
                 selectDocument(primaryId);
             }
-            if (Number.isFinite(firstMatchIndex) && firstMatchIndex >= 0 && typeof pdfGoToPosition === 'function') {
+            if (pageNum && typeof pdfGoToPage === 'function') {
+                const selectedDoc = appData.documents.find(d => d.id === primaryId) || doc;
+                pdfGoToPage(selectedDoc, pageNum);
+            } else if (Number.isFinite(firstMatchIndex) && firstMatchIndex >= 0 && typeof pdfGoToPosition === 'function') {
                 const selectedDoc = appData.documents.find(d => d.id === primaryId) || doc;
                 pdfGoToPosition(selectedDoc, firstMatchIndex);
             }

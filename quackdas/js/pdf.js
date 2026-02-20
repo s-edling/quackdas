@@ -23,6 +23,7 @@ let currentPdfState = {
     ocrPromise: null,
     pendingRegion: null,
     pendingGoToRegion: null,
+    pendingGoToPage: null,
     pendingGoToCharPos: null
 };
 const pdfRegionPreviewCache = new Map();
@@ -1196,6 +1197,11 @@ async function renderPdfDocument(doc, container) {
         currentPdfState.pendingGoToCharPos.docId === doc.id &&
         Number.isFinite(Number(currentPdfState.pendingGoToCharPos.charPos))
     ) ? Math.max(0, Number.parseInt(currentPdfState.pendingGoToCharPos.charPos, 10) || 0) : null;
+    const pendingPage = (
+        currentPdfState.pendingGoToPage &&
+        currentPdfState.pendingGoToPage.docId === doc.id &&
+        Number.isFinite(Number(currentPdfState.pendingGoToPage.pageNum))
+    ) ? Math.max(1, Number.parseInt(currentPdfState.pendingGoToPage.pageNum, 10) || 1) : null;
     const pendingRegion = (
         currentPdfState.pendingGoToRegion &&
         currentPdfState.pendingGoToRegion.docId === doc.id
@@ -1203,7 +1209,9 @@ async function renderPdfDocument(doc, container) {
 
     let initialPageNum = 1;
     let normalizedPendingRegion = null;
-    if (pendingRegion && pendingRegion.region) {
+    if (pendingPage !== null) {
+        initialPageNum = pendingPage;
+    } else if (pendingRegion && pendingRegion.region) {
         normalizedPendingRegion = (typeof normalizePdfRegionShape === 'function')
             ? normalizePdfRegionShape(pendingRegion.region)
             : pendingRegion.region;
@@ -1217,6 +1225,14 @@ async function renderPdfDocument(doc, container) {
     if (renderToken !== currentPdfState.renderToken || currentPdfState.docId !== doc.id) return;
 
     let appliedPendingNavigation = false;
+
+    // Clear consumed char-position navigation (initial page already rendered to target).
+    if (pendingPage !== null &&
+        currentPdfState.pendingGoToPage &&
+        currentPdfState.pendingGoToPage.docId === doc.id) {
+        currentPdfState.pendingGoToPage = null;
+        appliedPendingNavigation = true;
+    }
 
     // Clear consumed char-position navigation (initial page already rendered to target).
     if (pendingChar !== null &&
@@ -1547,6 +1563,23 @@ async function pdfGoToPosition(doc, charPos) {
     renderPdfPage(resolvedPage, doc);
 }
 
+function pdfGoToPage(doc, pageNum) {
+    if (!doc) return;
+    const normalizedPage = Math.max(1, Number.parseInt(pageNum, 10) || 1);
+
+    if (!currentPdfState.pdfDoc || currentPdfState.docId !== doc.id) {
+        currentPdfState.pendingGoToPage = {
+            docId: doc.id,
+            pageNum: normalizedPage
+        };
+        return;
+    }
+
+    const upperBound = Math.max(1, Number.parseInt(currentPdfState.totalPages, 10) || normalizedPage);
+    const targetPage = Math.max(1, Math.min(upperBound, normalizedPage));
+    renderPdfPage(targetPage, doc);
+}
+
 function pdfGoToRegion(doc, region, segmentId = null) {
     if (!doc || !region || !region.pageNum) return;
     const normalizedRegion = (typeof normalizePdfRegionShape === 'function')
@@ -1591,8 +1624,14 @@ function cleanupPdfState() {
         activeDocId &&
         currentPdfState.pendingGoToCharPos.docId === activeDocId
     );
+    const keepPendingPage = !!(
+        currentPdfState.pendingGoToPage &&
+        activeDocId &&
+        currentPdfState.pendingGoToPage.docId === activeDocId
+    );
     if (!keepPendingRegion) currentPdfState.pendingGoToRegion = null;
     if (!keepPendingCharPos) currentPdfState.pendingGoToCharPos = null;
+    if (!keepPendingPage) currentPdfState.pendingGoToPage = null;
 
     const loadingTask = currentPdfState.loadingTask;
     if (loadingTask && typeof loadingTask.destroy === 'function') {

@@ -214,6 +214,24 @@
             background: #4f596b;
         }
 
+        .semantic-tools-dock {
+            border-top: 1px solid var(--border);
+            padding: var(--space-3);
+            background: var(--bg-secondary);
+        }
+
+        .semantic-tools-dock-title {
+            margin-bottom: var(--space-2);
+        }
+
+        .semantic-tools-btn {
+            background: #6f8f7e;
+        }
+
+        .semantic-tools-btn:hover {
+            background: #5f7b6d;
+        }
+
         .code-item {
             display: flex;
             align-items: center;
@@ -3429,6 +3447,145 @@
             max-height: 80vh;
             display: flex;
             flex-direction: column;
+        }
+
+        .semantic-tools-modal-content {
+            max-width: 920px;
+            width: min(95vw, 920px);
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .semantic-tools-model-row {
+            margin-bottom: var(--space-3);
+        }
+
+        .semantic-tools-model-controls {
+            display: flex;
+            gap: var(--space-2);
+            align-items: center;
+        }
+
+        .semantic-tools-model-controls .form-select {
+            flex: 1;
+        }
+
+        .semantic-model-hint {
+            margin-top: 6px;
+        }
+
+        .semantic-tools-status {
+            min-height: 30px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            margin-bottom: var(--space-3);
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: var(--bg-primary);
+            display: flex;
+            align-items: center;
+        }
+
+        .semantic-tools-status.semantic-status-error {
+            border-color: #c16f6f;
+            color: #a44949;
+            background: rgba(193, 111, 111, 0.08);
+        }
+
+        .semantic-tools-index-row {
+            display: flex;
+            gap: var(--space-2);
+            margin-bottom: var(--space-2);
+        }
+
+        .semantic-tools-progress {
+            margin-bottom: var(--space-3);
+        }
+
+        .semantic-progress-meta {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-bottom: 6px;
+        }
+
+        .semantic-progress-track {
+            height: 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-primary);
+            overflow: hidden;
+        }
+
+        .semantic-progress-fill {
+            height: 100%;
+            width: 0%;
+            transition: width 0.15s ease;
+            background: linear-gradient(90deg, #4f7ca7, #7da0bf);
+        }
+
+        .semantic-tools-search-row {
+            display: flex;
+            gap: var(--space-2);
+            margin-bottom: var(--space-3);
+        }
+
+        .semantic-tools-search-row .form-input {
+            flex: 1;
+        }
+
+        .semantic-tools-results {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-primary);
+            min-height: 120px;
+        }
+
+        .semantic-result-item {
+            width: 100%;
+            text-align: left;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            background: transparent;
+            padding: 10px 12px;
+            cursor: pointer;
+            color: inherit;
+        }
+
+        .semantic-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .semantic-result-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .semantic-result-doc {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-bottom: 4px;
+        }
+
+        .semantic-result-snippet {
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+        }
+
+        .semantic-result-score {
+            font-variant-numeric: tabular-nums;
+            color: var(--text-tertiary);
+            margin-left: 8px;
+        }
+
+        .semantic-empty-results {
+            padding: 14px;
+            color: var(--text-tertiary);
+            font-size: 13px;
         }
 
         .search-help {

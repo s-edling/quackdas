@@ -121,6 +121,10 @@
             <div class="codes-list cases-list" id="casesList">
                 <!-- Cases will be populated here -->
             </div>
+            <div class="semantic-tools-dock">
+                <div class="panel-title semantic-tools-dock-title">Semantic tools</div>
+                <button class="add-code-btn semantic-tools-btn" id="semanticToolsButton" data-action="openSemanticToolsModal" hidden>Semantic tools</button>
+            </div>
         </aside>
 
         <!-- Content Panel -->
@@ -392,6 +396,39 @@
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeSearchResults">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Semantic Tools Modal -->
+    <div id="semanticToolsModal" class="modal">
+        <div class="modal-content semantic-tools-modal-content">
+            <h2 class="modal-title">Semantic tools</h2>
+            <div class="semantic-tools-model-row">
+                <label class="form-label" for="semanticModelSelect">Embedding model</label>
+                <div class="semantic-tools-model-controls">
+                    <select class="form-select" id="semanticModelSelect"></select>
+                    <button type="button" class="btn btn-secondary" data-action="refreshSemanticModelList">Refresh models</button>
+                    <button type="button" class="btn btn-secondary" data-action="saveSemanticModelSetting">Save model</button>
+                </div>
+                <p class="empty-state-hint semantic-model-hint" id="semanticModelHint"></p>
+            </div>
+            <div class="semantic-tools-status" id="semanticStatusBanner"></div>
+            <div class="semantic-tools-index-row">
+                <button type="button" class="btn btn-primary" id="semanticStartIndexBtn" data-action="startSemanticIndexing">Index this project for semantic search</button>
+                <button type="button" class="btn btn-secondary" id="semanticCancelIndexBtn" data-action="cancelSemanticIndexing" hidden>Cancel indexing</button>
+            </div>
+            <div class="semantic-tools-progress" id="semanticProgressWrap" hidden>
+                <div class="semantic-progress-meta" id="semanticProgressMeta"></div>
+                <div class="semantic-progress-track"><div class="semantic-progress-fill" id="semanticProgressFill"></div></div>
+            </div>
+            <div class="semantic-tools-search-row">
+                <input type="text" class="form-input" id="semanticQueryInput" placeholder="Search semantically in Swedish or English...">
+                <button type="button" class="btn btn-primary" data-action="runSemanticSearch">Search</button>
+            </div>
+            <div class="semantic-tools-results" id="semanticResultsList"></div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-action="closeSemanticToolsModal">Close</button>
             </div>
         </div>
     </div>
@@ -750,6 +787,7 @@
     <script src="js/pdf.js"></script>
     <script src="js/qdpx.js"></script>
     <script src="js/export.js"></script>
+    <script src="js/semantic.js"></script>
     <script src="js/app.js"></script>
 <!-- PDF.js (module build) -->
 <script type="module" src="js/pdfjs-bootstrap.js"></script>
