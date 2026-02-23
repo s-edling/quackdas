@@ -737,11 +737,15 @@ function toggleCodeForTextRange(doc, startIndex, endIndex, codeId) {
 }
 
 // Apply a single code to the currently stored selection (click-to-code workflow)
-function applyCodeToStoredSelection(codeId) {
+function applyCodeToStoredSelection(codeId, options = {}) {
     if (!appData.currentDocId || appData.filterCodeId) return;
 
     const sel = appData.selectedText;
     if (!sel) return;
+    const preserveCaretAfterApply = !!options.preserveCaretAfterApply;
+    const preserveCaretCharIndex = Number.isFinite(Number(sel.endIndex))
+        ? Number(sel.endIndex)
+        : (Number.isFinite(Number(sel.startIndex)) ? Number(sel.startIndex) : 0);
 
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const isPdfRegion = sel.kind === 'pdfRegion' && sel.pdfRegion;
@@ -873,6 +877,22 @@ function applyCodeToStoredSelection(codeId) {
         appData.selectedText = null;
         const nativeSelection = window.getSelection();
         if (nativeSelection) nativeSelection.removeAllRanges();
+        if (preserveCaretAfterApply && typeof showReadOnlyTextViewerCaret === 'function') {
+            requestAnimationFrame(() => {
+                const contentElement = document.getElementById('documentContent');
+                showReadOnlyTextViewerCaret(contentElement);
+                if (!contentElement || typeof getTextNodeBoundaryAtChar !== 'function') return;
+                const boundary = getTextNodeBoundaryAtChar(contentElement, Math.max(0, preserveCaretCharIndex));
+                if (!boundary || !boundary.node) return;
+                const caretSelection = window.getSelection();
+                if (!caretSelection) return;
+                const caretRange = document.createRange();
+                caretRange.setStart(boundary.node, boundary.offset);
+                caretRange.collapse(true);
+                caretSelection.removeAllRanges();
+                caretSelection.addRange(caretRange);
+            });
+        }
     } else if (typeof clearPendingPdfRegionSelection === 'function') {
         clearPendingPdfRegionSelection();
         appData.selectedText = null;
@@ -1044,7 +1064,7 @@ function quickApplyCode(codeId) {
         startIndex: position.start,
         endIndex: position.end
     };
-    applyCodeToStoredSelection(codeId);
+    applyCodeToStoredSelection(codeId, { preserveCaretAfterApply: true });
 }
 
 // Handle editing/removing overlapping segments
