@@ -19,6 +19,7 @@ Use four files with clear roles:
 
 2) `quackdas/CHANGELOG_UNRELEASED.md` (gitignored)
 - Local draft notes during active work.
+- Add a short user-facing summary for non-trivial changes as work progresses.
 - Roll these into `CHANGELOG.md` when committing/finalizing a batch.
 
 3) `quackdas/ENGINEERING_NOTES.md` (tracked)
@@ -28,6 +29,7 @@ Use four files with clear roles:
 4) `quackdas/WORKLOG_LOCAL.md` (gitignored)
 - Temporary scratchpad for hypotheses, dead ends, and in-progress diagnostics.
 - Do not treat this as durable memory.
+- Update this during implementation for each non-trivial change (anything beyond very small/mechanical edits).
 
 ## Changelog policy
 
@@ -62,8 +64,10 @@ Update `quackdas/ENGINEERING_NOTES.md` when:
 - a packaged build behaves differently from dev,
 - a performance fix depends on specific constraints,
 - import/export compatibility requires special handling.
+- lessons learned are likely to prevent future regressions or rework.
 
 Write short, practical notes. Prefer durable rules over long narrative.
+When committing/finalizing a batch, update `ENGINEERING_NOTES.md` alongside `CHANGELOG.md` if such lessons were learned.
 
 ## Working style expectations for coding agents
 
