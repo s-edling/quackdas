@@ -222,6 +222,30 @@ function openSemanticStore(dbPath) {
         chunkTextPreview: String(row.chunk_text_preview || ''),
         embedding: fromFloat32Buffer(row.embedding_vector)
       }));
+    },
+    remapDocumentId(oldDocId, newDocId) {
+      const oldId = String(oldDocId || '').trim();
+      const newId = String(newDocId || '').trim();
+      if (!oldId || !newId || oldId === newId) return false;
+
+      const existingNew = statements.getDocState.get(newId);
+      if (existingNew) return false;
+
+      const row = statements.getDocState.get(oldId);
+      if (!row) return false;
+
+      db.prepare('UPDATE semantic_doc_state SET doc_id = ? WHERE doc_id = ?').run(newId, oldId);
+      db.prepare(`
+        UPDATE semantic_chunks
+        SET
+          doc_id = @newId,
+          chunk_id = CASE
+            WHEN instr(chunk_id, '::') > 0 THEN @newId || substr(chunk_id, instr(chunk_id, '::'))
+            ELSE @newId || '::' || chunk_index
+          END
+        WHERE doc_id = @oldId
+      `).run({ newId, oldId });
+      return true;
     }
   };
 

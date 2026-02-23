@@ -169,9 +169,42 @@ function setupContextMenuDismissal() {
     window.addEventListener('scroll', () => hideContextMenu(), true);
 }
 
+function makeDelegatedEventWithCurrentTarget(event, currentTarget) {
+    return {
+        target: event.target,
+        currentTarget,
+        dataTransfer: event.dataTransfer,
+        metaKey: !!event.metaKey,
+        ctrlKey: !!event.ctrlKey,
+        shiftKey: !!event.shiftKey,
+        altKey: !!event.altKey,
+        clientX: Number(event.clientX || 0),
+        clientY: Number(event.clientY || 0),
+        preventDefault: () => event.preventDefault(),
+        stopPropagation: () => event.stopPropagation()
+    };
+}
+
+function getEventTargetElement(event) {
+    const target = event ? event.target : null;
+    if (target && target.nodeType === 1) return target;
+    if (target && target.nodeType === 3 && target.parentElement) return target.parentElement;
+    return null;
+}
+
+function isInteractiveControlTarget(target) {
+    const targetEl = (target && target.nodeType === 1)
+        ? target
+        : (target && target.nodeType === 3 ? target.parentElement : null);
+    if (!targetEl) return false;
+    return !!targetEl.closest('button, input, select, textarea, label, a, [data-action]');
+}
+
 function setupStaticActionBindings() {
     document.addEventListener('click', (event) => {
-        const el = event.target.closest('[data-action]');
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const el = targetEl.closest('[data-action]');
         if (!el) return;
         switch (el.dataset.action) {
             case 'openSearchModal': openSearchModal(); break;
@@ -185,6 +218,7 @@ function setupStaticActionBindings() {
             case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
             case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
             case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
+            case 'openCaseModal': openCaseModal(); break;
             case 'openCodeModal': openCodeModal(); break;
             case 'undo': undo(); break;
             case 'redo': redo(); break;
@@ -195,6 +229,8 @@ function setupStaticActionBindings() {
             case 'openImportModal': openImportModal(); break;
             case 'openPasteModal': openPasteModal(); break;
             case 'openSemanticToolsModal': openSemanticToolsModal(); break;
+            case 'showSemanticToolSearch': showSemanticToolSearch(); break;
+            case 'showSemanticToolAsk': showSemanticToolAsk(); break;
             case 'createFolder': createFolder(); break;
             case 'closeMemoModal': closeMemoModal(); break;
             case 'closeRestoreBackupModal': closeRestoreBackupModal(); break;
@@ -211,19 +247,26 @@ function setupStaticActionBindings() {
             case 'inPageSearchNext': inPageSearchNext(); break;
             case 'closeInPageSearch': closeInPageSearch(); break;
             case 'saveSemanticModelSetting': saveSemanticModelSetting(); break;
+            case 'saveSemanticGenerationModel': saveSemanticGenerationModel(); break;
             case 'refreshSemanticModelList': refreshSemanticModelList(); break;
             case 'startSemanticIndexing': startSemanticIndexing(); break;
             case 'cancelSemanticIndexing': cancelSemanticIndexing(); break;
             case 'runSemanticSearch': runSemanticSearch(); break;
+            case 'runSemanticAsk': runSemanticAsk(); break;
+            case 'runSemanticAskAgain': runSemanticAskAgain(); break;
+            case 'cancelSemanticAsk': cancelSemanticAsk(); break;
             case 'segmentActionChoiceMemo': segmentActionChoice('memo'); break;
             case 'segmentActionChoiceEdit': segmentActionChoice('edit'); break;
             case 'segmentActionChoiceRemove': segmentActionChoice('remove'); break;
             case 'closeSegmentActionModal': closeSegmentActionModal(); break;
             case 'closeCodeModal': closeCodeModal(); break;
+            case 'closeCaseModal': closeCaseModal(); break;
             case 'closeImportModal': closeImportModal(); break;
             case 'closePasteModal': closePasteModal(); break;
             case 'closeCodeSelectionModal': closeCodeSelectionModal(); break;
             case 'applySelectedCodes': applySelectedCodes(); break;
+            case 'closeCaseAddDocumentsModal': closeCaseAddDocumentsModal(); break;
+            case 'closeDocumentAssignCasesModal': closeDocumentAssignCasesModal(); break;
             case 'closeMoveToFolderModal': closeMoveToFolderModal(); break;
             case 'closeFolderInfoModal': closeFolderInfoModal(); break;
             case 'closeCodeColorModal': closeCodeColorModal(); break;
@@ -232,16 +275,81 @@ function setupStaticActionBindings() {
             case 'closeTextPromptOk': closeTextPrompt(true); break;
             case 'closeOcrHelpModal': closeOcrHelpModal(); break;
             case 'closePdfRegionPreviewModal': closePdfRegionPreviewModal(); break;
+            case 'openDocumentMetadataFromList': openDocumentMetadata(String(el.dataset.docId || ''), event); break;
+            case 'toggleFolderExpandedFromList': toggleFolderExpanded(String(el.dataset.folderId || ''), event); break;
+            case 'openFolderInfoFromList': openFolderInfo(String(el.dataset.folderId || ''), event); break;
+            case 'deleteCodeFromList': deleteCode(String(el.dataset.codeId || ''), event); break;
+            case 'assignShortcutFromCodeView': assignShortcut(String(el.dataset.codeId || '')); break;
+            case 'toggleCodeViewSubcodes': toggleCodeViewSubcodes(); break;
+            case 'goToParentCodeFromCodeView': goToParentCodeFromCodeView(); break;
+            case 'toggleCodeViewNotes': toggleCodeViewNotes(); break;
+            case 'editFilterCodeDescription': editFilterCodeDescription(String(el.dataset.codeId || '')); break;
+            case 'toggleCodeViewPresetsExpanded': toggleCodeViewPresetsExpanded(); break;
+            case 'saveCurrentCodeViewPreset': saveCurrentCodeViewPreset(); break;
+            case 'setCodeViewMode': setCodeViewMode(String(el.dataset.mode || 'segments')); break;
+            case 'clearCodeInspectorSelection': clearCodeInspectorSelection(); break;
+            case 'addInspectorSegmentMemo': addInspectorSegmentMemo(String(el.dataset.segmentId || '')); break;
+            case 'goToSegmentLocationFromInspector': goToSegmentLocation(String(el.dataset.docId || ''), String(el.dataset.segmentId || '')); break;
+            case 'toggleCaseExpandedFromList': toggleCaseExpanded(String(el.dataset.caseId || ''), event); break;
+            case 'deleteCaseFromList': deleteCase(String(el.dataset.caseId || ''), event); break;
+            case 'saveCaseDescriptionAndNotesFromSheet': saveCaseDescriptionAndNotes(String(el.dataset.caseId || '')); break;
+            case 'cancelCaseDescriptionEdit': cancelCaseDescriptionEdit(); break;
+            case 'startCaseDescriptionEdit': startCaseDescriptionEdit(); break;
+            case 'toggleCaseViewNotes': toggleCaseViewNotes(); break;
+            case 'saveCaseTypeFromSheet': saveCaseTypeFromSheet(String(el.dataset.caseId || '')); break;
+            case 'saveCaseAttributeRow': saveCaseAttributeRow(String(el.dataset.caseId || ''), Number(el.dataset.rowIndex || 0)); break;
+            case 'deleteCaseAttributeRow': deleteCaseAttributeRow(String(el.dataset.caseId || ''), Number(el.dataset.rowIndex || 0)); break;
+            case 'addCaseAttributeFromSheet': addCaseAttributeFromSheet(String(el.dataset.caseId || '')); break;
+            case 'linkCurrentDocumentToSelectedCase': linkCurrentDocumentToSelectedCase(); break;
+            case 'openCaseAddDocumentsModalFromSheet': openCaseAddDocumentsModal(String(el.dataset.caseId || '')); break;
+            case 'openLinkedCaseDocument': openLinkedCaseDocument(String(el.dataset.docId || '')); break;
+            case 'unlinkDocumentFromCaseFromSheet': unlinkDocumentFromCaseFromSheet(String(el.dataset.caseId || ''), String(el.dataset.docId || '')); break;
+            case 'openCaseFromHeaderPill': openCaseFromHeaderPill(String(el.dataset.caseId || '')); break;
+            case 'toggleDocumentCasesPicker': toggleDocumentCasesPicker(event); break;
+            case 'createCaseFromDocumentPicker': createCaseFromDocumentPicker(); break;
+            case 'editMemo': editMemo(String(el.dataset.memoId || '')); break;
+            case 'deleteMemo': deleteMemo(String(el.dataset.memoId || '')); break;
+            case 'restoreBackupById': restoreBackupById(String(el.dataset.backupId || '')); break;
+            case 'selectFolderForMove': selectFolderForMove(el.dataset.folderId ? String(el.dataset.folderId) : null); break;
+            case 'toggleStatsMostUsedCodes': toggleStatsMostUsedCodes(); break;
+            case 'toggleStatsCodingProgressDocs': toggleStatsCodingProgressDocs(); break;
+            case 'toggleCaseAnalysisPanel': toggleCaseAnalysisPanel(String(el.dataset.panel || '')); break;
+            case 'goToCaseAnalysisResult': goToCaseAnalysisResult(String(el.dataset.docId || ''), String(el.dataset.segmentId || '')); break;
+            case 'openCaseSummaryCodeInFilter': openCaseSummaryCodeInFilter(String(el.dataset.codeId || ''), String(el.dataset.caseId || '')); break;
+            case 'openMatrixCellInFilter': openMatrixCellInFilter(String(el.dataset.codeId || ''), String(el.dataset.caseIds || '')); break;
             default: break;
         }
     });
 
     document.addEventListener('change', (event) => {
-        const el = event.target.closest('[data-action]');
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const el = targetEl.closest('[data-action]');
         if (!el) return;
         switch (el.dataset.action) {
             case 'importProjectChange': importProject(event); break;
             case 'toggleCodeColorPaletteContrast': toggleCodeColorPaletteContrast(event.target.checked); break;
+            case 'toggleInspectorSegmentCode': toggleInspectorSegmentCode(String(el.dataset.segmentId || ''), String(el.dataset.codeId || ''), !!event.target.checked); break;
+            case 'applyCodeViewPreset': applyCodeViewPreset(event.target.value); break;
+            case 'updateAnnotationViewFilter': updateAnnotationViewFilter(String(el.dataset.filterKey || ''), event.target.value); break;
+            case 'updateCaseAnalysisField': updateCaseAnalysisField(String(el.dataset.fieldPath || ''), event.target.value); break;
+            case 'toggleCaseAnalysisFilterCase': toggleCaseAnalysisFilterCase(String(el.dataset.caseId || ''), !!event.target.checked); break;
+            case 'toggleCaseAnalysisMatrixCode': toggleCaseAnalysisMatrixCode(String(el.dataset.codeId || ''), !!event.target.checked); break;
+            case 'toggleCaseLinkFromDocumentPicker': toggleCaseLinkFromDocumentPicker(String(el.dataset.caseId || ''), !!event.target.checked); break;
+            case 'updateCaseAnalysisCooccurrenceSelection': updateCaseAnalysisCooccurrenceSelection(String(el.dataset.which || ''), event.target.value); break;
+            default: break;
+        }
+    });
+
+    document.addEventListener('input', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const el = targetEl.closest('[data-action]');
+        if (!el) return;
+        switch (el.dataset.action) {
+            case 'updateDocumentCasesPickerQuery': updateDocumentCasesPickerQuery(event.target.value); break;
+            case 'updateAnnotationViewFilter': updateAnnotationViewFilter(String(el.dataset.filterKey || ''), event.target.value); break;
+            case 'updateCaseAnalysisField': updateCaseAnalysisField(String(el.dataset.fieldPath || ''), event.target.value); break;
             default: break;
         }
     });
@@ -250,6 +358,9 @@ function setupStaticActionBindings() {
         ['memoForm', saveMemo],
         ['metadataForm', saveMetadata],
         ['codeForm', saveCode],
+        ['caseForm', saveCase],
+        ['caseAddDocumentsForm', saveCaseAddDocuments],
+        ['documentAssignCasesForm', saveDocumentAssignCases],
         ['codeDescriptionForm', saveCodeDescriptionFromModal],
         ['importForm', importDocument],
         ['pasteForm', pasteDocument],
@@ -277,6 +388,127 @@ function setupStaticActionBindings() {
             if (typeof saveCodeDescriptionFromModal === 'function') saveCodeDescriptionFromModal();
         });
     }
+
+    document.addEventListener('click', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        if (targetEl.closest('[data-action]')) return;
+
+        const docItem = targetEl.closest('.document-item[data-doc-id]');
+        if (docItem && !isInteractiveControlTarget(targetEl)) {
+            selectDocumentFromList(event, String(docItem.dataset.docId || ''));
+            return;
+        }
+
+        const codeItem = targetEl.closest('.code-item.draggable-code[data-code-id]');
+        if (codeItem && !isInteractiveControlTarget(targetEl)) {
+            filterByCode(String(codeItem.dataset.codeId || ''), event);
+            return;
+        }
+
+        const caseItem = targetEl.closest('.case-item[data-case-id]');
+        if (caseItem && !isInteractiveControlTarget(targetEl)) {
+            selectCase(String(caseItem.dataset.caseId || ''), event);
+        }
+    });
+
+    document.addEventListener('contextmenu', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+
+        const docItem = targetEl.closest('.document-item[data-doc-id]');
+        if (docItem) {
+            openDocumentContextMenu(String(docItem.dataset.docId || ''), event);
+            return;
+        }
+
+        const folderItem = targetEl.closest('.folder-item[data-folder-id]');
+        if (folderItem) {
+            openFolderContextMenu(String(folderItem.dataset.folderId || ''), event);
+            return;
+        }
+
+        const codeItem = targetEl.closest('.code-item.draggable-code[data-code-id]');
+        if (codeItem) {
+            openCodeContextMenu(String(codeItem.dataset.codeId || ''), event);
+            return;
+        }
+
+        const caseItem = targetEl.closest('.case-item[data-case-id]');
+        if (caseItem) {
+            openCaseContextMenu(String(caseItem.dataset.caseId || ''), event);
+            return;
+        }
+
+        const codedSegment = targetEl.closest('.coded-segment[data-segment-ids]');
+        if (codedSegment) {
+            showSegmentContextMenu(String(codedSegment.dataset.segmentIds || ''), event);
+        }
+    });
+
+    document.addEventListener('dragstart', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+
+        const docItem = targetEl.closest('.document-item[data-doc-id]');
+        if (docItem) {
+            handleDocDragStart(makeDelegatedEventWithCurrentTarget(event, docItem), String(docItem.dataset.docId || ''));
+            return;
+        }
+        const folderItem = targetEl.closest('.folder-item[data-folder-id]');
+        if (folderItem) {
+            handleFolderItemDragStart(makeDelegatedEventWithCurrentTarget(event, folderItem), String(folderItem.dataset.folderId || ''));
+        }
+    });
+
+    document.addEventListener('dragend', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+
+        const docItem = targetEl.closest('.document-item[data-doc-id]');
+        if (docItem) {
+            handleDocDragEnd(makeDelegatedEventWithCurrentTarget(event, docItem));
+            return;
+        }
+        const folderItem = targetEl.closest('.folder-item[data-folder-id]');
+        if (folderItem) {
+            handleFolderItemDragEnd(makeDelegatedEventWithCurrentTarget(event, folderItem));
+        }
+    });
+
+    document.addEventListener('dragover', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const zone = targetEl.closest('.folder-item[data-folder-id], .root-drop-zone, .root-doc-separator, #documentsList[data-root-drop-enabled]');
+        if (!zone) return;
+        handleFolderDragOver(makeDelegatedEventWithCurrentTarget(event, zone));
+    });
+
+    document.addEventListener('dragleave', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const zone = targetEl.closest('.folder-item[data-folder-id], .root-drop-zone, .root-doc-separator, #documentsList[data-root-drop-enabled]');
+        if (!zone) return;
+        handleFolderDragLeave(makeDelegatedEventWithCurrentTarget(event, zone));
+    });
+
+    document.addEventListener('drop', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const zone = targetEl.closest('.folder-item[data-folder-id], .root-drop-zone, .root-doc-separator, #documentsList[data-root-drop-enabled]');
+        if (!zone) return;
+        if (zone.matches('.folder-item[data-folder-id]')) {
+            handleDocumentDropOnFolder(makeDelegatedEventWithCurrentTarget(event, zone), String(zone.dataset.folderId || '') || null);
+            return;
+        }
+        if (zone.matches('.root-drop-zone') || zone.matches('.root-doc-separator')) {
+            handleDocumentDropOnFolder(makeDelegatedEventWithCurrentTarget(event, zone), null);
+            return;
+        }
+        if (zone.matches('#documentsList[data-root-drop-enabled]')) {
+            handleRootLevelDrop(makeDelegatedEventWithCurrentTarget(event, zone));
+        }
+    });
 }
 
 function isModalOpen(modalId) {

@@ -216,11 +216,218 @@ function dismissPdfRegionAnnotationInline() {
     currentPdfAnnotationCodeName = '';
 }
 
+const READONLY_VIEWER_DRAG_THRESHOLD_PX = 4;
+const readOnlyViewerCaretState = {
+    outsidePointerBound: false,
+    pointerDown: false,
+    dragDetected: false,
+    downX: 0,
+    downY: 0,
+    suppressNextClickActivation: false
+};
+
+function isCurrentDocumentTextView() {
+    if (appData.filterCodeId || appData.selectedCaseId) return false;
+    const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    if (!doc) return false;
+    return doc.type !== 'pdf';
+}
+
+function selectionBelongsToElement(selection, element) {
+    if (!selection || !element || !selection.rangeCount) return false;
+    const range = selection.getRangeAt(0);
+    return element.contains(range.startContainer) && element.contains(range.endContainer);
+}
+
+function showReadOnlyTextViewerCaret(contentElement = document.getElementById('documentContent')) {
+    if (!contentElement) return;
+    contentElement.classList.add('viewer-readonly-caret-active');
+    if (document.activeElement !== contentElement) {
+        try {
+            contentElement.focus({ preventScroll: true });
+        } catch (_) {
+            contentElement.focus();
+        }
+    }
+}
+
+function hideReadOnlyTextViewerCaret(options = {}) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement) return;
+    contentElement.classList.remove('viewer-readonly-caret-active');
+    if (document.activeElement === contentElement) {
+        contentElement.blur();
+    }
+    if (options.clearCollapsedSelection === false) return;
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
+    if (!selectionBelongsToElement(selection, contentElement)) return;
+    selection.removeAllRanges();
+}
+
+function preventReadOnlyViewerMutation(event) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement || !contentElement.classList.contains('viewer-readonly-caret-enabled')) return;
+    if (!contentElement.contains(event.target)) return;
+    event.preventDefault();
+}
+
+function preventReadOnlyViewerEditKeys(event) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement || !contentElement.classList.contains('viewer-readonly-caret-enabled')) return;
+    if (!contentElement.contains(event.target)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const key = String(event.key || '');
+    const isSingleChar = key.length === 1;
+    if (!isSingleChar && key !== 'Backspace' && key !== 'Delete' && key !== 'Enter') return;
+    event.preventDefault();
+}
+
+function handleReadOnlyViewerKeyup(event) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement || document.activeElement !== contentElement) return;
+    const key = String(event.key || '');
+    if (!key || key === 'Shift' || key === 'Control' || key === 'Meta' || key === 'Alt') return;
+    handleTextSelection();
+}
+
+function handleReadOnlyViewerPointerDown(event) {
+    if (event.button !== 0) return;
+    readOnlyViewerCaretState.pointerDown = true;
+    readOnlyViewerCaretState.dragDetected = false;
+    readOnlyViewerCaretState.suppressNextClickActivation = false;
+    readOnlyViewerCaretState.downX = event.clientX;
+    readOnlyViewerCaretState.downY = event.clientY;
+}
+
+function handleReadOnlyViewerPointerMove(event) {
+    if (!readOnlyViewerCaretState.pointerDown || readOnlyViewerCaretState.dragDetected) return;
+    const dx = Math.abs(event.clientX - readOnlyViewerCaretState.downX);
+    const dy = Math.abs(event.clientY - readOnlyViewerCaretState.downY);
+    if (dx < READONLY_VIEWER_DRAG_THRESHOLD_PX && dy < READONLY_VIEWER_DRAG_THRESHOLD_PX) return;
+    readOnlyViewerCaretState.dragDetected = true;
+}
+
+function handleReadOnlyViewerPointerEnd() {
+    if (!readOnlyViewerCaretState.pointerDown) return;
+    readOnlyViewerCaretState.suppressNextClickActivation = readOnlyViewerCaretState.dragDetected;
+    readOnlyViewerCaretState.pointerDown = false;
+    readOnlyViewerCaretState.dragDetected = false;
+}
+
+function isReadOnlyViewerInteractiveTarget(target) {
+    if (!target || !(target instanceof Element)) return false;
+    return !!target.closest(
+        'button, a, input, textarea, select, [data-action], .document-segment-annotation-indicator'
+    );
+}
+
+function handleReadOnlyViewerClick(event) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement || !contentElement.classList.contains('viewer-readonly-caret-enabled')) return;
+    if (!isCurrentDocumentTextView()) return;
+    if (isReadOnlyViewerInteractiveTarget(event.target)) {
+        hideReadOnlyTextViewerCaret({ clearCollapsedSelection: false });
+        return;
+    }
+
+    const suppress = readOnlyViewerCaretState.suppressNextClickActivation;
+    readOnlyViewerCaretState.suppressNextClickActivation = false;
+    if (suppress) {
+        hideReadOnlyTextViewerCaret({ clearCollapsedSelection: false });
+        return;
+    }
+
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount && selectionBelongsToElement(selection, contentElement) && !selection.isCollapsed) {
+        hideReadOnlyTextViewerCaret({ clearCollapsedSelection: false });
+        handleTextSelection();
+        return;
+    }
+
+    showReadOnlyTextViewerCaret(contentElement);
+}
+
+function bindReadOnlyViewerOutsidePointerHandler() {
+    if (readOnlyViewerCaretState.outsidePointerBound) return;
+    document.addEventListener('pointerdown', (event) => {
+        const contentElement = document.getElementById('documentContent');
+        if (!contentElement || !contentElement.classList.contains('viewer-readonly-caret-active')) return;
+        const viewer = document.querySelector('.content-body');
+        if (viewer && viewer.contains(event.target)) return;
+        hideReadOnlyTextViewerCaret();
+    }, true);
+    readOnlyViewerCaretState.outsidePointerBound = true;
+}
+
+function enableReadOnlyTextViewerCaret(contentElement = document.getElementById('documentContent')) {
+    if (!contentElement) return;
+    if (!isCurrentDocumentTextView()) return;
+    contentElement.classList.add('viewer-readonly-caret-enabled');
+    contentElement.setAttribute('contenteditable', 'true');
+    contentElement.setAttribute('spellcheck', 'false');
+    contentElement.setAttribute('autocapitalize', 'off');
+    contentElement.setAttribute('autocorrect', 'off');
+    contentElement.setAttribute('autocomplete', 'off');
+    if (!contentElement.hasAttribute('tabindex')) {
+        contentElement.setAttribute('tabindex', '0');
+        contentElement.dataset.viewerReadonlyCaretOwnsTabindex = '1';
+    }
+
+    if (contentElement.dataset.viewerReadonlyCaretBound !== '1') {
+        contentElement.addEventListener('beforeinput', preventReadOnlyViewerMutation, true);
+        contentElement.addEventListener('paste', preventReadOnlyViewerMutation, true);
+        contentElement.addEventListener('drop', preventReadOnlyViewerMutation, true);
+        contentElement.addEventListener('keydown', preventReadOnlyViewerEditKeys, true);
+        contentElement.addEventListener('keyup', handleReadOnlyViewerKeyup, true);
+        contentElement.addEventListener('pointerdown', handleReadOnlyViewerPointerDown, true);
+        contentElement.addEventListener('pointermove', handleReadOnlyViewerPointerMove, true);
+        contentElement.addEventListener('pointerup', handleReadOnlyViewerPointerEnd, true);
+        contentElement.addEventListener('pointercancel', handleReadOnlyViewerPointerEnd, true);
+        contentElement.addEventListener('click', handleReadOnlyViewerClick, true);
+        contentElement.dataset.viewerReadonlyCaretBound = '1';
+    }
+
+    bindReadOnlyViewerOutsidePointerHandler();
+}
+
+function disableReadOnlyTextViewerCaret(options = {}) {
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement) return;
+    contentElement.classList.remove('viewer-readonly-caret-enabled', 'viewer-readonly-caret-active');
+    contentElement.removeAttribute('contenteditable');
+    contentElement.removeAttribute('spellcheck');
+    contentElement.removeAttribute('autocapitalize');
+    contentElement.removeAttribute('autocorrect');
+    contentElement.removeAttribute('autocomplete');
+    if (contentElement.dataset.viewerReadonlyCaretOwnsTabindex === '1') {
+        contentElement.removeAttribute('tabindex');
+        delete contentElement.dataset.viewerReadonlyCaretOwnsTabindex;
+    }
+
+    readOnlyViewerCaretState.pointerDown = false;
+    readOnlyViewerCaretState.dragDetected = false;
+    readOnlyViewerCaretState.suppressNextClickActivation = false;
+
+    if (document.activeElement === contentElement) {
+        contentElement.blur();
+    }
+    if (options.clearSelection === false) return;
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    if (!selectionBelongsToElement(selection, contentElement)) return;
+    selection.removeAllRanges();
+}
+
 // Text selection and coding
 function handleTextSelection() {
     if (appData.filterCodeId) return; // Don't allow coding in filter view
 
     const selection = window.getSelection();
+    if (!selection) {
+        appData.selectedText = null;
+        return;
+    }
     const text = selection.toString().trim();
 
     // Clear stored selection if nothing is selected
@@ -231,9 +438,13 @@ function handleTextSelection() {
 
     const range = selection.getRangeAt(0);
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    const contentElement = document.getElementById('documentContent');
+    if (!doc || !contentElement || typeof doc.content !== 'string') {
+        appData.selectedText = null;
+        return;
+    }
 
     // Calculate actual character positions in the document
-    const contentElement = document.getElementById('documentContent');
     const position = getTextPosition(contentElement, range, doc.content);
 
     if (position) {
@@ -817,12 +1028,14 @@ function quickApplyCode(codeId) {
     }
     
     const selection = window.getSelection();
+    if (!selection) return;
     const text = selection.toString().trim();
     if (text.length === 0 || !selection.rangeCount) return;
 
     const range = selection.getRangeAt(0);
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const contentElement = document.getElementById('documentContent');
+    if (!doc || !contentElement || typeof doc.content !== 'string') return;
     const position = getTextPosition(contentElement, range, doc.content);
     if (!position) return;
 
@@ -1050,17 +1263,21 @@ function updateBoundaryPreview() {
 function saveBoundaryEdit() {
     if (!currentEditSegment) return;
     
+    const doc = appData.documents.find(d => d.id === currentEditSegment.docId);
+    if (!doc || typeof doc.content !== 'string') {
+        alert('Document for this segment could not be found.');
+        return;
+    }
     const start = parseInt(document.getElementById('boundaryStart').value);
     const end = parseInt(document.getElementById('boundaryEnd').value);
     
-    if (start >= end || start < 0 || end > appData.documents.find(d => d.id === currentEditSegment.docId).content.length) {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || start < 0 || end > doc.content.length) {
         alert('Invalid boundaries');
         return;
     }
     
     saveHistory();
-    
-    const doc = appData.documents.find(d => d.id === currentEditSegment.docId);
+
     currentEditSegment.startIndex = start;
     currentEditSegment.endIndex = end;
     currentEditSegment.text = doc.content.substring(start, end);

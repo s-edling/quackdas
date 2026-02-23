@@ -300,7 +300,7 @@ async function openRestoreBackupModal() {
                         <div class="backup-item-time">${escapeHtml(dt.toLocaleString())}</div>
                         <div class="backup-item-meta">${escapeHtml(backup.reason || 'auto backup')} · ${sizeMb} MB</div>
                     </div>
-                    <button class="btn btn-secondary backup-restore-btn" onclick="restoreBackupById('${escapeJsForSingleQuotedString(backup.id)}')">Restore</button>
+                    <button class="btn btn-secondary backup-restore-btn" data-action="restoreBackupById" data-backup-id="${escapeHtmlAttrValue(backup.id)}">Restore</button>
                 </div>
             `;
         }).join('');
@@ -462,7 +462,7 @@ function openMoveToFolderModal(docId) {
     
     // Build folder tree
     const folderIconSvg = `<svg class="toolbar-icon folder-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-1.2 8a2 2 0 0 1-2 1.7H6.2a2 2 0 0 1-2-1.7z"/></svg>`;
-    let html = `<div class="folder-selection-item ${!doc.folderId ? 'selected' : ''}" onclick="selectFolderForMove(null)">
+    let html = `<div class="folder-selection-item ${!doc.folderId ? 'selected' : ''}" data-action="selectFolderForMove" data-folder-id="">
         <span class="folder-icon">${folderIconSvg}</span> Root (no folder)
     </div>`;
     
@@ -481,7 +481,7 @@ function renderFolderSelectionTree(parentId, depth, currentFolderId) {
     folders.forEach(folder => {
         const isSelected = folder.id === currentFolderId;
         const indent = depth * 20;
-        html += `<div class="folder-selection-item ${isSelected ? 'selected' : ''}" style="padding-left: ${16 + indent}px;" onclick="selectFolderForMove('${escapeJsForSingleQuotedString(folder.id)}')">
+        html += `<div class="folder-selection-item ${isSelected ? 'selected' : ''}" style="padding-left: ${16 + indent}px;" data-action="selectFolderForMove" data-folder-id="${escapeHtmlAttrValue(folder.id)}">
             <span class="folder-icon">${folderIconSvg}</span> ${escapeHtml(folder.name)}
         </div>`;
         html += renderFolderSelectionTree(folder.id, depth + 1, currentFolderId);
@@ -783,7 +783,7 @@ function renderStatistics() {
     if (codeCountsAll.length > 4) {
         codeChart.innerHTML += `
             <div class="stats-show-more-wrap">
-                <button type="button" class="btn btn-secondary stats-show-more-btn" onclick="toggleStatsMostUsedCodes()">
+                <button type="button" class="btn btn-secondary stats-show-more-btn" data-action="toggleStatsMostUsedCodes">
                     ${statsDashboardUiState.showAllMostUsedCodes ? 'Show less' : 'Show more'}
                 </button>
             </div>
@@ -813,7 +813,7 @@ function renderStatistics() {
     if (docProgressAll.length > 4) {
         documentChart.innerHTML += `
             <div class="stats-show-more-wrap">
-                <button type="button" class="btn btn-secondary stats-show-more-btn" onclick="toggleStatsCodingProgressDocs()">
+                <button type="button" class="btn btn-secondary stats-show-more-btn" data-action="toggleStatsCodingProgressDocs">
                     ${statsDashboardUiState.showAllCodingProgressDocs ? 'Show less' : 'Show more'}
                 </button>
             </div>
@@ -1016,7 +1016,7 @@ function renderCaseAnalysisInStats() {
         <h3 style="font-size: 16px; margin-bottom: 12px;">Case analysis</h3>
         <div class="case-analysis-panels">
             <section class="case-analysis-panel">
-                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('filter')">
+                <button class="case-analysis-panel-toggle" data-action="toggleCaseAnalysisPanel" data-panel="filter">
                     <span>Filter coded references</span>
                     <span>${panelFilterOpen ? '▾' : '▸'}</span>
                 </button>
@@ -1025,13 +1025,13 @@ function renderCaseAnalysisInStats() {
                         <div class="case-analysis-controls-grid">
                             <div class="case-analysis-control">
                                 <label class="form-label">Code</label>
-                                <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.codeQuery)}" oninput="updateCaseAnalysisField('filter.codeQuery', this.value)">
+                                <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.codeQuery)}" data-action="updateCaseAnalysisField" data-field-path="filter.codeQuery">
                                 <div class="case-analysis-picker-list">
                                     ${codeRowsForFilter.length === 0
                                         ? '<div class="empty-state-hint">No matching codes.</div>'
                                         : codeRowsForFilter.map((row) => `
                                             <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
-                                                <input type="radio" name="caseAnalysisFilterCode" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.filter.codeId === row.codeId ? 'checked' : ''} onchange="updateCaseAnalysisField('filter.codeId', this.value)">
+                                                <input type="radio" name="caseAnalysisFilterCode" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.filter.codeId === row.codeId ? 'checked' : ''} data-action="updateCaseAnalysisField" data-field-path="filter.codeId">
                                                 <span>${escapeHtml(row.name)}</span>
                                             </label>
                                         `).join('')}
@@ -1039,18 +1039,18 @@ function renderCaseAnalysisInStats() {
                             </div>
                             <div class="case-analysis-control">
                                 <label class="form-label">Case filter</label>
-                                <select class="form-select" onchange="updateCaseAnalysisField('filter.caseMode', this.value)">
+                                <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="filter.caseMode">
                                     <option value="any" ${caseAnalysisUiState.filter.caseMode === 'any' ? 'selected' : ''}>Any case</option>
                                     <option value="specific" ${caseAnalysisUiState.filter.caseMode === 'specific' ? 'selected' : ''}>Specific cases...</option>
                                 </select>
                                 ${caseAnalysisUiState.filter.caseMode === 'specific' ? `
-                                    <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.caseQuery)}" oninput="updateCaseAnalysisField('filter.caseQuery', this.value)">
+                                    <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.caseQuery)}" data-action="updateCaseAnalysisField" data-field-path="filter.caseQuery">
                                     <div class="case-analysis-picker-list">
                                         ${caseRowsForFilter.length === 0
                                             ? '<div class="empty-state-hint">No matching cases.</div>'
                                             : caseRowsForFilter.map((row) => `
                                                 <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
-                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.filter.caseIds.includes(row.caseId) ? 'checked' : ''} onchange="toggleCaseAnalysisFilterCase('${escapeJsForSingleQuotedString(row.caseId)}', this.checked)">
+                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.filter.caseIds.includes(row.caseId) ? 'checked' : ''} data-action="toggleCaseAnalysisFilterCase" data-case-id="${escapeHtmlAttrValue(row.caseId)}">
                                                     <span>${escapeHtml(row.name)}</span>
                                                 </label>
                                             `).join('')}
@@ -1059,11 +1059,11 @@ function renderCaseAnalysisInStats() {
                             </div>
                             <div class="case-analysis-control">
                                 <label class="form-label">Attribute filter</label>
-                                <select class="form-select" onchange="updateCaseAnalysisField('filter.attrKey', this.value)">
+                                <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="filter.attrKey">
                                     <option value="">Any attribute</option>
                                     ${attrKeys.map((key) => `<option value="${escapeHtmlAttrValue(key)}" ${caseAnalysisUiState.filter.attrKey === key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
                                 </select>
-                                <input class="form-input" list="caseAnalysisAttributeValues" type="text" placeholder="Exact value" value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.attrValue)}" oninput="updateCaseAnalysisField('filter.attrValue', this.value)">
+                                <input class="form-input" list="caseAnalysisAttributeValues" type="text" placeholder="Exact value" value="${escapeHtmlAttrValue(caseAnalysisUiState.filter.attrValue)}" data-action="updateCaseAnalysisField" data-field-path="filter.attrValue">
                                 <datalist id="caseAnalysisAttributeValues">
                                     ${attrValues.map((value) => `<option value="${escapeHtmlAttrValue(value)}"></option>`).join('')}
                                 </datalist>
@@ -1079,7 +1079,7 @@ function renderCaseAnalysisInStats() {
                                             <div class="case-analysis-result-meta"><strong>${escapeHtml(match.docTitle)}</strong> · ${escapeHtml(match.codeName)}</div>
                                             <div class="case-analysis-result-snippet">${preserveLineBreaks(escapeHtml(match.snippet))}</div>
                                         </div>
-                                        <button class="btn btn-secondary case-analysis-go-btn" onclick="goToCaseAnalysisResult('${escapeJsForSingleQuotedString(match.docId)}', '${escapeJsForSingleQuotedString(match.segmentId)}')">Go to</button>
+                                        <button class="btn btn-secondary case-analysis-go-btn" data-action="goToCaseAnalysisResult" data-doc-id="${escapeHtmlAttrValue(match.docId)}" data-segment-id="${escapeHtmlAttrValue(match.segmentId)}">Go to</button>
                                     </div>
                                 `).join('')}
                         </div>
@@ -1088,7 +1088,7 @@ function renderCaseAnalysisInStats() {
             </section>
 
             <section class="case-analysis-panel">
-                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('summary')">
+                <button class="case-analysis-panel-toggle" data-action="toggleCaseAnalysisPanel" data-panel="summary">
                     <span>Case summary</span>
                     <span>${panelSummaryOpen ? '▾' : '▸'}</span>
                 </button>
@@ -1097,13 +1097,13 @@ function renderCaseAnalysisInStats() {
                         <div class="case-analysis-controls-grid">
                             <div class="case-analysis-control">
                                 <label class="form-label">Case</label>
-                                <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.summary.caseQuery)}" oninput="updateCaseAnalysisField('summary.caseQuery', this.value)">
+                                <input class="form-input" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(caseAnalysisUiState.summary.caseQuery)}" data-action="updateCaseAnalysisField" data-field-path="summary.caseQuery">
                                 <div class="case-analysis-picker-list">
                                     ${summaryCaseRows.length === 0
                                         ? '<div class="empty-state-hint">No matching cases.</div>'
                                         : summaryCaseRows.map((row) => `
                                             <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
-                                                <input type="radio" name="caseAnalysisSummaryCase" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.summary.caseId === row.caseId ? 'checked' : ''} onchange="updateCaseAnalysisField('summary.caseId', this.value)">
+                                                <input type="radio" name="caseAnalysisSummaryCase" value="${escapeHtmlAttrValue(row.caseId)}" ${caseAnalysisUiState.summary.caseId === row.caseId ? 'checked' : ''} data-action="updateCaseAnalysisField" data-field-path="summary.caseId">
                                                 <span>${escapeHtml(row.name)}</span>
                                             </label>
                                         `).join('')}
@@ -1127,7 +1127,7 @@ function renderCaseAnalysisInStats() {
                                 ${summaryData.topCodes.length === 0
                                     ? '<div class="empty-state-hint">No coded segments found in linked documents.</div>'
                                     : summaryData.topCodes.map((row) => `
-                                        <button class="case-analysis-summary-code-row" onclick="openCaseSummaryCodeInFilter('${escapeJsForSingleQuotedString(row.codeId)}', '${escapeJsForSingleQuotedString(summaryData.caseId)}')">
+                                        <button class="case-analysis-summary-code-row" data-action="openCaseSummaryCodeInFilter" data-code-id="${escapeHtmlAttrValue(row.codeId)}" data-case-id="${escapeHtmlAttrValue(summaryData.caseId)}">
                                             <span>${escapeHtml(row.codeName)}</span>
                                             <span>${row.count}</span>
                                         </button>
@@ -1139,7 +1139,7 @@ function renderCaseAnalysisInStats() {
             </section>
 
             <section class="case-analysis-panel">
-                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('matrix')">
+                <button class="case-analysis-panel-toggle" data-action="toggleCaseAnalysisPanel" data-panel="matrix">
                     <span>Code × case matrix</span>
                     <span>${panelMatrixOpen ? '▾' : '▸'}</span>
                 </button>
@@ -1148,12 +1148,12 @@ function renderCaseAnalysisInStats() {
                         <div class="case-analysis-controls-grid">
                             <div class="case-analysis-control">
                                 <label class="form-label">Row dimension</label>
-                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.rowMode', this.value)">
+                                <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="matrix.rowMode">
                                     <option value="cases" ${caseAnalysisUiState.matrix.rowMode === 'cases' ? 'selected' : ''}>Cases</option>
                                     <option value="attribute" ${caseAnalysisUiState.matrix.rowMode === 'attribute' ? 'selected' : ''}>Case attribute</option>
                                 </select>
                                 ${caseAnalysisUiState.matrix.rowMode === 'attribute' ? `
-                                    <select class="form-select" onchange="updateCaseAnalysisField('matrix.rowAttributeKey', this.value)">
+                                    <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="matrix.rowAttributeKey">
                                         <option value="">Select attribute key</option>
                                         ${attrKeys.map((key) => `<option value="${escapeHtmlAttrValue(key)}" ${caseAnalysisUiState.matrix.rowAttributeKey === key ? 'selected' : ''}>${escapeHtml(key)}</option>`).join('')}
                                     </select>
@@ -1161,23 +1161,23 @@ function renderCaseAnalysisInStats() {
                             </div>
                             <div class="case-analysis-control">
                                 <label class="form-label">Column dimension</label>
-                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.codeMode', this.value)">
+                                <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="matrix.codeMode">
                                     <option value="selected" ${caseAnalysisUiState.matrix.codeMode === 'selected' ? 'selected' : ''}>Selected codes</option>
                                     <option value="group" ${caseAnalysisUiState.matrix.codeMode === 'group' ? 'selected' : ''}>Code group</option>
                                 </select>
                                 ${caseAnalysisUiState.matrix.codeMode === 'group' ? `
-                                    <select class="form-select" onchange="updateCaseAnalysisField('matrix.codeGroupId', this.value)">
+                                    <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="matrix.codeGroupId">
                                         <option value="">Select code group</option>
                                         ${matrixCodeRows.filter((row) => appData.codes.some((codeItem) => codeItem.parentId === row.codeId)).map((row) => `<option value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.matrix.codeGroupId === row.codeId ? 'selected' : ''}>${escapeHtml(row.name)}</option>`).join('')}
                                     </select>
                                 ` : `
-                                    <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.matrix.codeQuery)}" oninput="updateCaseAnalysisField('matrix.codeQuery', this.value)">
+                                    <input class="form-input" type="text" placeholder="Search codes..." value="${escapeHtmlAttrValue(caseAnalysisUiState.matrix.codeQuery)}" data-action="updateCaseAnalysisField" data-field-path="matrix.codeQuery">
                                     <div class="case-analysis-picker-list">
                                         ${matrixCodeRows.length === 0
                                             ? '<div class="empty-state-hint">No matching codes.</div>'
                                             : matrixCodeRows.map((row) => `
                                                 <label class="case-analysis-picker-item" style="padding-left:${8 + row.depth * 14}px;">
-                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.matrix.selectedCodeIds.includes(row.codeId) ? 'checked' : ''} onchange="toggleCaseAnalysisMatrixCode('${escapeJsForSingleQuotedString(row.codeId)}', this.checked)">
+                                                    <input type="checkbox" value="${escapeHtmlAttrValue(row.codeId)}" ${caseAnalysisUiState.matrix.selectedCodeIds.includes(row.codeId) ? 'checked' : ''} data-action="toggleCaseAnalysisMatrixCode" data-code-id="${escapeHtmlAttrValue(row.codeId)}">
                                                     <span>${escapeHtml(row.name)}</span>
                                                 </label>
                                             `).join('')}
@@ -1186,7 +1186,7 @@ function renderCaseAnalysisInStats() {
                             </div>
                             <div class="case-analysis-control">
                                 <label class="form-label">Metric</label>
-                                <select class="form-select" onchange="updateCaseAnalysisField('matrix.metric', this.value)">
+                                <select class="form-select" data-action="updateCaseAnalysisField" data-field-path="matrix.metric">
                                     <option value="references" ${caseAnalysisUiState.matrix.metric === 'references' ? 'selected' : ''}>References (count)</option>
                                 </select>
                             </div>
@@ -1208,7 +1208,7 @@ function renderCaseAnalysisInStats() {
                                                 <tr>
                                                     <th>${escapeHtml(row.label)}</th>
                                                     ${row.cells.map((cell) => `
-                                                        <td><button class="case-analysis-matrix-cell" onclick="openMatrixCellInFilter('${escapeJsForSingleQuotedString(cell.codeId)}', '${escapeJsForSingleQuotedString(cell.caseIds.join(','))}')">${cell.count}</button></td>
+                                                        <td><button class="case-analysis-matrix-cell" data-action="openMatrixCellInFilter" data-code-id="${escapeHtmlAttrValue(cell.codeId)}" data-case-ids="${escapeHtmlAttrValue(cell.caseIds.join(','))}">${cell.count}</button></td>
                                                     `).join('')}
                                                     <td class="case-analysis-matrix-total">${row.total}</td>
                                                 </tr>
@@ -1227,7 +1227,7 @@ function renderCaseAnalysisInStats() {
             </section>
 
             <section class="case-analysis-panel">
-                <button class="case-analysis-panel-toggle" onclick="toggleCaseAnalysisPanel('cooccurrence')">
+                <button class="case-analysis-panel-toggle" data-action="toggleCaseAnalysisPanel" data-panel="cooccurrence">
                     <span>Code co-occurrence</span>
                     <span>${panelCooccurrenceOpen ? '▾' : '▸'}</span>
                 </button>
@@ -1239,8 +1239,8 @@ function renderCaseAnalysisInStats() {
                             </div>
                             <div class="cooc-side">
                                 <div class="cooc-controls">
-                                    <select id="coocCodeA" class="form-select" onchange="updateCaseAnalysisCooccurrenceSelection('A', this.value)"></select>
-                                    <select id="coocCodeB" class="form-select" onchange="updateCaseAnalysisCooccurrenceSelection('B', this.value)"></select>
+                                    <select id="coocCodeA" class="form-select" data-action="updateCaseAnalysisCooccurrenceSelection" data-which="A"></select>
+                                    <select id="coocCodeB" class="form-select" data-action="updateCaseAnalysisCooccurrenceSelection" data-which="B"></select>
                                 </div>
                                 <div id="cooccurrenceOverlaps" class="cooc-overlaps"></div>
                             </div>
@@ -1907,7 +1907,7 @@ function renderCooccurrenceMatrix() {
                 html += '<td>—</td>';
             } else {
                 const v = matrix[i][j];
-                html += `<td class="cooc-cell" title="Find overlaps" onclick="selectCooccurrencePair('${escapeJsForSingleQuotedString(rowCode.id)}','${escapeJsForSingleQuotedString(codes[j].id)}')">${v}</td>`;
+                html += `<td class="cooc-cell" title="Find overlaps" data-code-a="${escapeHtmlAttrValue(rowCode.id)}" data-code-b="${escapeHtmlAttrValue(codes[j].id)}">${v}</td>`;
             }
         }
         html += '</tr>';
@@ -1966,7 +1966,7 @@ function renderCooccurrenceOverlaps() {
             const doc = appData.documents.find(d => d.id === seg.docId);
             const loc = seg.pdfRegion ? `Page ${seg.pdfRegion.pageNum || '?'}` : `Char ${seg.startIndex || 0}`;
             const snippet = escapeHtml(String(seg.text || '').slice(0, 220));
-            return `<div class="cooc-overlap-item" onclick="goToCaseAnalysisResult('${escapeJsForSingleQuotedString(seg.docId)}','${escapeJsForSingleQuotedString(seg.id)}')">
+            return `<div class="cooc-overlap-item" data-doc-id="${escapeHtmlAttrValue(seg.docId)}" data-segment-id="${escapeHtmlAttrValue(seg.id)}">
                 <div><strong>${escapeHtml(doc?.title || 'Document')}</strong> · ${escapeHtml(loc)}</div>
                 <div>${snippet}${snippet.length >= 220 ? '…' : ''}</div>
             </div>`;

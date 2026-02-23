@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quackdas Agent JSON-RPC Methods",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "service": { "const": "quackdas-agent" },
+    "version": { "type": "string", "const": "1.0.0" },
+    "localOnly": { "const": true },
+    "methods": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project.status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Get active project and semantic status." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "project.save": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Save current project." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "saveAs": { "type": "boolean" }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "docs.list": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "List text documents." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "includeContent": { "type": "boolean" }
+              }
+            },
+            "result": { "type": "array" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "docs.get": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Get a document by ID." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["doc_id"],
+              "properties": {
+                "doc_id": { "type": "string", "minLength": 1 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "docs.update": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Update document content with optional revision check." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["doc_id", "content"],
+              "properties": {
+                "doc_id": { "type": "string", "minLength": 1 },
+                "content": { "type": "string" },
+                "revision": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "docs.jump": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Jump to a character span in a document." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["doc_id", "start_char", "end_char"],
+              "properties": {
+                "doc_id": { "type": "string", "minLength": 1 },
+                "start_char": { "type": "integer", "minimum": 0 },
+                "end_char": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "codes.list": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "List codes." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "array" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "codes.create": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Create a code." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "color": { "type": "string" },
+                "parentId": { "type": ["string", "null"] },
+                "description": { "type": "string" },
+                "notes": { "type": "string" }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "coding.list": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "List coded segments with optional filters." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "doc_id": { "type": "string" },
+                "code_id": { "type": "string" }
+              }
+            },
+            "result": { "type": "array" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "coding.add": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Add coding to a character span." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["doc_id", "code_id", "start_char", "end_char"],
+              "properties": {
+                "doc_id": { "type": "string", "minLength": 1 },
+                "code_id": { "type": "string", "minLength": 1 },
+                "start_char": { "type": "integer", "minimum": 0 },
+                "end_char": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "coding.remove": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Remove a coded segment by segment ID." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["segment_id"],
+              "properties": {
+                "segment_id": { "type": "string", "minLength": 1 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.status": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Get semantic availability and index status." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.models": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "List semantic model settings and local tags." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.index.start": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Start project semantic indexing." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "modelName": { "type": "string" }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": true }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.index.cancel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Cancel active indexing." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.search": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Run semantic search." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["query"],
+              "properties": {
+                "query": { "type": "string", "minLength": 1 },
+                "topK": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.ask": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Start Ask request." },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["question"],
+              "properties": {
+                "question": { "type": "string", "minLength": 1 },
+                "outputMode": { "enum": ["strict", "loose"] },
+                "outputLanguage": { "enum": ["sv", "en"] },
+                "generationModel": { "type": "string" },
+                "topK": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.ask.cancel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Cancel active Ask request." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        },
+        "semantic.ask.state": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "description": { "const": "Get current Ask runtime state." },
+            "params": { "type": "object", "additionalProperties": false },
+            "result": { "type": "object" },
+            "mutatesProjectData": { "const": false }
+          },
+          "required": ["description", "params", "result", "mutatesProjectData"]
+        }
+      },
+      "required": [
+        "project.status",
+        "project.save",
+        "docs.list",
+        "docs.get",
+        "docs.update",
+        "docs.jump",
+        "codes.list",
+        "codes.create",
+        "coding.list",
+        "coding.add",
+        "coding.remove",
+        "semantic.status",
+        "semantic.models",
+        "semantic.index.start",
+        "semantic.index.cancel",
+        "semantic.search",
+        "semantic.ask",
+        "semantic.ask.cancel",
+        "semantic.ask.state"
+      ]
+    }
+  },
+  "required": ["jsonrpc", "service", "version", "localOnly", "methods"]
+}

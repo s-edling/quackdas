@@ -1,15 +1,37 @@
 /**
- * Quackdas - Semantic tools UI (local Ollama embeddings)
+ * Quackdas - Semantic tools UI (local Ollama embeddings + Ask)
  */
 
 const semanticUiState = {
     availability: null,
+    activeTool: 'search',
     indexState: 'not_indexed',
     indexStatusMessage: '',
     indexing: false,
     lastProgress: null,
     results: [],
-    pollTimer: null
+    pollTimer: null,
+    ask: {
+        running: false,
+        phase: 'idle',
+        streamText: '',
+        statusMessage: '',
+        statusError: false,
+        answer: null,
+        notes: '',
+        rawOutput: '',
+        fallback: false,
+        answerText: '',
+        answerMode: 'strict',
+        outputMode: 'strict',
+        modeManuallySet: false,
+        verifiedCitationCount: 0,
+        sources: [],
+        retrievedChunks: [],
+        lastQuestion: '',
+        outputLanguage: 'en',
+        generationModel: ''
+    }
 };
 
 const semanticRuntimeDefaults = {
@@ -23,6 +45,27 @@ const semanticRuntimeDefaults = {
 
 function canonicalizeSemanticText(input) {
     return String(input == null ? '' : input).replace(/\r\n?/g, '\n');
+}
+
+function inferModelSizeBillionsFromName(modelName) {
+    const raw = String(modelName || '').trim().toLowerCase();
+    if (!raw) return null;
+    const bMatch = raw.match(/(^|[:/ _-])(\d+(?:\.\d+)?)\s*b(?=$|[:/ _.-])/i);
+    if (bMatch) {
+        const value = Number(bMatch[2]);
+        return Number.isFinite(value) && value > 0 ? value : null;
+    }
+    const mMatch = raw.match(/(^|[:/ _-])(\d+(?:\.\d+)?)\s*m(?=$|[:/ _.-])/i);
+    if (mMatch) {
+        const value = Number(mMatch[2]);
+        return Number.isFinite(value) && value > 0 ? (value / 1000) : null;
+    }
+    return null;
+}
+
+function getRecommendedAskMode(modelName) {
+    const sizeB = inferModelSizeBillionsFromName(modelName);
+    return Number.isFinite(sizeB) && sizeB <= 4 ? 'loose' : 'strict';
 }
 
 function getSemanticTextDocuments() {
@@ -49,6 +92,17 @@ function setSemanticStatus(message, isError = false) {
     if (!banner) return;
     banner.textContent = message || '';
     banner.classList.toggle('semantic-status-error', !!isError);
+}
+
+function setSemanticAskStatus(message, isError = false) {
+    semanticUiState.ask.statusMessage = String(message || '');
+    semanticUiState.ask.statusError = !!isError;
+    const badgeEl = document.getElementById('semanticAskStatusBadge');
+    if (!badgeEl) return;
+    const text = semanticUiState.ask.statusMessage.trim();
+    badgeEl.hidden = !text;
+    badgeEl.textContent = text;
+    badgeEl.classList.toggle('semantic-status-error', semanticUiState.ask.statusError);
 }
 
 function setSemanticProgress(progress) {
@@ -123,10 +177,178 @@ function buildSemanticSnippet(text, startChar, endChar, radius = semanticRuntime
     return `${prefix}${safeText.slice(from, to)}${suffix}`;
 }
 
+function formatAskInlineMarkdown(escapedText) {
+    return String(escapedText || '')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.+?)__/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/_(.+?)_/g, '<em>$1</em>')
+        .replace(/`([^`]+?)`/g, '<code>$1</code>');
+}
+
+function renderAskMarkdownWithCitations(rawText, markerMap = new Map()) {
+    const citeTokens = [];
+    const withTokens = String(rawText || '').replace(/\[(\d+)\]/g, (_m, markerRaw) => {
+        const marker = Number(markerRaw);
+        if (!Number.isFinite(marker) || !markerMap.has(marker)) return `[${markerRaw}]`;
+        const sourceIdx = markerMap.get(marker);
+        const token = `@@SEM_CITE_${citeTokens.length}@@`;
+        citeTokens.push({
+            token,
+            html: `<button type="button" class="semantic-ask-cite-chip" data-semantic-source-index="${sourceIdx}">[${marker}]</button>`
+        });
+        return token;
+    });
+
+    const lines = withTokens.replace(/\r\n?/g, '\n').split('\n');
+    let rendered = lines.map((line) => {
+        const headingMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+            const level = headingMatch[1].length;
+            const content = formatAskInlineMarkdown(escapeHtml(headingMatch[2]));
+            return `<div class="semantic-ask-md-heading semantic-ask-md-h${level}">${content}</div>`;
+        }
+
+        const bulletMatch = line.match(/^\s*[-*]\s+(.+)$/);
+        if (bulletMatch) {
+            const content = formatAskInlineMarkdown(escapeHtml(bulletMatch[1]));
+            return `<div class="semantic-ask-md-bullet">&bull; ${content}</div>`;
+        }
+
+        if (!line.trim()) return '<br>';
+        return `<div>${formatAskInlineMarkdown(escapeHtml(line))}</div>`;
+    }).join('');
+
+    citeTokens.forEach((entry) => {
+        rendered = rendered.replaceAll(entry.token, entry.html);
+    });
+    return rendered;
+}
+
+function toggleSemanticTool(tool) {
+    semanticUiState.activeTool = tool === 'ask' ? 'ask' : 'search';
+    const searchView = document.getElementById('semanticSearchView');
+    const askView = document.getElementById('semanticAskView');
+    const tabSearch = document.getElementById('semanticTabSearch');
+    const tabAsk = document.getElementById('semanticTabAsk');
+
+    if (searchView) searchView.hidden = semanticUiState.activeTool !== 'search';
+    if (askView) askView.hidden = semanticUiState.activeTool !== 'ask';
+    if (tabSearch) tabSearch.classList.toggle('active', semanticUiState.activeTool === 'search');
+    if (tabAsk) tabAsk.classList.toggle('active', semanticUiState.activeTool === 'ask');
+}
+
+function renderAskAnswer() {
+    const answerEl = document.getElementById('semanticAskAnswer');
+    const sourcesEl = document.getElementById('semanticAskSources');
+    const contextDetails = document.getElementById('semanticAskContextDetails');
+    const contextList = document.getElementById('semanticAskContextList');
+    const rawDetails = document.getElementById('semanticAskRawOutputDetails');
+    const rawPre = document.getElementById('semanticAskRawOutput');
+
+    if (answerEl) {
+        const answerText = String(semanticUiState.ask.answerText || '').trim();
+        const claims = Array.isArray(semanticUiState.ask.answer) ? semanticUiState.ask.answer : [];
+        const isLoose = String(semanticUiState.ask.answerMode || '').toLowerCase() === 'loose';
+        const verifiedCount = Number(semanticUiState.ask.verifiedCitationCount || 0);
+        const looseIndicator = (isLoose && verifiedCount === 0)
+            ? '<div class="semantic-empty-results"><strong>Ungrounded:</strong> No citations.</div>'
+            : '';
+        if (answerText) {
+            const markerMap = new Map();
+            (semanticUiState.ask.sources || []).forEach((source, idx) => {
+                const marker = Number(source?.marker || idx + 1);
+                if (!Number.isFinite(marker) || marker <= 0) return;
+                markerMap.set(marker, idx);
+            });
+            const html = renderAskMarkdownWithCitations(answerText, markerMap);
+            answerEl.innerHTML = `${looseIndicator}<div class="semantic-ask-claim semantic-ask-prose">${html}</div>`;
+        } else if (claims.length === 0) {
+            answerEl.innerHTML = `${looseIndicator}<div class="semantic-empty-results">No grounded answer claims yet.</div>`;
+        } else {
+            const sourceIndexMap = new Map();
+            (semanticUiState.ask.sources || []).forEach((source, idx) => {
+                sourceIndexMap.set(`${source.docId}::${source.chunkId}`, idx + 1);
+            });
+
+            answerEl.innerHTML = claims.map((claim, claimIdx) => {
+                const chips = (claim.citations || []).map((citation) => {
+                    const key = `${citation.doc_id}::${citation.chunk_id}`;
+                    const sourceNumber = sourceIndexMap.get(key);
+                    if (!sourceNumber) return '';
+                    return `<button type="button" class="semantic-ask-cite-chip" data-semantic-source-key="${escapeHtmlAttrValue(key)}">[${sourceNumber}]</button>`;
+                }).join(' ');
+                return `<div class="semantic-ask-claim"><strong>${claimIdx + 1}.</strong> ${formatAskInlineMarkdown(escapeHtml(claim.claim || ''))} ${chips}</div>`;
+            }).join('');
+        }
+    }
+
+    if (sourcesEl) {
+        const sources = Array.isArray(semanticUiState.ask.sources) ? semanticUiState.ask.sources : [];
+        if (sources.length === 0) {
+            sourcesEl.innerHTML = '<div class="semantic-empty-results">Sources will appear here after a grounded answer.</div>';
+        } else {
+            sourcesEl.innerHTML = `<div class="semantic-ask-source-title">Sources</div>${sources.map((source, idx) => `
+                <button type="button" class="semantic-ask-source-item" data-semantic-source-index="${idx}">
+                    <div class="semantic-ask-source-doc">[${idx + 1}] ${escapeHtml(source.docTitle)} • Char ${Number(source.startChar || 0)}-${Number(source.endChar || 0)}</div>
+                    <div class="semantic-ask-source-snippet">${escapeHtml(buildSemanticSnippet(source.fullText || source.snippet || '', 0, Math.min(220, (source.fullText || source.snippet || '').length), 0))}</div>
+                </button>
+            `).join('')}`;
+        }
+    }
+
+    if (contextDetails && contextList) {
+        const retrieved = Array.isArray(semanticUiState.ask.retrievedChunks) ? semanticUiState.ask.retrievedChunks : [];
+        contextDetails.hidden = retrieved.length === 0;
+        contextList.innerHTML = retrieved.map((chunk, idx) => `
+            <div class="semantic-ask-context-item">
+                <div><strong>${idx + 1}.</strong> ${escapeHtml(chunk.docTitle || chunk.docId)} • ${escapeHtml(chunk.chunkId)}</div>
+                <div>${escapeHtml((chunk.text || '').slice(0, 320))}</div>
+            </div>
+        `).join('');
+    }
+
+    const notes = String(semanticUiState.ask.notes || '').trim();
+    if (notes && answerEl) {
+        const noteHtml = `<div class=\"semantic-empty-results\"><strong>Notes:</strong> ${escapeHtml(notes)}</div>`;
+        answerEl.innerHTML = `${answerEl.innerHTML}${noteHtml}`;
+    }
+
+    if (rawDetails && rawPre) {
+        const raw = String(semanticUiState.ask.rawOutput || '').trim();
+        rawDetails.hidden = !raw;
+        rawPre.textContent = raw;
+    }
+}
+
+function openAskSource(source) {
+    if (!source) return;
+    const doc = appData.documents.find((d) => d.id === source.docId);
+    if (!doc || doc.type === 'pdf') {
+        alert('Ask sources currently support text documents only.');
+        return;
+    }
+    if (typeof goToCharacterRangeWithHighlight === 'function') {
+        goToCharacterRangeWithHighlight(source.docId, source.startChar, source.endChar);
+        return;
+    }
+    selectDocument(source.docId);
+    setTimeout(() => {
+        if (typeof scrollToCharacterPosition === 'function') {
+            scrollToCharacterPosition(source.startChar);
+        }
+    }, 60);
+}
+
 async function refreshSemanticAvailability(force = false) {
     const btn = getSemanticButton();
+    const modal = getSemanticModal();
     if (!(window.electronAPI && window.electronAPI.semanticGetAvailability)) {
         if (btn) btn.hidden = true;
+        if (modal) {
+            modal.classList.remove('show');
+            modal.hidden = true;
+        }
         return null;
     }
 
@@ -135,6 +357,10 @@ async function refreshSemanticAvailability(force = false) {
 
     const reachable = !!(result && result.ok && result.reachable);
     if (btn) btn.hidden = !reachable;
+    if (modal) {
+        modal.hidden = !reachable;
+        if (!reachable) modal.classList.remove('show');
+    }
 
     if (getSemanticModal()?.classList.contains('show')) {
         if (reachable) {
@@ -145,9 +371,11 @@ async function refreshSemanticAvailability(force = false) {
             }
         } else {
             setSemanticStatus(result?.error || 'Ollama is unavailable. Start Ollama and ensure your embedding model is pulled.', true);
+            setSemanticAskStatus(result?.error || 'Ollama is unavailable.', true);
         }
     }
     updateSemanticIndexButtons();
+    updateSemanticAskButtons();
 
     return result;
 }
@@ -155,11 +383,14 @@ async function refreshSemanticAvailability(force = false) {
 async function refreshSemanticProjectSettings() {
     if (!(window.electronAPI && window.electronAPI.semanticGetProjectSettings)) return;
     const select = document.getElementById('semanticModelSelect');
+    const generationSelect = document.getElementById('semanticGenerationModelSelect');
+    const modeSelect = document.getElementById('semanticAskModeSelect');
     const hint = document.getElementById('semanticModelHint');
     const settings = await window.electronAPI.semanticGetProjectSettings();
     const availability = semanticUiState.availability;
-    const models = Array.isArray(availability?.models) ? availability.models : [];
+    const models = Array.isArray(settings?.models) ? settings.models : [];
     const configuredModel = String(settings?.modelName || 'bge-m3');
+    const configuredGenerationModel = String(settings?.generationModel || '');
 
     if (select) {
         const options = [];
@@ -175,6 +406,28 @@ async function refreshSemanticProjectSettings() {
         select.innerHTML = options.join('');
         select.value = configuredModel && options.length > 0 ? configuredModel : (models[0] || '');
         select.disabled = models.length === 0;
+    }
+
+    if (generationSelect) {
+        const options = [];
+        models.forEach((name) => {
+            options.push(`<option value="${escapeHtmlAttrValue(name)}">${escapeHtml(name)}</option>`);
+        });
+        if (options.length === 0) options.push('<option value="">No local models found</option>');
+        if (configuredGenerationModel && !models.includes(configuredGenerationModel)) {
+            options.unshift(`<option value="${escapeHtmlAttrValue(configuredGenerationModel)}">${escapeHtml(configuredGenerationModel)} (not installed)</option>`);
+        }
+        generationSelect.innerHTML = options.join('');
+        generationSelect.value = configuredGenerationModel || models[0] || '';
+        generationSelect.disabled = models.length === 0;
+        semanticUiState.ask.generationModel = generationSelect.value;
+    }
+    if (modeSelect) {
+        if (!semanticUiState.ask.modeManuallySet) {
+            const recommended = getRecommendedAskMode(semanticUiState.ask.generationModel);
+            semanticUiState.ask.outputMode = recommended;
+        }
+        modeSelect.value = semanticUiState.ask.outputMode || 'strict';
     }
 
     if (hint) {
@@ -208,9 +461,15 @@ async function refreshSemanticIndexStatus() {
     if (semanticUiState.indexState === 'indexed') {
         semanticUiState.indexStatusMessage = `Indexed (${status.indexedDocCount}/${status.totalDocs} docs, ${status.chunkCount} chunks).`;
         setSemanticStatus(semanticUiState.indexStatusMessage);
+    } else if (semanticUiState.indexState === 'indexed_stale') {
+        semanticUiState.indexStatusMessage = status.message || `Indexed cache loaded (${status.indexedDocCount}/${status.totalDocs} docs).`;
+        setSemanticStatus(semanticUiState.indexStatusMessage);
+    } else if (semanticUiState.indexState === 'partial') {
+        semanticUiState.indexStatusMessage = status.message || `Partially indexed (${status.indexedDocCount}/${status.totalDocs} docs).`;
+        setSemanticStatus(semanticUiState.indexStatusMessage, true);
     } else {
         semanticUiState.indexStatusMessage = status.message || `Not indexed (${status.indexedDocCount}/${status.totalDocs} docs indexed).`;
-        setSemanticStatus(semanticUiState.indexStatusMessage);
+        setSemanticStatus(semanticUiState.indexStatusMessage, true);
     }
 }
 
@@ -222,6 +481,7 @@ function updateSemanticIndexButtons() {
     const reachable = !!(semanticUiState.availability && semanticUiState.availability.reachable);
     const modelReady = !!(semanticUiState.availability && semanticUiState.availability.modelReady);
     const indexing = !!semanticUiState.indexing;
+    const indexedReady = semanticUiState.indexState === 'indexed' || semanticUiState.indexState === 'indexed_stale';
 
     if (startBtn) {
         startBtn.disabled = !reachable || !modelReady || indexing;
@@ -231,21 +491,49 @@ function updateSemanticIndexButtons() {
         cancelBtn.disabled = !indexing;
     }
     if (searchInput) {
-        searchInput.disabled = !reachable || !modelReady || indexing || semanticUiState.indexState !== 'indexed';
+        searchInput.disabled = !reachable || !modelReady || indexing || !indexedReady;
     }
+}
+
+function updateSemanticAskButtons() {
+    const askBtn = document.getElementById('semanticAskBtn');
+    const askAgainBtn = document.getElementById('semanticAskAgainBtn');
+    const cancelBtn = document.getElementById('semanticCancelAskBtn');
+    const questionInput = document.getElementById('semanticAskInput');
+    const generationSelect = document.getElementById('semanticGenerationModelSelect');
+    const modeSelect = document.getElementById('semanticAskModeSelect');
+
+    const reachable = !!(semanticUiState.availability && semanticUiState.availability.reachable);
+    const modelReady = !!(semanticUiState.availability && semanticUiState.availability.modelReady);
+    const running = !!semanticUiState.ask.running;
+    const indexedReady = semanticUiState.indexState === 'indexed' || semanticUiState.indexState === 'indexed_stale';
+
+    if (askBtn) askBtn.disabled = !reachable || !modelReady || !indexedReady || running || semanticUiState.indexing;
+    if (askAgainBtn) askAgainBtn.disabled = running || !indexedReady || !semanticUiState.ask.retrievedChunks.length || !semanticUiState.ask.lastQuestion;
+    if (cancelBtn) {
+        cancelBtn.hidden = !running;
+        cancelBtn.disabled = !running;
+    }
+    if (questionInput) questionInput.disabled = false;
+    if (generationSelect) generationSelect.disabled = running || generationSelect.options.length === 0;
+    if (modeSelect) modeSelect.disabled = running;
 }
 
 async function openSemanticToolsModal() {
     const modal = getSemanticModal();
     if (!modal) return;
+    const availability = await refreshSemanticAvailability(true);
+    if (!(availability?.reachable)) return;
+    modal.hidden = false;
     modal.classList.add('show');
 
-    await refreshSemanticAvailability(true);
     await refreshSemanticProjectSettings();
     await refreshSemanticIndexStatus();
 
     updateSemanticIndexButtons();
+    updateSemanticAskButtons();
     renderSemanticResults(document.getElementById('semanticQueryInput')?.value || '');
+    renderAskAnswer();
 }
 
 function closeSemanticToolsModal() {
@@ -273,10 +561,29 @@ async function saveSemanticModelSetting() {
     updateSemanticIndexButtons();
 }
 
+async function saveSemanticGenerationModel() {
+    const select = document.getElementById('semanticGenerationModelSelect');
+    const modelName = String(select?.value || '').trim();
+    if (!modelName) {
+        setSemanticAskStatus('Generation model is required.', true);
+        return;
+    }
+    const result = await window.electronAPI.semanticSetGenerationModel(modelName);
+    if (!result?.ok) {
+        setSemanticAskStatus(result?.error || 'Could not save generation model.', true);
+        return;
+    }
+    semanticUiState.ask.generationModel = modelName;
+    setSemanticAskStatus(`Generation model saved: ${modelName}`);
+    await refreshSemanticProjectSettings();
+    updateSemanticAskButtons();
+}
+
 async function refreshSemanticModelList() {
     await refreshSemanticAvailability(true);
     await refreshSemanticProjectSettings();
     updateSemanticIndexButtons();
+    updateSemanticAskButtons();
 }
 
 async function startSemanticIndexing() {
@@ -363,6 +670,76 @@ async function runSemanticSearch() {
     renderSemanticResults(query);
 }
 
+async function runSemanticAskInternal({ reuseEvidence = false } = {}) {
+    if (!window.electronAPI?.semanticStartAsk) return;
+
+    const askInput = document.getElementById('semanticAskInput');
+    const languageSelect = document.getElementById('semanticAskLanguageSelect');
+    const generationSelect = document.getElementById('semanticGenerationModelSelect');
+    const modeSelect = document.getElementById('semanticAskModeSelect');
+    const question = String(askInput?.value || semanticUiState.ask.lastQuestion || '').trim();
+    if (!(semanticUiState.indexState === 'indexed' || semanticUiState.indexState === 'indexed_stale')) {
+        setSemanticAskStatus('Index this project first before using Ask.', true);
+        return;
+    }
+    if (!question) {
+        setSemanticAskStatus('Please enter a question.', true);
+        return;
+    }
+
+    semanticUiState.ask.running = true;
+    semanticUiState.ask.phase = reuseEvidence ? 'generating' : 'retrieving';
+    semanticUiState.ask.streamText = '';
+    semanticUiState.ask.answer = null;
+    semanticUiState.ask.answerText = '';
+    semanticUiState.ask.verifiedCitationCount = 0;
+    semanticUiState.ask.answerMode = String(modeSelect?.value || semanticUiState.ask.outputMode || 'strict');
+    semanticUiState.ask.notes = '';
+    semanticUiState.ask.rawOutput = '';
+    semanticUiState.ask.fallback = false;
+    semanticUiState.ask.sources = [];
+    semanticUiState.ask.lastQuestion = question;
+    semanticUiState.ask.outputLanguage = String(languageSelect?.value || 'sv');
+    semanticUiState.ask.generationModel = String(generationSelect?.value || semanticUiState.ask.generationModel || '');
+    semanticUiState.ask.outputMode = String(modeSelect?.value || semanticUiState.ask.outputMode || 'strict');
+    if (reuseEvidence) {
+        setSemanticAskStatus('Generating answer from existing evidence...');
+    } else {
+        setSemanticAskStatus('Retrieving evidence...');
+    }
+    renderAskAnswer();
+    updateSemanticAskButtons();
+
+    const result = await window.electronAPI.semanticStartAsk({
+        question,
+        outputLanguage: semanticUiState.ask.outputLanguage,
+        outputMode: semanticUiState.ask.outputMode,
+        generationModel: semanticUiState.ask.generationModel,
+        documents: getSemanticTextDocuments(),
+        retrievedChunks: (reuseEvidence && semanticUiState.ask.retrievedChunks.length > 0) ? semanticUiState.ask.retrievedChunks : []
+    });
+
+    if (!result?.ok) {
+        semanticUiState.ask.running = false;
+        semanticUiState.ask.phase = 'idle';
+        setSemanticAskStatus(result?.error || 'Ask failed to start.', true);
+        updateSemanticAskButtons();
+    }
+}
+
+function runSemanticAsk() {
+    return runSemanticAskInternal({ reuseEvidence: false });
+}
+
+function runSemanticAskAgain() {
+    return runSemanticAskInternal({ reuseEvidence: true });
+}
+
+async function cancelSemanticAsk() {
+    if (!window.electronAPI?.semanticCancelAsk) return;
+    await window.electronAPI.semanticCancelAsk();
+}
+
 function handleSemanticResultClick(event) {
     const item = event.target.closest('.semantic-result-item[data-semantic-result-index]');
     if (!item) return;
@@ -396,6 +773,63 @@ function bindSemanticToolListeners() {
             if (event.key !== 'Enter') return;
             event.preventDefault();
             runSemanticSearch();
+        });
+    }
+
+    const askInput = document.getElementById('semanticAskInput');
+    if (askInput) {
+        askInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            if (event.shiftKey) return;
+            event.preventDefault();
+            runSemanticAsk();
+        });
+    }
+
+    const generationSelect = document.getElementById('semanticGenerationModelSelect');
+    const modeSelect = document.getElementById('semanticAskModeSelect');
+    if (generationSelect) {
+        generationSelect.addEventListener('change', () => {
+            semanticUiState.ask.generationModel = String(generationSelect.value || '');
+            const recommended = getRecommendedAskMode(semanticUiState.ask.generationModel);
+            semanticUiState.ask.modeManuallySet = false;
+            semanticUiState.ask.outputMode = recommended;
+            if (modeSelect) modeSelect.value = recommended;
+        });
+    }
+    if (modeSelect) {
+        modeSelect.addEventListener('change', () => {
+            semanticUiState.ask.outputMode = String(modeSelect.value || 'strict');
+            semanticUiState.ask.modeManuallySet = true;
+        });
+    }
+
+    const askAnswer = document.getElementById('semanticAskAnswer');
+    if (askAnswer) {
+        askAnswer.addEventListener('click', (event) => {
+            const sourceIdxBtn = event.target.closest('.semantic-ask-cite-chip[data-semantic-source-index]');
+            if (sourceIdxBtn) {
+                const idx = Number(sourceIdxBtn.dataset.semanticSourceIndex);
+                const source = semanticUiState.ask.sources[idx];
+                if (source) openAskSource(source);
+                return;
+            }
+            const keyBtn = event.target.closest('.semantic-ask-cite-chip[data-semantic-source-key]');
+            if (!keyBtn) return;
+            const key = keyBtn.dataset.semanticSourceKey;
+            const source = (semanticUiState.ask.sources || []).find((s) => `${s.docId}::${s.chunkId}` === key);
+            if (source) openAskSource(source);
+        });
+    }
+
+    const askSources = document.getElementById('semanticAskSources');
+    if (askSources) {
+        askSources.addEventListener('click', (event) => {
+            const item = event.target.closest('.semantic-ask-source-item[data-semantic-source-index]');
+            if (!item) return;
+            const idx = Number(item.dataset.semanticSourceIndex);
+            const source = semanticUiState.ask.sources[idx];
+            openAskSource(source);
         });
     }
 
@@ -433,13 +867,113 @@ function bindSemanticToolListeners() {
             updateSemanticIndexButtons();
         });
     }
+
+    if (window.electronAPI?.onSemanticAskRetrieved) {
+        window.electronAPI.onSemanticAskRetrieved((payload) => {
+            semanticUiState.ask.retrievedChunks = Array.isArray(payload?.retrievedChunks) ? payload.retrievedChunks : [];
+            semanticUiState.ask.phase = 'generating';
+            setSemanticAskStatus(semanticUiState.ask.outputMode === 'loose' ? 'Generating cited answer...' : 'Generating grounded answer...');
+            renderAskAnswer();
+            updateSemanticAskButtons();
+        });
+    }
+
+    if (window.electronAPI?.onSemanticAskStream) {
+        window.electronAPI.onSemanticAskStream((payload) => {
+            semanticUiState.ask.streamText += String(payload?.delta || '');
+            if (semanticUiState.ask.running && semanticUiState.ask.phase !== 'validating' && semanticUiState.ask.phase !== 'repairing') {
+                setSemanticAskStatus('Generating grounded answer...');
+            }
+        });
+    }
+
+    if (window.electronAPI?.onSemanticAskPhase) {
+        window.electronAPI.onSemanticAskPhase((payload) => {
+            const phase = String(payload?.phase || '').trim();
+            if (!phase) return;
+            semanticUiState.ask.phase = phase;
+            if (phase === 'validating') {
+                setSemanticAskStatus('Validating citations...');
+            } else if (phase === 'planning') {
+                setSemanticAskStatus('Planning evidence set...');
+            } else if (phase === 'repairing') {
+                setSemanticAskStatus('Repairing model output...');
+            } else if (phase === 'generating') {
+                setSemanticAskStatus(semanticUiState.ask.outputMode === 'loose' ? 'Generating cited answer...' : 'Generating grounded answer...');
+            }
+            updateSemanticAskButtons();
+        });
+    }
+
+    if (window.electronAPI?.onSemanticAskDone) {
+        window.electronAPI.onSemanticAskDone((payload) => {
+            semanticUiState.ask.running = false;
+            semanticUiState.ask.phase = 'idle';
+            semanticUiState.ask.answer = Array.isArray(payload?.answer) ? payload.answer : [];
+            semanticUiState.ask.answerText = String(payload?.answerText || '');
+            semanticUiState.ask.answerMode = String(payload?.answerMode || semanticUiState.ask.outputMode || 'strict');
+            semanticUiState.ask.verifiedCitationCount = Number(payload?.verifiedCitationCount || 0);
+            semanticUiState.ask.notes = String(payload?.notes || '').trim();
+            semanticUiState.ask.rawOutput = String(payload?.rawOutput || '');
+            semanticUiState.ask.fallback = !!payload?.fallback;
+            semanticUiState.ask.sources = (Array.isArray(payload?.sources) ? payload.sources : []).map((source) => {
+                const chunk = (semanticUiState.ask.retrievedChunks || []).find((c) => c.docId === source.docId && c.chunkId === source.chunkId);
+                return {
+                    ...source,
+                    fullText: chunk?.text || source.snippet || ''
+                };
+            });
+            if (Array.isArray(payload?.retrievedChunks)) {
+                semanticUiState.ask.retrievedChunks = payload.retrievedChunks;
+            }
+            if (payload?.repaired) {
+                semanticUiState.ask.notes = `${semanticUiState.ask.notes} Response was repaired for parsing/validation.`.trim();
+            }
+            semanticUiState.ask.streamText = '';
+            renderAskAnswer();
+            const hasStructured = Array.isArray(semanticUiState.ask.answer) && semanticUiState.ask.answer.length > 0;
+            const hasLooseText = !!String(semanticUiState.ask.answerText || '').trim();
+            if (!hasStructured && !hasLooseText) {
+                setSemanticAskStatus('No cited answer produced. Showing retrieved sources and notes.');
+            } else {
+                setSemanticAskStatus('');
+            }
+            updateSemanticAskButtons();
+        });
+    }
+
+    if (window.electronAPI?.onSemanticAskError) {
+        window.electronAPI.onSemanticAskError((payload) => {
+            semanticUiState.ask.running = false;
+            semanticUiState.ask.phase = 'idle';
+            if (payload?.code === 'ASK_CANCELLED') {
+                setSemanticAskStatus('Ask cancelled.');
+            } else if (payload?.message && String(payload.message).toLowerCase().includes('abort')) {
+                setSemanticAskStatus('Ask was interrupted. Try Ask again.', true);
+            } else {
+                setSemanticAskStatus(payload?.message || 'Ask failed.', true);
+            }
+            semanticUiState.ask.streamText = '';
+            semanticUiState.ask.rawOutput = '';
+            semanticUiState.ask.fallback = false;
+            semanticUiState.ask.verifiedCitationCount = 0;
+            renderAskAnswer();
+            updateSemanticAskButtons();
+        });
+    }
 }
 
 async function initSemanticTools() {
     const btn = getSemanticButton();
     if (!btn || !window.electronAPI) return;
 
+    semanticUiState.ask.running = false;
+    semanticUiState.ask.phase = 'idle';
+    semanticUiState.ask.lastQuestion = '';
+    setSemanticAskStatus('');
+
     bindSemanticToolListeners();
+    toggleSemanticTool('search');
     await refreshSemanticAvailability(true);
     await refreshSemanticProjectSettings();
     await refreshSemanticIndexStatus();
@@ -454,9 +988,26 @@ async function initSemanticTools() {
         }
     }
 
-    updateSemanticIndexButtons();
+    if (window.electronAPI?.semanticGetAskState) {
+        const askState = await window.electronAPI.semanticGetAskState();
+        const running = askState?.ok && askState.state && askState.state.status === 'running';
+        if (running) {
+            semanticUiState.ask.running = true;
+            semanticUiState.ask.phase = 'generating';
+            semanticUiState.ask.lastQuestion = String(askState.state.question || '');
+            semanticUiState.ask.generationModel = String(askState.state.generationModel || '');
+            setSemanticAskStatus(semanticUiState.ask.outputMode === 'loose' ? 'Generating cited answer...' : 'Generating grounded answer...');
+        } else {
+            semanticUiState.ask.running = false;
+            semanticUiState.ask.phase = 'idle';
+            semanticUiState.ask.lastQuestion = '';
+        }
+    }
 
-    // Ensure the button state updates after launch async settles.
+    updateSemanticIndexButtons();
+    updateSemanticAskButtons();
+    renderAskAnswer();
+
     setTimeout(() => {
         refreshSemanticAvailability(true).then(() => {
             refreshSemanticProjectSettings().catch(() => {});
@@ -469,4 +1020,12 @@ async function initSemanticTools() {
             refreshSemanticProjectSettings().catch(() => {});
         }).catch(() => {});
     }, 10000);
+}
+
+function showSemanticToolSearch() {
+    toggleSemanticTool('search');
+}
+
+function showSemanticToolAsk() {
+    toggleSemanticTool('ask');
 }

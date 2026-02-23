@@ -932,6 +932,33 @@
             line-height: 1.75;
         }
 
+        #documentContent.document-rich-content table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            margin: 0 0 1.15em;
+            background: var(--bg-secondary);
+        }
+
+        #documentContent.document-rich-content th,
+        #documentContent.document-rich-content td {
+            border: 1px solid var(--border);
+            padding: 6px 8px;
+            vertical-align: top;
+            text-align: left;
+        }
+
+        #documentContent.document-rich-content th {
+            font-weight: 600;
+            background: var(--bg-hover);
+        }
+
+        #documentContent.document-rich-content td p,
+        #documentContent.document-rich-content th p {
+            margin: 0;
+            line-height: 1.5;
+        }
+
         /* Create paragraph spacing for double line breaks */
         .document-text br + br {
             display: block;
@@ -2738,6 +2765,21 @@
             transition: opacity 0.3s;
         }
 
+        .semantic-highlight-layer {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1400;
+        }
+
+        .semantic-highlight-rect {
+            position: absolute;
+            border-radius: 3px;
+            border: 1px solid rgba(169, 126, 0, 0.7);
+            background: rgba(236, 195, 72, 0.34);
+            box-shadow: 0 0 0 1px rgba(255, 220, 120, 0.2);
+            transition: opacity 0.3s ease;
+        }
+
         @keyframes pulse-indicator {
             0% {
                 transform: scale(0.5);
@@ -3450,15 +3492,52 @@
         }
 
         .semantic-tools-modal-content {
-            max-width: 920px;
-            width: min(95vw, 920px);
-            max-height: 85vh;
+            max-width: 1320px;
+            width: min(96vw, 1320px);
+            height: calc(100vh - 20px);
+            max-height: calc(100vh - 20px);
             display: flex;
             flex-direction: column;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .semantic-tool-picker {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        .semantic-tool-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .semantic-tools-top-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-3);
+            margin-bottom: var(--space-2);
+        }
+
+        .semantic-tools-index-inline {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            min-width: 0;
         }
 
         .semantic-tools-model-row {
             margin-bottom: var(--space-3);
+        }
+
+        #semanticSearchView:not([hidden]),
+        #semanticAskView:not([hidden]) {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
         }
 
         .semantic-tools-model-controls {
@@ -3476,16 +3555,17 @@
         }
 
         .semantic-tools-status {
-            min-height: 30px;
+            min-height: 28px;
             border: 1px solid var(--border);
             border-radius: 6px;
-            padding: 6px 10px;
-            margin-bottom: var(--space-3);
+            padding: 4px 10px;
             font-size: 12px;
             color: var(--text-secondary);
             background: var(--bg-primary);
             display: flex;
             align-items: center;
+            min-width: 280px;
+            max-width: 520px;
         }
 
         .semantic-tools-status.semantic-status-error {
@@ -3501,7 +3581,7 @@
         }
 
         .semantic-tools-progress {
-            margin-bottom: var(--space-3);
+            margin-bottom: var(--space-2);
         }
 
         .semantic-progress-meta {
@@ -3533,6 +3613,12 @@
 
         .semantic-tools-search-row .form-input {
             flex: 1;
+        }
+
+        .semantic-tools-search-row .form-textarea {
+            width: 100%;
+            min-height: 50px;
+            max-height: 78px;
         }
 
         .semantic-tools-results {
@@ -3588,6 +3674,194 @@
             font-size: 13px;
         }
 
+        .semantic-ask-settings-row {
+            margin-top: 0;
+            margin-bottom: var(--space-2);
+        }
+
+        .semantic-ask-top-settings {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            width: 100%;
+        }
+
+        .semantic-ask-top-settings .form-select {
+            min-width: 170px;
+        }
+
+        .semantic-ask-top-settings .form-label {
+            margin-bottom: 0;
+        }
+
+        .semantic-ask-stream {
+            min-height: 18px;
+            margin-bottom: var(--space-2);
+            font-size: 12px;
+            color: var(--text-tertiary);
+            white-space: pre-wrap;
+        }
+
+        .semantic-ask-stream.semantic-status-error {
+            color: #a44949;
+        }
+
+        .semantic-ask-output-box {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            padding: 10px;
+            flex: 1;
+            min-height: 0;
+            max-height: none;
+            overflow-y: auto;
+        }
+
+        .semantic-processing-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 10px;
+            border-radius: 999px;
+            border: 1px solid #9fb3a7;
+            background: #e7efe9;
+            color: #3f594c;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .semantic-processing-badge[hidden] {
+            display: none !important;
+        }
+
+        .semantic-processing-badge.semantic-status-error {
+            border-color: #c16f6f;
+            background: rgba(193, 111, 111, 0.12);
+            color: #a44949;
+        }
+
+        .semantic-ask-answer {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: var(--bg-primary);
+            margin-bottom: var(--space-3);
+        }
+
+        .semantic-ask-claim {
+            margin-bottom: 8px;
+            line-height: 1.5;
+            font-size: 13px;
+        }
+
+        .semantic-ask-prose .semantic-ask-md-heading {
+            font-weight: 700;
+            line-height: 1.35;
+            margin: 4px 0;
+        }
+
+        .semantic-ask-prose .semantic-ask-md-h1,
+        .semantic-ask-prose .semantic-ask-md-h2 {
+            font-size: 15px;
+        }
+
+        .semantic-ask-prose .semantic-ask-md-h3,
+        .semantic-ask-prose .semantic-ask-md-h4,
+        .semantic-ask-prose .semantic-ask-md-h5,
+        .semantic-ask-prose .semantic-ask-md-h6 {
+            font-size: 14px;
+        }
+
+        .semantic-ask-prose .semantic-ask-md-bullet {
+            padding-left: 4px;
+            margin: 2px 0;
+        }
+
+        .semantic-ask-cite-chip {
+            display: inline-block;
+            margin-left: 6px;
+            font-size: 11px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 1px 7px;
+            background: var(--bg-secondary);
+            cursor: pointer;
+        }
+
+        .semantic-ask-cite-chip:hover {
+            background: var(--bg-hover);
+        }
+
+        .semantic-ask-sources {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-primary);
+            margin-bottom: var(--space-3);
+        }
+
+        .semantic-ask-source-title {
+            padding: 10px 12px 0 12px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .semantic-ask-source-item {
+            width: 100%;
+            border: none;
+            border-top: 1px solid var(--border);
+            background: transparent;
+            text-align: left;
+            padding: 9px 12px;
+            cursor: pointer;
+        }
+
+        .semantic-ask-source-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .semantic-ask-source-doc {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-bottom: 3px;
+        }
+
+        .semantic-ask-source-snippet {
+            font-size: 13px;
+            color: var(--text-primary);
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+
+        .semantic-ask-context {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: var(--bg-primary);
+            margin-bottom: var(--space-2);
+        }
+
+        .semantic-ask-context summary {
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .semantic-ask-context-item {
+            margin-top: 8px;
+            border-top: 1px solid var(--border);
+            padding-top: 8px;
+            font-size: 12px;
+        }
+
+        #semanticAskRawOutput {
+            margin-top: 8px;
+            max-height: 220px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
         .search-help {
             font-size: 11px;
             color: var(--text-secondary);
@@ -3610,6 +3884,14 @@
             flex: 1;
             overflow-y: auto;
             max-height: 50vh;
+        }
+
+        .search-ocr-status {
+            margin-top: var(--space-2);
+            margin-bottom: var(--space-2);
+            font-size: 12px;
+            color: var(--text-tertiary);
+            text-align: left;
         }
 
         .search-result-item {
@@ -3845,6 +4127,20 @@
             word-break: break-word;
             position: relative;
             overflow: visible;
+        }
+        #documentContent.viewer-readonly-caret-enabled,
+        #documentContent.viewer-readonly-caret-enabled * {
+            cursor: text !important;
+        }
+        #documentContent.viewer-readonly-caret-enabled .document-segment-annotation-indicator {
+            cursor: pointer !important;
+        }
+        #documentContent.viewer-readonly-caret-enabled {
+            caret-color: transparent;
+            outline: none;
+        }
+        #documentContent.viewer-readonly-caret-enabled.viewer-readonly-caret-active {
+            caret-color: var(--text-primary);
         }
         #documentContent.code-view-mode {
             white-space: normal !important;

@@ -37,7 +37,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';">
     <title>Quackdas - Qualitative Coding</title>
     <script src="js/mammoth.browser.min.js"></script>
     <link rel="stylesheet" href="styles.css">
@@ -109,14 +109,14 @@
         <aside class="codes-panel">
             <div class="panel-header">
                 <div class="panel-title">Codes</div>
-                <button class="add-code-btn" data-action="openCodeModal">+ New Code</button>
+                <button class="add-code-btn" data-action="openCodeModal">+ New code</button>
             </div>
             <div class="codes-list" id="codesList">
                 <!-- Codes will be populated here -->
             </div>
             <div class="panel-header cases-panel-header">
                 <div class="panel-title">Cases</div>
-                <button class="add-code-btn add-case-btn" onclick="openCaseModal()">+ New Case</button>
+                <button class="add-code-btn add-case-btn" data-action="openCaseModal">+ New case</button>
             </div>
             <div class="codes-list cases-list" id="casesList">
                 <!-- Cases will be populated here -->
@@ -200,10 +200,7 @@
                 <div class="panel-title">All Documents</div>
                 <button class="panel-header-action" data-action="createFolder" title="New folder">+ Folder</button>
             </div>
-            <div class="documents-list" id="documentsList"
-                 ondragover="handleFolderDragOver(event)"
-                 ondragleave="handleFolderDragLeave(event)"
-                 ondrop="handleRootLevelDrop(event)">
+            <div class="documents-list" id="documentsList" data-root-drop-enabled="1">
                 <!-- Documents will be populated here -->
             </div>
         </aside>
@@ -394,6 +391,9 @@
             <div class="search-results-list" id="searchResultsList">
                 <!-- Results will be populated here -->
             </div>
+            <div class="search-ocr-status" id="searchOcrStatus" hidden>
+                Tesseract not installed. Scanned PDFs not searchable.
+            </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeSearchResults">Close</button>
             </div>
@@ -404,29 +404,80 @@
     <div id="semanticToolsModal" class="modal">
         <div class="modal-content semantic-tools-modal-content">
             <h2 class="modal-title">Semantic tools</h2>
-            <div class="semantic-tools-model-row">
-                <label class="form-label" for="semanticModelSelect">Embedding model</label>
-                <div class="semantic-tools-model-controls">
-                    <select class="form-select" id="semanticModelSelect"></select>
-                    <button type="button" class="btn btn-secondary" data-action="refreshSemanticModelList">Refresh models</button>
-                    <button type="button" class="btn btn-secondary" data-action="saveSemanticModelSetting">Save model</button>
+            <div class="semantic-tools-top-row">
+                <div class="semantic-tool-picker">
+                    <button type="button" class="btn btn-secondary semantic-tool-tab active" id="semanticTabSearch" data-action="showSemanticToolSearch">Search</button>
+                    <button type="button" class="btn btn-secondary semantic-tool-tab" id="semanticTabAsk" data-action="showSemanticToolAsk">Ask</button>
                 </div>
-                <p class="empty-state-hint semantic-model-hint" id="semanticModelHint"></p>
-            </div>
-            <div class="semantic-tools-status" id="semanticStatusBanner"></div>
-            <div class="semantic-tools-index-row">
-                <button type="button" class="btn btn-primary" id="semanticStartIndexBtn" data-action="startSemanticIndexing">Index this project for semantic search</button>
-                <button type="button" class="btn btn-secondary" id="semanticCancelIndexBtn" data-action="cancelSemanticIndexing" hidden>Cancel indexing</button>
+                <div class="semantic-tools-index-inline">
+                    <div class="semantic-tools-status" id="semanticStatusBanner"></div>
+                    <button type="button" class="btn btn-primary" id="semanticStartIndexBtn" data-action="startSemanticIndexing">Index project</button>
+                    <button type="button" class="btn btn-secondary" id="semanticCancelIndexBtn" data-action="cancelSemanticIndexing" hidden>Cancel indexing</button>
+                </div>
             </div>
             <div class="semantic-tools-progress" id="semanticProgressWrap" hidden>
                 <div class="semantic-progress-meta" id="semanticProgressMeta"></div>
                 <div class="semantic-progress-track"><div class="semantic-progress-fill" id="semanticProgressFill"></div></div>
             </div>
-            <div class="semantic-tools-search-row">
-                <input type="text" class="form-input" id="semanticQueryInput" placeholder="Search semantically in Swedish or English...">
-                <button type="button" class="btn btn-primary" data-action="runSemanticSearch">Search</button>
+
+            <div id="semanticSearchView">
+                <div class="semantic-tools-model-row">
+                    <label class="form-label" for="semanticModelSelect">Embedding model</label>
+                    <div class="semantic-tools-model-controls">
+                        <select class="form-select" id="semanticModelSelect"></select>
+                        <button type="button" class="btn btn-secondary" data-action="refreshSemanticModelList">Refresh models</button>
+                        <button type="button" class="btn btn-secondary" data-action="saveSemanticModelSetting">Save model</button>
+                    </div>
+                    <p class="empty-state-hint semantic-model-hint" id="semanticModelHint"></p>
+                </div>
+                <div class="semantic-tools-search-row">
+                    <input type="text" class="form-input" id="semanticQueryInput" placeholder="Search semantically in Swedish or English...">
+                    <button type="button" class="btn btn-primary" data-action="runSemanticSearch">Search</button>
+                </div>
+                <div class="semantic-tools-results" id="semanticResultsList"></div>
             </div>
-            <div class="semantic-tools-results" id="semanticResultsList"></div>
+
+            <div id="semanticAskView" hidden>
+                <div class="semantic-tools-model-row semantic-ask-settings-row">
+                    <div class="semantic-ask-top-settings">
+                        <label class="form-label" for="semanticGenerationModelSelect">Generation model</label>
+                        <select class="form-select" id="semanticGenerationModelSelect"></select>
+                        <button type="button" class="btn btn-secondary" data-action="saveSemanticGenerationModel">Save model</button>
+                        <label class="form-label" for="semanticAskLanguageSelect">Language</label>
+                        <select class="form-select" id="semanticAskLanguageSelect">
+                            <option value="en" selected>English</option>
+                            <option value="sv">Swedish</option>
+                        </select>
+                        <label class="form-label" for="semanticAskModeSelect">Mode</label>
+                        <select class="form-select" id="semanticAskModeSelect">
+                            <option value="strict">Strict</option>
+                            <option value="loose">Loose</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="semantic-tools-search-row">
+                    <textarea class="form-textarea" id="semanticAskInput" rows="4" placeholder="Ask a grounded question about your documents..."></textarea>
+                </div>
+                <div class="semantic-tools-index-row">
+                    <button type="button" class="btn btn-primary" id="semanticAskBtn" data-action="runSemanticAsk">Ask</button>
+                    <button type="button" class="btn btn-secondary" id="semanticAskAgainBtn" data-action="runSemanticAskAgain" disabled>Ask again (same evidence)</button>
+                    <button type="button" class="btn btn-secondary" id="semanticCancelAskBtn" data-action="cancelSemanticAsk" hidden>Cancel</button>
+                    <span id="semanticAskStatusBadge" class="semantic-processing-badge" hidden></span>
+                </div>
+                <div class="semantic-ask-output-box" id="semanticAskOutputBox">
+                    <div class="semantic-ask-answer" id="semanticAskAnswer"></div>
+                    <div class="semantic-ask-sources" id="semanticAskSources"></div>
+                    <details class="semantic-ask-context" id="semanticAskContextDetails">
+                        <summary>Show retrieved context</summary>
+                        <div id="semanticAskContextList"></div>
+                    </details>
+                    <details class="semantic-ask-context" id="semanticAskRawOutputDetails" hidden>
+                        <summary>Show raw model output (debug)</summary>
+                        <pre id="semanticAskRawOutput"></pre>
+                    </details>
+                </div>
+            </div>
+
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeSemanticToolsModal">Close</button>
             </div>
@@ -512,7 +563,7 @@
     <div id="caseModal" class="modal">
         <div class="modal-content">
             <h2 class="modal-title">New Case</h2>
-            <form id="caseForm" onsubmit="saveCase(event)">
+            <form id="caseForm">
                 <div class="form-group">
                     <label class="form-label">Case Name</label>
                     <input type="text" class="form-input" id="caseName" required>
@@ -528,7 +579,7 @@
                     </select>
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="closeCaseModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" data-action="closeCaseModal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create Case</button>
                 </div>
             </form>
@@ -539,10 +590,10 @@
     <div id="caseAddDocumentsModal" class="modal">
         <div class="modal-content">
             <h2 class="modal-title">Add Documents to Case</h2>
-            <form id="caseAddDocumentsForm" onsubmit="saveCaseAddDocuments(event)">
+            <form id="caseAddDocumentsForm">
                 <div class="case-doc-picker-list" id="caseAddDocumentsList"></div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="closeCaseAddDocumentsModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" data-action="closeCaseAddDocumentsModal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Apply</button>
                 </div>
             </form>
@@ -553,10 +604,10 @@
     <div id="documentAssignCasesModal" class="modal">
         <div class="modal-content">
             <h2 class="modal-title">Assign to Cases</h2>
-            <form id="documentAssignCasesForm" onsubmit="saveDocumentAssignCases(event)">
+            <form id="documentAssignCasesForm">
                 <div class="case-doc-picker-list" id="documentAssignCasesList"></div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="closeDocumentAssignCasesModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" data-action="closeDocumentAssignCasesModal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Apply</button>
                 </div>
             </form>
@@ -774,6 +825,7 @@
 
     <!-- JavaScript libraries -->
     <script src="js/jszip.min.js"></script>
+    <script src="js/base64-utils.js"></script>
 <!-- JavaScript modules -->
     <script src="js/state.js"></script>
     <script src="js/ui.js"></script>
@@ -788,6 +840,7 @@
     <script src="js/qdpx.js"></script>
     <script src="js/export.js"></script>
     <script src="js/semantic.js"></script>
+    <script src="js/agent-api.js"></script>
     <script src="js/app.js"></script>
 <!-- PDF.js (module build) -->
 <script type="module" src="js/pdfjs-bootstrap.js"></script>

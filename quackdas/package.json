@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "cli": "node tools/quackdas-cli.js",
     "lint": "eslint .",
     "check:syntax": "node --check main.js preload.js js/*.js eslint.config.js",
     "check:lint": "eslint .",

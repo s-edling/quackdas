@@ -518,9 +518,9 @@ async function importDocument(e) {
                 alert('DOCX import requires the mammoth library, but it is not available. Try importing as .txt.');
                 return;
             }
-            mammoth.extractRawText({ arrayBuffer })
-                .then(function(result) {
-                    addDocument(title, result.value);
+            importDocxWithFormatting(arrayBuffer)
+                .then(function(payload) {
+                    addDocument(title, payload.content, { richContentHtml: payload.richContentHtml });
                     closeImportModal();
                     document.getElementById('importTitle').value = '';
                     const hint = document.getElementById('importFileHint');
@@ -599,13 +599,16 @@ async function importDocument(e) {
         reader.readAsArrayBuffer(file);
     } else if (fileName.endsWith('.docx')) {
         // Handle .docx files with mammoth
+        if (typeof mammoth === 'undefined') {
+            alert('DOCX import requires the mammoth library, but it is not available. Try importing as .txt.');
+            return;
+        }
         const reader = new FileReader();
         reader.onload = function(e) {
             const arrayBuffer = e.target.result;
-            mammoth.extractRawText({arrayBuffer: arrayBuffer})
-                .then(function(result) {
-                    const content = result.value;
-                    addDocument(title, content);
+            importDocxWithFormatting(arrayBuffer)
+                .then(function(payload) {
+                    addDocument(title, payload.content, { richContentHtml: payload.richContentHtml });
                     closeImportModal();
                 })
                 .catch(function(err) {
@@ -679,18 +682,138 @@ function canonicalizeDocumentContent(input) {
     return String(input == null ? '' : input).replace(/\r\n?/g, '\n');
 }
 
-function addDocument(title, content) {
+const ALLOWED_RICH_IMPORT_TAGS = new Set([
+    'p', 'br', 'strong', 'em', 'b', 'i', 'u', 'sup', 'sub',
+    'ul', 'ol', 'li',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'blockquote', 'span'
+]);
+const STRIP_WHITESPACE_ONLY_TEXT_IN_PARENT_TAGS = new Set([
+    '', 'div', 'section', 'article', 'table', 'thead', 'tbody', 'tfoot', 'tr'
+]);
+
+function sanitizeRichImportNode(node, parentTagName = '') {
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) {
+        const value = node.nodeValue || '';
+        if (!value) return null;
+        if (!/\S/.test(value) && STRIP_WHITESPACE_ONLY_TEXT_IN_PARENT_TAGS.has(parentTagName)) {
+            return null;
+        }
+        return document.createTextNode(value);
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+    const tag = String(node.tagName || '').toLowerCase();
+    const childParentTag = tag || parentTagName;
+    if (!ALLOWED_RICH_IMPORT_TAGS.has(tag)) {
+        const fragment = document.createDocumentFragment();
+        Array.from(node.childNodes).forEach((child) => {
+            const sanitizedChild = sanitizeRichImportNode(child, childParentTag);
+            if (sanitizedChild) fragment.appendChild(sanitizedChild);
+        });
+        return fragment;
+    }
+
+    const el = document.createElement(tag);
+    if (tag === 'th' || tag === 'td') {
+        const colspanRaw = Number.parseInt(node.getAttribute('colspan') || '', 10);
+        const rowspanRaw = Number.parseInt(node.getAttribute('rowspan') || '', 10);
+        if (Number.isFinite(colspanRaw) && colspanRaw > 1 && colspanRaw < 1000) {
+            el.setAttribute('colspan', String(colspanRaw));
+        }
+        if (Number.isFinite(rowspanRaw) && rowspanRaw > 1 && rowspanRaw < 1000) {
+            el.setAttribute('rowspan', String(rowspanRaw));
+        }
+    }
+
+    Array.from(node.childNodes).forEach((child) => {
+        const sanitizedChild = sanitizeRichImportNode(child, childParentTag);
+        if (sanitizedChild) el.appendChild(sanitizedChild);
+    });
+    return el;
+}
+
+function sanitizeRichImportHtml(rawHtml) {
+    const html = String(rawHtml || '');
+    if (!html.trim()) return '';
+
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const host = document.createElement('div');
+    Array.from(template.content.childNodes).forEach((child) => {
+        const sanitized = sanitizeRichImportNode(child, '');
+        if (sanitized) host.appendChild(sanitized);
+    });
+    const normalized = host.innerHTML.trim();
+    return normalized;
+}
+
+function extractPlainTextFromRichHtml(richHtml) {
+    const html = String(richHtml || '');
+    if (!html.trim()) return '';
+
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+    let text = '';
+    while (walker.nextNode()) {
+        text += walker.currentNode.nodeValue || '';
+    }
+    return canonicalizeDocumentContent(text);
+}
+
+async function importDocxWithFormatting(arrayBuffer) {
+    if (typeof mammoth === 'undefined') {
+        throw new Error('DOCX import requires the mammoth library.');
+    }
+
+    let richContentHtml = '';
+    let convertError = null;
+    try {
+        const htmlResult = await mammoth.convertToHtml({ arrayBuffer });
+        richContentHtml = sanitizeRichImportHtml(htmlResult?.value || '');
+    } catch (err) {
+        convertError = err;
+    }
+
+    let content = extractPlainTextFromRichHtml(richContentHtml);
+    if (!content) {
+        try {
+            const textResult = await mammoth.extractRawText({ arrayBuffer });
+            content = canonicalizeDocumentContent(textResult?.value || '');
+        } catch (extractErr) {
+            if (convertError) throw convertError;
+            throw extractErr;
+        }
+    }
+
+    if (!content && convertError) throw convertError;
+    return { content, richContentHtml: richContentHtml || '' };
+}
+
+function addDocument(title, content, options = {}) {
     saveHistory();
-    
+
+    const richContentHtml = sanitizeRichImportHtml(options.richContentHtml || '');
+    let plainContent = canonicalizeDocumentContent(content);
+    if (!plainContent && richContentHtml) {
+        plainContent = extractPlainTextFromRichHtml(richContentHtml);
+    }
+
     const doc = {
         id: 'doc_' + Date.now(),
         title: title,
-        content: canonicalizeDocumentContent(content),
+        content: plainContent,
         metadata: {},
         caseIds: [],
         created: new Date().toISOString(),
         lastAccessed: new Date().toISOString()
     };
+    if (richContentHtml) {
+        doc.richContentHtml = richContentHtml;
+    }
     appData.documents.push(doc);
     appData.currentDocId = doc.id;
     appData.selectedCaseId = null;
@@ -881,12 +1004,16 @@ function handleDroppedDocument(file) {
         };
         reader.readAsArrayBuffer(file);
     } else if (fileName.endsWith('.docx')) {
+        if (typeof mammoth === 'undefined') {
+            alert('DOCX import requires the mammoth library, but it is not available. Try importing as .txt.');
+            return;
+        }
         const reader = new FileReader();
         reader.onload = function(e) {
             const arrayBuffer = e.target.result;
-            mammoth.extractRawText({arrayBuffer: arrayBuffer})
-                .then(function(result) {
-                    addDocument(title, result.value);
+            importDocxWithFormatting(arrayBuffer)
+                .then(function(payload) {
+                    addDocument(title, payload.content, { richContentHtml: payload.richContentHtml });
                 })
                 .catch(function(err) {
                     alert('Error reading .docx file: ' + err.message);

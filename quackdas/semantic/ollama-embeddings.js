@@ -8,17 +8,47 @@ class OllamaError extends Error {
   }
 }
 
+function assertLocalOllamaBaseUrl(baseUrl) {
+  const raw = String(baseUrl || '').trim();
+  if (!raw) {
+    throw new OllamaError('Ollama base URL is empty.', 'OLLAMA_INVALID_BASE_URL');
+  }
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    throw new OllamaError('Ollama base URL is invalid.', 'OLLAMA_INVALID_BASE_URL');
+  }
+  if (!['localhost', '127.0.0.1'].includes(parsed.hostname)) {
+    throw new OllamaError('Only local Ollama endpoints are allowed (localhost/127.0.0.1).', 'OLLAMA_NON_LOCAL_BASE_URL');
+  }
+  return `${parsed.protocol}//${parsed.host}`;
+}
+
 async function requestJson(baseUrl, pathName, options = {}) {
-  const timeoutMs = Number(options.timeoutMs || SEMANTIC_DEFAULTS.ollamaTimeoutMs);
+  const safeBaseUrl = assertLocalOllamaBaseUrl(baseUrl);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutInput = options.timeoutMs == null ? SEMANTIC_DEFAULTS.ollamaTimeoutMs : Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutInput) ? timeoutInput : SEMANTIC_DEFAULTS.ollamaTimeoutMs;
+  const useTimeout = timeoutMs > 0;
+  const timeout = useTimeout ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const externalSignal = options.signal;
+  let onAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      onAbort = () => controller.abort();
+      externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
 
   try {
-    const response = await fetch(`${baseUrl}${pathName}`, {
+    const response = await fetch(`${safeBaseUrl}${pathName}`, {
       method: options.method || 'GET',
       headers: Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}),
       body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: options.signal || controller.signal
+      signal: controller.signal
     });
 
     const bodyText = await response.text();
@@ -44,7 +74,10 @@ async function requestJson(baseUrl, pathName, options = {}) {
     if (err instanceof OllamaError) throw err;
     throw new OllamaError('Could not reach Ollama at localhost:11434. Start Ollama and try again.', 'OLLAMA_UNREACHABLE');
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
+    if (externalSignal && onAbort) {
+      externalSignal.removeEventListener('abort', onAbort);
+    }
   }
 }
 
@@ -130,6 +163,7 @@ async function embedMany(texts, options = {}) {
 
 module.exports = {
   OllamaError,
+  assertLocalOllamaBaseUrl,
   listModels,
   isOllamaReachable,
   embedText,

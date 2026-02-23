@@ -44,8 +44,8 @@ function renderExistingMemos(type, targetId) {
                     <div class="memo-item-header">
                         <span>${escapeHtml(formatMemoDate(memo.created))}${memo.edited && memo.edited !== memo.created ? ` · edited ${escapeHtml(formatMemoDate(memo.edited))}` : ''}</span>
                         <span>
-                            <button class="memo-delete-btn" onclick="editMemo('${escapeJsForSingleQuotedString(memo.id)}')" title="Edit annotation">✎</button>
-                            <button class="memo-delete-btn" onclick="deleteMemo('${escapeJsForSingleQuotedString(memo.id)}')" title="Delete annotation">×</button>
+                            <button class="memo-delete-btn" data-action="editMemo" data-memo-id="${escapeHtmlAttrValue(memo.id)}" title="Edit annotation">✎</button>
+                            <button class="memo-delete-btn" data-action="deleteMemo" data-memo-id="${escapeHtmlAttrValue(memo.id)}" title="Delete annotation">×</button>
                         </span>
                     </div>
                     ${memoCodeLabel ? `<div class="memo-tag-badge">Code: ${escapeHtml(memoCodeLabel)}</div>` : ''}

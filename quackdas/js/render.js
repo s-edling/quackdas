@@ -47,7 +47,6 @@ function renderDocuments() {
     
     // Helper to render a document item (draggable)
     const renderDocItem = (doc, indent = 0) => {
-        const safeDocIdJs = escapeJsForSingleQuotedString(doc.id);
         const safeDocIdAttr = escapeHtmlAttrValue(doc.id);
         const memoCount = getMemoCountForTarget('document', doc.id);
         const memoIndicator = memoCount > 0 ? `<span class="memo-indicator" title="${memoCount} annotation(s)">💭${memoCount}</span>` : '';
@@ -69,11 +68,7 @@ function renderDocuments() {
             <div class="document-item document-item-compact ${doc.id === appData.currentDocId ? 'active' : ''} ${isSelected ? 'selected' : ''}" 
                  ${indentStyle} 
                  draggable="true"
-                 data-doc-id="${safeDocIdAttr}"
-                 ondragstart="handleDocDragStart(event, '${safeDocIdJs}')"
-                 ondragend="handleDocDragEnd(event)"
-                onclick="selectDocumentFromList(event, '${safeDocIdJs}')" 
-                oncontextmenu="openDocumentContextMenu('${safeDocIdJs}', event)">
+                 data-doc-id="${safeDocIdAttr}">
                 <div class="document-item-main-row">
                     <div class="document-item-title-wrap">
                         ${typeIndicator}
@@ -81,7 +76,7 @@ function renderDocuments() {
                         ${memoIndicator}
                     </div>
                     <span class="document-item-code-badge" title="${escapeHtmlAttrValue(`${codeCount} coded segment${codeCount !== 1 ? 's' : ''}`)}">${escapeHtml(codeLabel)}</span>
-                    <button class="code-action-btn document-item-settings-btn" onclick="openDocumentMetadata('${safeDocIdJs}', event)" title="Edit metadata"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+                    <button class="code-action-btn document-item-settings-btn" data-action="openDocumentMetadataFromList" data-doc-id="${safeDocIdAttr}" title="Edit metadata"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
                 </div>
                 <div class="document-item-meta">${extraMeta}</div>
             </div>
@@ -90,7 +85,6 @@ function renderDocuments() {
     
     // Helper to render a folder item (with drop zone for documents)
     const renderFolderItem = (folder, indent = 0) => {
-        const safeFolderIdJs = escapeJsForSingleQuotedString(folder.id);
         const safeFolderIdAttr = escapeHtmlAttrValue(folder.id);
         const isExpanded = folder.expanded !== false;
         const expandIcon = isExpanded ? '▼' : '▶';
@@ -99,17 +93,11 @@ function renderDocuments() {
         return `
             <div class="folder-item" style="${indentStyle}" 
                  data-folder-id="${safeFolderIdAttr}"
-                 draggable="true"
-                 ondragstart="handleFolderItemDragStart(event, '${safeFolderIdJs}')"
-                 ondragend="handleFolderItemDragEnd(event)"
-                 ondragover="handleFolderDragOver(event)" 
-                 ondragleave="handleFolderDragLeave(event)" 
-                 ondrop="handleDocumentDropOnFolder(event, '${safeFolderIdJs}')"
-                 oncontextmenu="openFolderContextMenu('${safeFolderIdJs}', event)">
-                <span class="folder-expand" onclick="toggleFolderExpanded('${safeFolderIdJs}', event)">${expandIcon}</span>
+                 draggable="true">
+                <span class="folder-expand" data-action="toggleFolderExpandedFromList" data-folder-id="${safeFolderIdAttr}">${expandIcon}</span>
                 <span class="folder-icon">${folderIconSvg}</span>
                 <span class="folder-name">${escapeHtml(folder.name)}</span>
-                <button class="folder-settings-btn" onclick="openFolderInfo('${safeFolderIdJs}', event)" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+                <button class="folder-settings-btn" data-action="openFolderInfoFromList" data-folder-id="${safeFolderIdAttr}" title="Folder info"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
             </div>
         `;
     };
@@ -164,10 +152,7 @@ function renderDocuments() {
     const rootDocs = docsByFolder.get(ROOT_KEY) || [];
     if (appData.folders.length > 0 && rootDocs.length > 0) {
         allHtml += `
-            <div class="root-doc-separator"
-                 ondragover="handleFolderDragOver(event)"
-                 ondragleave="handleFolderDragLeave(event)"
-                 ondrop="handleDocumentDropOnFolder(event, null)"></div>
+            <div class="root-doc-separator" data-folder-drop-zone=""></div>
         `;
     }
     rootDocs.forEach(doc => {
@@ -176,10 +161,7 @@ function renderDocuments() {
     
     // Add root drop zone for moving documents out of folders
     allHtml += `
-        <div class="root-drop-zone" 
-             ondragover="handleFolderDragOver(event)" 
-             ondragleave="handleFolderDragLeave(event)" 
-             ondrop="handleDocumentDropOnFolder(event, null)">
+        <div class="root-drop-zone" data-folder-drop-zone="">
             Drop here to move to root
         </div>
     `;
@@ -245,7 +227,6 @@ function renderCodes() {
 }
 
 function renderCodeItem(code, isChild = false, index = 0) {
-    const safeCodeIdJs = escapeJsForSingleQuotedString(code.id);
     const safeCodeIdAttr = escapeHtmlAttrValue(code.id);
     const count = getCodeSegmentCountFast(code.id);
     const children = appData.codes.filter(c => c.parentId === code.id);
@@ -257,13 +238,13 @@ function renderCodeItem(code, isChild = false, index = 0) {
     const dragAttr = `draggable="true" data-code-id="${safeCodeIdAttr}" data-sort-index="${index}"`;
     
     let html = `
-        <div class="code-item draggable-code ${isChild ? 'child' : ''} ${isSelected ? 'selected' : ''}" onclick="filterByCode('${safeCodeIdJs}', event)" oncontextmenu="openCodeContextMenu('${safeCodeIdJs}', event)" ${titleAttr} ${dragAttr}>
+        <div class="code-item draggable-code ${isChild ? 'child' : ''} ${isSelected ? 'selected' : ''}" ${titleAttr} ${dragAttr}>
             <span class="drag-handle" title="Drag onto another code to make child">⠿</span>
             <div class="code-color" style="background: ${escapeHtml(code.color)};"></div>
             <div class="code-name">${escapeHtml(code.name)}${shortcutBadge}${memoIndicator}</div>
             <div class="code-count">${count}</div>
             <div class="code-actions">
-                <button class="code-action-btn" onclick="deleteCode('${safeCodeIdJs}', event)" title="Delete">×</button>
+                <button class="code-action-btn" data-action="deleteCodeFromList" data-code-id="${safeCodeIdAttr}" title="Delete">×</button>
             </div>
         </div>
     `;
@@ -306,6 +287,198 @@ function setZoomControlsVisible(visible) {
     zoom.style.display = visible ? 'inline-flex' : 'none';
 }
 
+function docHasRichTextMarkup(doc) {
+    return !!(doc && typeof doc.richContentHtml === 'string' && doc.richContentHtml.trim().length > 0);
+}
+
+function collectRenderableTextNodes(root) {
+    if (!root) return [];
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+            const parent = node.parentElement;
+            if (!parent) return NodeFilter.FILTER_ACCEPT;
+            if (parent.closest('.document-segment-marker-layer')) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+    while (walker.nextNode()) {
+        nodes.push(walker.currentNode);
+    }
+    return nodes;
+}
+
+function getTextLengthFromNodes(nodes) {
+    return (nodes || []).reduce((sum, node) => sum + String(node.nodeValue || '').length, 0);
+}
+
+function buildTextSegmentRuns(contentLength, segments) {
+    const maxLength = Math.max(0, Number(contentLength) || 0);
+    const events = [];
+
+    (segments || []).forEach((segment) => {
+        if (!segment || segment.pdfRegion) return;
+        const rawStart = Number(segment.startIndex);
+        const rawEnd = Number(segment.endIndex);
+        if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return;
+
+        const minPos = Math.min(rawStart, rawEnd);
+        const maxPos = Math.max(rawStart, rawEnd);
+        const start = Math.max(0, Math.min(maxLength, minPos));
+        const end = Math.max(0, Math.min(maxLength, maxPos));
+        if (end <= start) return;
+
+        events.push({ pos: start, type: 'start', segment });
+        events.push({ pos: end, type: 'end', segment });
+    });
+
+    events.sort((a, b) => {
+        if (a.pos !== b.pos) return a.pos - b.pos;
+        return a.type === 'end' ? -1 : 1;
+    });
+
+    const runs = [];
+    const active = new Set();
+    let cursor = 0;
+
+    for (const event of events) {
+        if (event.pos > cursor) {
+            runs.push({
+                start: cursor,
+                end: event.pos,
+                activeSegments: Array.from(active)
+            });
+            cursor = event.pos;
+        }
+        if (event.type === 'start') active.add(event.segment);
+        else active.delete(event.segment);
+    }
+
+    if (cursor < maxLength) {
+        runs.push({
+            start: cursor,
+            end: maxLength,
+            activeSegments: Array.from(active)
+        });
+    }
+
+    if (runs.length === 0 && maxLength > 0) {
+        runs.push({ start: 0, end: maxLength, activeSegments: [] });
+    }
+    return runs;
+}
+
+function createCodedSegmentElement(text, activeSegments) {
+    const safeText = String(text || '');
+    if (!safeText) return document.createTextNode('');
+
+    const codes = [];
+    const seenCodeIds = new Set();
+    const codeById = getCodeLookupMap();
+    (activeSegments || []).forEach((seg) => {
+        (seg.codeIds || []).forEach((codeId) => {
+            if (seenCodeIds.has(codeId)) return;
+            const code = codeById.get(codeId);
+            if (!code) return;
+            seenCodeIds.add(codeId);
+            codes.push(code);
+        });
+    });
+
+    const codeNames = codes.map(c => c.name).join(', ');
+    const segmentStyle = buildSegmentVisualStyleFromCodes(codes);
+    const segmentIdsList = (activeSegments || []).map(s => s.id).filter(Boolean);
+    const segmentIds = segmentIdsList.join(',');
+    const codeIds = codes.map(c => c.id).join(',');
+    const primarySegmentId = activeSegments?.[0]?.id || '';
+    const segmentMemoCount = primarySegmentId ? getSegmentMemoCount(primarySegmentId) : 0;
+
+    const wrapper = document.createElement('span');
+    wrapper.className = 'coded-segment';
+    wrapper.setAttribute('style', segmentStyle);
+    wrapper.dataset.primarySegmentId = primarySegmentId;
+    wrapper.dataset.segmentIds = segmentIds;
+    wrapper.dataset.codeIds = codeIds;
+    wrapper.dataset.memoCount = String(segmentMemoCount);
+    wrapper.dataset.tooltip = `${codeNames} • Right-click for options`;
+    wrapper.addEventListener('contextmenu', (event) => {
+        showSegmentContextMenu(segmentIds, event);
+    });
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'coded-segment-text';
+    textSpan.textContent = safeText;
+    wrapper.appendChild(textSpan);
+    return wrapper;
+}
+
+function applyCodedRunsToRichDocument(contentElement, doc, segments) {
+    if (!contentElement || !doc) return false;
+    const textNodes = collectRenderableTextNodes(contentElement);
+    const textLength = getTextLengthFromNodes(textNodes);
+    const docLength = String(doc.content || '').length;
+    if (textLength !== docLength) return false;
+
+    const runs = buildTextSegmentRuns(docLength, segments);
+    if (runs.length === 0) return true;
+
+    let runIndex = 0;
+    let globalOffset = 0;
+
+    textNodes.forEach((node) => {
+        const value = String(node.nodeValue || '');
+        const len = value.length;
+        if (len <= 0) return;
+
+        const nodeStart = globalOffset;
+        const nodeEnd = nodeStart + len;
+        globalOffset = nodeEnd;
+
+        while (runIndex < runs.length && runs[runIndex].end <= nodeStart) runIndex++;
+        if (runIndex >= runs.length || runs[runIndex].start >= nodeEnd) return;
+
+        const fragment = document.createDocumentFragment();
+        let cursor = nodeStart;
+        let idx = runIndex;
+
+        while (idx < runs.length && runs[idx].start < nodeEnd) {
+            const run = runs[idx];
+            const overlapStart = Math.max(nodeStart, run.start);
+            const overlapEnd = Math.min(nodeEnd, run.end);
+            if (overlapEnd <= overlapStart) {
+                idx += 1;
+                continue;
+            }
+
+            if (overlapStart > cursor) {
+                fragment.appendChild(document.createTextNode(
+                    value.slice(cursor - nodeStart, overlapStart - nodeStart)
+                ));
+            }
+
+            const slice = value.slice(overlapStart - nodeStart, overlapEnd - nodeStart);
+            if (run.activeSegments.length > 0) {
+                fragment.appendChild(createCodedSegmentElement(slice, run.activeSegments));
+            } else {
+                fragment.appendChild(document.createTextNode(slice));
+            }
+            cursor = overlapEnd;
+
+            if (run.end <= nodeEnd) idx += 1;
+            if (overlapEnd >= nodeEnd) break;
+        }
+
+        if (cursor < nodeEnd) {
+            fragment.appendChild(document.createTextNode(value.slice(cursor - nodeStart)));
+        }
+
+        node.replaceWith(fragment);
+        runIndex = idx;
+    });
+
+    return true;
+}
+
 function renderCurrentDocument() {
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const contentElement = document.getElementById('documentContent');
@@ -331,6 +504,7 @@ function renderCurrentDocument() {
     };
 
     if (appData.filterCodeId) {
+        if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         if (contentElement) contentElement.classList.add('code-view-mode');
         if (contentBody) contentBody.classList.add('code-view-mode');
         setDocumentViewMode(false);
@@ -344,6 +518,7 @@ function renderCurrentDocument() {
     }
 
     if (appData.selectedCaseId && typeof renderCaseSheet === 'function') {
+        if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         if (contentElement) contentElement.classList.add('code-view-mode');
         if (contentBody) contentBody.classList.add('code-view-mode');
         setDocumentViewMode(false);
@@ -357,18 +532,19 @@ function renderCurrentDocument() {
     }
     
     if (!doc) {
+        if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         setDocumentViewMode(false);
         setZoomControlsVisible(true);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         // Show empty state if no document selected
         const content = document.getElementById('documentContent');
         content.innerHTML = `
-            <div class="empty-state">
-                <h3>Start coding your data</h3>
-                <p>Import a document or paste text to begin qualitative analysis. Create codes in the left panel and apply them to text selections.</p>
-                <div class="empty-state-actions">
-                    <button class="empty-state-btn" onclick="openImportModal()"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>Import Document</button>
-                    <button class="empty-state-btn" onclick="openPasteModal()" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>Paste Text</button>
+                <div class="empty-state">
+                    <h3>Start coding your data</h3>
+                    <p>Import a document or paste text to begin qualitative analysis. Create codes in the left panel and apply them to text selections.</p>
+                    <div class="empty-state-actions">
+                    <button class="empty-state-btn" data-action="openImportModal"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>Import Document</button>
+                    <button class="empty-state-btn" data-action="openPasteModal" style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border);"><svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>Paste Text</button>
                 </div>
                 <p class="empty-state-hint">Or drag and drop a .txt, .docx, or .pdf file anywhere</p>
             </div>
@@ -384,6 +560,7 @@ function renderCurrentDocument() {
     
     // Check if this is a PDF document
     if (doc.type === 'pdf') {
+        if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         setDocumentViewMode(true);
         setZoomControlsVisible(true);
         if (typeof closeInPageSearch === 'function') closeInPageSearch();
@@ -421,14 +598,38 @@ function renderCurrentDocument() {
 
 function renderFullDocument(doc) {
     const content = document.getElementById('documentContent');
+    content.classList.remove('document-rich-content');
     const segments = getSegmentsForDoc(doc.id);
-    
+
+    if (docHasRichTextMarkup(doc)) {
+        content.classList.add('document-rich-content');
+        content.innerHTML = doc.richContentHtml;
+        content.onmouseup = handleTextSelection;
+
+        if (segments.length === 0) {
+            clearDocumentSegmentMarkers(content);
+            if (typeof enableReadOnlyTextViewerCaret === 'function') enableReadOnlyTextViewerCaret(content);
+            return;
+        }
+
+        const renderedWithCoding = applyCodedRunsToRichDocument(content, doc, segments);
+        if (renderedWithCoding) {
+            renderDocumentSegmentMarkers(content);
+            if (typeof enableReadOnlyTextViewerCaret === 'function') enableReadOnlyTextViewerCaret(content);
+            return;
+        }
+
+        // Fallback to plain-text rendering if text-index alignment fails.
+        content.classList.remove('document-rich-content');
+    }
+
     if (segments.length === 0) {
         // No segments, just render the plain text
         const html = escapeHtml(doc.content);
         content.innerHTML = html || '<p style="color: var(--text-secondary);"><em>Document is empty</em></p>';
         content.onmouseup = handleTextSelection;
         clearDocumentSegmentMarkers(content);
+        if (typeof enableReadOnlyTextViewerCaret === 'function') enableReadOnlyTextViewerCaret(content);
         return;
     }
     
@@ -485,6 +686,7 @@ function renderFullDocument(doc) {
     content.innerHTML = html || '<p style="color: var(--text-secondary);"><em>Document is empty</em></p>';
     content.onmouseup = handleTextSelection;
     renderDocumentSegmentMarkers(content);
+    if (typeof enableReadOnlyTextViewerCaret === 'function') enableReadOnlyTextViewerCaret(content);
 }
 
 function parseHexColorToRgb(hex) {
@@ -696,13 +898,12 @@ function renderCodedSpan(text, activeSegments) {
 
     const segmentIdsList = activeSegments.map(s => s.id);
     const segmentIds = segmentIdsList.join(',');
-    const safeSegmentIdsJs = escapeJsForSingleQuotedString(segmentIds);
     const codeIdsList = codes.map(c => c.id);
     const codeIds = codeIdsList.join(',');
     const primarySegmentId = activeSegments[0]?.id || '';
     const segmentMemoCount = primarySegmentId ? getSegmentMemoCount(primarySegmentId) : 0;
 
-    return `<span class="coded-segment" style="${segmentStyle}" data-primary-segment-id="${escapeHtmlAttrValue(primarySegmentId)}" data-segment-ids="${escapeHtmlAttrValue(segmentIds)}" data-code-ids="${escapeHtmlAttrValue(codeIds)}" data-memo-count="${segmentMemoCount}" data-tooltip="${escapeHtmlAttrValue(codeNames)} • Right-click for options" oncontextmenu="showSegmentContextMenu('${safeSegmentIdsJs}', event)"><span class="coded-segment-text">${escapeHtml(text)}</span></span>`;
+    return `<span class="coded-segment" style="${segmentStyle}" data-primary-segment-id="${escapeHtmlAttrValue(primarySegmentId)}" data-segment-ids="${escapeHtmlAttrValue(segmentIds)}" data-code-ids="${escapeHtmlAttrValue(codeIds)}" data-memo-count="${segmentMemoCount}" data-tooltip="${escapeHtmlAttrValue(codeNames)} • Right-click for options"><span class="coded-segment-text">${escapeHtml(text)}</span></span>`;
 }
 
 const codeLookupCache = {
@@ -915,7 +1116,7 @@ function renderCodeInspector() {
     const codeChecklist = codes.map(code => {
         const checked = Array.isArray(segment.codeIds) && segment.codeIds.includes(code.id);
         return `<label class="inspector-code-item">
-            <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleInspectorSegmentCode('${segment.id}', '${code.id}', this.checked)">
+            <input type="checkbox" data-action="toggleInspectorSegmentCode" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-code-id="${escapeHtmlAttrValue(code.id)}" ${checked ? 'checked' : ''}>
             <span class="inspector-code-dot" style="background:${escapeHtml(code.color || '#999')};"></span>
             <span>${escapeHtml(code.name || 'Untitled code')}</span>
         </label>`;
@@ -924,7 +1125,7 @@ function renderCodeInspector() {
     panel.innerHTML = `
         <div class="inspector-head">
             <strong>Coding inspector</strong>
-            <button type="button" class="doc-action-btn in-page-search-btn" onclick="clearCodeInspectorSelection()" title="Close">✕</button>
+            <button type="button" class="doc-action-btn in-page-search-btn" data-action="clearCodeInspectorSelection" title="Close">✕</button>
         </div>
         <div class="inspector-meta">
             <div><strong>Source:</strong> ${escapeHtml(doc?.title || 'Document')} · ${escapeHtml(segmentSourceLabel(segment))}</div>
@@ -951,11 +1152,11 @@ function renderCodeInspector() {
                     <textarea id="inspectorMemoInput" class="form-textarea inspector-memo-input" rows="2" placeholder="Add annotation..."></textarea>
                     <input id="inspectorMemoTag" type="text" class="form-input inspector-memo-tag-input" maxlength="40" placeholder="Tag (optional)">
                 </div>
-                <button type="button" class="btn btn-primary" onclick="addInspectorSegmentMemo('${escapeJsForSingleQuotedString(segment.id)}')">Save</button>
+                <button type="button" class="btn btn-primary" data-action="addInspectorSegmentMemo" data-segment-id="${escapeHtmlAttrValue(segment.id)}">Save</button>
             </div>
         </div>
         <div class="inspector-actions">
-            <button type="button" class="btn btn-secondary" onclick="goToSegmentLocation('${escapeJsForSingleQuotedString(segment.docId)}', '${escapeJsForSingleQuotedString(segment.id)}')">Go to source</button>
+            <button type="button" class="btn btn-secondary" data-action="goToSegmentLocationFromInspector" data-doc-id="${escapeHtmlAttrValue(segment.docId)}" data-segment-id="${escapeHtmlAttrValue(segment.id)}">Go to source</button>
         </div>
     `;
 }
@@ -1346,15 +1547,15 @@ function renderFilteredView() {
     
     // Shortcut display
     const shortcutAction = code.shortcut 
-        ? `<span class="filter-shortcut" onclick="assignShortcut('${escapeJsForSingleQuotedString(code.id)}')" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
-        : `<span class="filter-shortcut" onclick="assignShortcut('${escapeJsForSingleQuotedString(code.id)}')" title="Click to assign shortcut">Assign shortcut</span>`;
+        ? `<span class="filter-shortcut" data-action="assignShortcutFromCodeView" data-code-id="${escapeHtmlAttrValue(code.id)}" title="Click to change shortcut">Shortcut: ${code.shortcut}</span>`
+        : `<span class="filter-shortcut" data-action="assignShortcutFromCodeView" data-code-id="${escapeHtmlAttrValue(code.id)}" title="Click to assign shortcut">Assign shortcut</span>`;
     const includeSubcodesControl = hasChildren ? `
-        <span class="filter-shortcut" onclick="toggleCodeViewSubcodes()" title="Include codings from all descendant subcodes">
+        <span class="filter-shortcut" data-action="toggleCodeViewSubcodes" title="Include codings from all descendant subcodes">
             ${codeViewUiState.segmentsIncludeSubcodes ? 'Hide subcodes' : 'Show subcodes'}
         </span>
     ` : '';
     const goToParentControl = parentCode ? `
-        <span class="filter-shortcut" onclick="goToParentCodeFromCodeView()" title="Switch to parent code">
+        <span class="filter-shortcut" data-action="goToParentCodeFromCodeView" title="Switch to parent code">
             Go to parent code
         </span>
     ` : '';
@@ -1368,8 +1569,8 @@ function renderFilteredView() {
                 <span class="filter-code-description-text">${descriptionText}</span>
             </div>
             <div class="filter-code-description-actions">
-                <span class="filter-shortcut" onclick="toggleCodeViewNotes()">${codeViewUiState.notesExpanded ? 'Hide notes' : 'Show notes'}</span>
-                <button class="filter-description-btn" onclick="editFilterCodeDescription('${escapeJsForSingleQuotedString(code.id)}')">Add description and notes</button>
+                <span class="filter-shortcut" data-action="toggleCodeViewNotes">${codeViewUiState.notesExpanded ? 'Hide notes' : 'Show notes'}</span>
+                <button class="filter-description-btn" data-action="editFilterCodeDescription" data-code-id="${escapeHtmlAttrValue(code.id)}">Add description and notes</button>
             </div>
             ${codeViewUiState.notesExpanded ? `<div class="filter-code-notes-block">${notesText}</div>` : ''}
         </div>`;
@@ -1394,28 +1595,28 @@ function renderFilteredView() {
         </div>
         ${descriptionHtml}
         <div class="code-view-banner code-view-presets">
-            <div class="code-view-presets-toggle-row" onclick="toggleCodeViewPresetsExpanded()">
+            <div class="code-view-presets-toggle-row" data-action="toggleCodeViewPresetsExpanded">
                 <button type="button" class="code-view-switch-btn presets-chevron">${codeViewUiState.presetsExpanded ? '▾' : '▸'}</button>
                 <span class="filter-meta"><strong>Retrieval presets</strong></span>
             </div>
             ${codeViewUiState.presetsExpanded ? `
             <div class="code-view-presets-controls">
-                <button type="button" class="code-view-switch-btn" onclick="saveCurrentCodeViewPreset()">Save preset</button>
-                <select class="form-select annotation-filter-select" onchange="applyCodeViewPreset(this.value)">
+                <button type="button" class="code-view-switch-btn" data-action="saveCurrentCodeViewPreset">Save preset</button>
+                <select class="form-select annotation-filter-select" data-action="applyCodeViewPreset">
                     <option value="">Load preset...</option>
                     ${presetOptions}
                 </select>
                 ${codeViewUiState.mode === 'segments' ? `
-                    <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('segmentsDocId', this.value)">
+                    <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="segmentsDocId">
                         <option value="">All documents</option>
                         ${docOptions}
                     </select>
-                    <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('segmentsMemoFilter', this.value)">
+                    <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="segmentsMemoFilter">
                         <option value="all" ${codeViewUiState.segmentsMemoFilter === 'all' ? 'selected' : ''}>All snippets</option>
                         <option value="with" ${codeViewUiState.segmentsMemoFilter === 'with' ? 'selected' : ''}>With annotation</option>
                         <option value="without" ${codeViewUiState.segmentsMemoFilter === 'without' ? 'selected' : ''}>Without annotation</option>
                     </select>
-                    <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('segmentsSort', this.value)">
+                    <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="segmentsSort">
                         <option value="document" ${codeViewUiState.segmentsSort === 'document' ? 'selected' : ''}>Sort: document</option>
                         <option value="date" ${codeViewUiState.segmentsSort === 'date' ? 'selected' : ''}>Sort: date</option>
                         <option value="metadata" ${codeViewUiState.segmentsSort === 'metadata' ? 'selected' : ''}>Sort: metadata</option>
@@ -1425,8 +1626,8 @@ function renderFilteredView() {
             ` : ''}
         </div>
         <div class="code-view-banner code-view-banner-switch">
-            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'segments' ? 'active' : ''}" onclick="setCodeViewMode('segments')">Segments</button>
-            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'annotations' ? 'active' : ''}" onclick="setCodeViewMode('annotations')">Annotations</button>
+            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'segments' ? 'active' : ''}" data-action="setCodeViewMode" data-mode="segments">Segments</button>
+            <button type="button" class="code-view-switch-btn ${codeViewUiState.mode === 'annotations' ? 'active' : ''}" data-action="setCodeViewMode" data-mode="annotations">Annotations</button>
         </div>
         <div class="code-view-content">
     `;
@@ -1473,15 +1674,15 @@ function renderFilteredView() {
 
         html += `
             <div class="annotation-filters">
-                <input type="text" class="form-input annotation-search-input" value="${escapeHtmlAttrValue(codeViewUiState.annotationQuery)}"
-                    placeholder="Search annotations..." oninput="updateAnnotationViewFilter('annotationQuery', this.value)">
-                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationCodeId', this.value)">
+                <input type="text" class="form-input annotation-search-input" value="${escapeHtmlAttrValue(codeViewUiState.annotationQuery)}" data-action="updateAnnotationViewFilter" data-filter-key="annotationQuery"
+                    placeholder="Search annotations...">
+                <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="annotationCodeId">
                     ${codeOptions.map(opt => `<option value="${escapeHtmlAttrValue(opt.id)}" ${opt.id === codeViewUiState.annotationCodeId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
                 </select>
-                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDocId', this.value)">
+                <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="annotationDocId">
                     ${docOptions.map(opt => `<option value="${escapeHtmlAttrValue(opt.id)}" ${opt.id === codeViewUiState.annotationDocId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
                 </select>
-                <select class="form-select annotation-filter-select" onchange="updateAnnotationViewFilter('annotationDateRange', this.value)">
+                <select class="form-select annotation-filter-select" data-action="updateAnnotationViewFilter" data-filter-key="annotationDateRange">
                     <option value="all" ${codeViewUiState.annotationDateRange === 'all' ? 'selected' : ''}>All dates</option>
                     <option value="today" ${codeViewUiState.annotationDateRange === 'today' ? 'selected' : ''}>Today</option>
                     <option value="7d" ${codeViewUiState.annotationDateRange === '7d' ? 'selected' : ''}>Last 7 days</option>
@@ -1721,11 +1922,14 @@ async function hydrateFilterPdfRegionPreviews(rootEl = document) {
                 if (!el.isConnected) return;
                 if (el.dataset.segmentId !== segmentId || el.dataset.docId !== docId) return;
                 el.innerHTML = `<button type="button" class="filter-pdf-preview-btn" data-segment-id="${escapeHtmlAttrValue(segment.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}" title="Open full-size preview">
-                    <img src="${escapeHtmlAttrValue(dataUrl)}" alt="PDF region preview" class="filter-pdf-preview-img" onload="handleFilterPreviewImageLoaded()">
+                    <img src="${escapeHtmlAttrValue(dataUrl)}" alt="PDF region preview" class="filter-pdf-preview-img">
                 </button>`;
                 el.dataset.hydrated = '1';
                 scheduleFilterVirtualRender(true);
                 const imgEl = el.querySelector('.filter-pdf-preview-img');
+                if (imgEl) {
+                    imgEl.addEventListener('load', handleFilterPreviewImageLoaded, { once: true });
+                }
                 if (imgEl && imgEl.complete) {
                     requestAnimationFrame(() => scheduleFilterVirtualRender(true));
                 }
@@ -2030,6 +2234,75 @@ function scrollToCharacterPosition(charIndex) {
         contentBody.scrollTo({ top: scrollOffset, behavior: 'smooth' });
         flashLocationIndicator(rect.left, rect.top);
     }
+}
+
+function createRangeFromCharOffsets(contentElement, startChar, endChar) {
+    const startBoundary = getTextNodeBoundaryAtChar(contentElement, startChar);
+    const endBoundary = getTextNodeBoundaryAtChar(contentElement, endChar);
+    if (!startBoundary || !endBoundary) return null;
+    const range = document.createRange();
+    range.setStart(startBoundary.node, startBoundary.offset);
+    range.setEnd(endBoundary.node, endBoundary.offset);
+    return range;
+}
+
+function clearAskRangeHighlights() {
+    document.querySelectorAll('.semantic-highlight-layer').forEach((el) => el.remove());
+}
+
+function paintAskRangeHighlight(range) {
+    if (!range) return;
+    const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+    if (rects.length === 0) return;
+    clearAskRangeHighlights();
+    const layer = document.createElement('div');
+    layer.className = 'semantic-highlight-layer';
+    rects.forEach((rect) => {
+        const piece = document.createElement('div');
+        piece.className = 'semantic-highlight-rect';
+        piece.style.left = `${rect.left + window.scrollX}px`;
+        piece.style.top = `${rect.top + window.scrollY}px`;
+        piece.style.width = `${rect.width}px`;
+        piece.style.height = `${rect.height}px`;
+        layer.appendChild(piece);
+    });
+    document.body.appendChild(layer);
+    setTimeout(() => {
+        layer.querySelectorAll('.semantic-highlight-rect').forEach((el) => {
+            el.style.opacity = '0';
+        });
+        setTimeout(() => layer.remove(), 380);
+    }, 1900);
+}
+
+function goToCharacterRangeWithHighlight(docId, startChar, endChar) {
+    appData.filterCodeId = null;
+    selectDocument(docId);
+
+    setTimeout(() => {
+        const doc = appData.documents.find((d) => d.id === docId);
+        if (!doc || doc.type === 'pdf') return;
+        const contentElement = document.getElementById('documentContent');
+        if (!contentElement) return;
+
+        const start = Math.max(0, Number(startChar || 0));
+        const end = Math.max(start + 1, Number(endChar || 0));
+        const range = createRangeFromCharOffsets(contentElement, start, end);
+        if (!range) {
+            scrollToCharacterPosition(start);
+            return;
+        }
+
+        const rect = range.getBoundingClientRect();
+        const contentBody = document.querySelector('.content-body');
+        if (contentBody && rect) {
+            const containerRect = contentBody.getBoundingClientRect();
+            const scrollOffset = rect.top - containerRect.top + contentBody.scrollTop - (containerRect.height / 3);
+            contentBody.scrollTo({ top: scrollOffset, behavior: 'smooth' });
+            flashLocationIndicator(rect.left, rect.top);
+        }
+        paintAskRangeHighlight(range);
+    }, 60);
 }
 
 function flashLocationIndicator(x, y) {

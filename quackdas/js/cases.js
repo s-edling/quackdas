@@ -83,7 +83,6 @@ function renderCaseTreeItem(caseItem, depth, visited) {
     if (!caseItem || visited.has(caseItem.id) || depth > 20) return '';
     visited.add(caseItem.id);
 
-    const safeCaseIdJs = escapeJsForSingleQuotedString(caseItem.id);
     const safeCaseIdAttr = escapeHtmlAttrValue(caseItem.id);
     const isSelected = appData.selectedCaseId === caseItem.id;
     const count = getCaseLinkedDocumentCount(caseItem.id);
@@ -96,8 +95,8 @@ function renderCaseTreeItem(caseItem, depth, visited) {
     const secondary = typeLine || roleLine;
 
     let html = `
-        <div class="code-item case-item draggable-case ${isSelected ? 'selected' : ''} ${depth > 0 ? 'child' : ''}" style="margin-left:${depth * 12}px;" onclick="selectCase('${safeCaseIdJs}', event)" oncontextmenu="openCaseContextMenu('${safeCaseIdJs}', event)" draggable="true" data-case-id="${safeCaseIdAttr}">
-            ${hasChildren ? `<button class="case-expand-btn" onclick="toggleCaseExpanded('${safeCaseIdJs}', event)" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '▼' : '▶'}</button>` : '<span class="case-expand-spacer"></span>'}
+        <div class="code-item case-item draggable-case ${isSelected ? 'selected' : ''} ${depth > 0 ? 'child' : ''}" style="margin-left:${depth * 12}px;" draggable="true" data-case-id="${safeCaseIdAttr}">
+            ${hasChildren ? `<button class="case-expand-btn" data-action="toggleCaseExpandedFromList" data-case-id="${safeCaseIdAttr}" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '▼' : '▶'}</button>` : '<span class="case-expand-spacer"></span>'}
             <div class="code-color case-color"></div>
             <div class="case-row-main">
                 <div class="code-name">${escapeHtml(caseItem.name)}</div>
@@ -105,7 +104,7 @@ function renderCaseTreeItem(caseItem, depth, visited) {
             </div>
             <div class="code-count">${count}</div>
             <div class="code-actions">
-                <button class="code-action-btn" onclick="deleteCase('${safeCaseIdJs}', event)" title="Delete">×</button>
+                <button class="code-action-btn" data-action="deleteCaseFromList" data-case-id="${safeCaseIdAttr}" title="Delete">×</button>
             </div>
         </div>
     `;
@@ -536,8 +535,8 @@ function renderCaseSheet(caseId) {
                         <textarea id="caseNotesEditInput" class="form-textarea" rows="8" placeholder="Add notes...">${escapeHtml(caseItem.notes || '')}</textarea>
                     </div>
                     <div class="filter-code-description-actions">
-                        <button class="filter-description-btn" onclick="saveCaseDescriptionAndNotes('${escapeJsForSingleQuotedString(caseItem.id)}')">Save</button>
-                        <button class="filter-description-btn" onclick="cancelCaseDescriptionEdit()">Cancel</button>
+                        <button class="filter-description-btn" data-action="saveCaseDescriptionAndNotesFromSheet" data-case-id="${escapeHtmlAttrValue(caseItem.id)}">Save</button>
+                        <button class="filter-description-btn" data-action="cancelCaseDescriptionEdit">Cancel</button>
                     </div>
                 ` : `
                     <div class="filter-code-description-main">
@@ -545,8 +544,8 @@ function renderCaseSheet(caseId) {
                         <span class="filter-code-description-text">${descriptionText}</span>
                     </div>
                     <div class="filter-code-description-actions">
-                        <span class="filter-shortcut" onclick="toggleCaseViewNotes()">${caseViewUiState.notesExpanded ? 'Hide notes' : 'Show notes'}</span>
-                        <button class="filter-description-btn" onclick="startCaseDescriptionEdit()">Add description and notes</button>
+                        <span class="filter-shortcut" data-action="toggleCaseViewNotes">${caseViewUiState.notesExpanded ? 'Hide notes' : 'Show notes'}</span>
+                        <button class="filter-description-btn" data-action="startCaseDescriptionEdit">Add description and notes</button>
                     </div>
                     ${caseViewUiState.notesExpanded ? `<div class="filter-code-notes-block">${notesText}</div>` : ''}
                 `}
@@ -556,7 +555,7 @@ function renderCaseSheet(caseId) {
                 <div class="case-sheet-grid">
                     <div class="case-sheet-inline-row case-type-row">
                         <input id="caseSheetTypeInput" class="form-input" type="text" placeholder="Person, Organisation, Site, Event" value="${escapeHtmlAttrValue(caseItem.type || '')}">
-                        <button class="doc-action-btn" onclick="saveCaseTypeFromSheet('${escapeJsForSingleQuotedString(caseItem.id)}')">Save</button>
+                        <button class="doc-action-btn" data-action="saveCaseTypeFromSheet" data-case-id="${escapeHtmlAttrValue(caseItem.id)}">Save</button>
                     </div>
                 </div>
             </div>
@@ -578,8 +577,8 @@ function renderCaseSheet(caseId) {
                                     <td><input class="form-input case-attr-key" type="text" value="${escapeHtmlAttrValue(key)}"></td>
                                     <td><input class="form-input case-attr-value" type="text" value="${escapeHtmlAttrValue(String(value == null ? '' : value))}"></td>
                                     <td class="case-attr-actions">
-                                        <button class="doc-action-btn" onclick="saveCaseAttributeRow('${escapeJsForSingleQuotedString(caseItem.id)}', ${index})">Save</button>
-                                        <button class="doc-action-btn" onclick="deleteCaseAttributeRow('${escapeJsForSingleQuotedString(caseItem.id)}', ${index})">Delete</button>
+                                        <button class="doc-action-btn" data-action="saveCaseAttributeRow" data-case-id="${escapeHtmlAttrValue(caseItem.id)}" data-row-index="${index}">Save</button>
+                                        <button class="doc-action-btn" data-action="deleteCaseAttributeRow" data-case-id="${escapeHtmlAttrValue(caseItem.id)}" data-row-index="${index}">Delete</button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -589,21 +588,21 @@ function renderCaseSheet(caseId) {
                 <div class="case-sheet-inline-row case-attr-add-row">
                     <input id="newCaseAttrKey" class="form-input" type="text" placeholder="Key">
                     <input id="newCaseAttrValue" class="form-input" type="text" placeholder="Value">
-                    <button class="doc-action-btn" onclick="addCaseAttributeFromSheet('${escapeJsForSingleQuotedString(caseItem.id)}')">Add Attribute</button>
+                    <button class="doc-action-btn" data-action="addCaseAttributeFromSheet" data-case-id="${escapeHtmlAttrValue(caseItem.id)}">Add Attribute</button>
                 </div>
             </div>
 
             <div class="case-sheet-section case-view-card">
                 <div class="case-sheet-section-title">Linked documents</div>
                 <div class="case-sheet-actions-row">
-                    <button class="doc-action-btn" onclick="linkCurrentDocumentToSelectedCase()" ${appData.currentDocId ? '' : 'disabled'}>Link current document to this case</button>
-                    <button class="doc-action-btn" onclick="openCaseAddDocumentsModal('${escapeJsForSingleQuotedString(caseItem.id)}')">Add documents...</button>
+                    <button class="doc-action-btn" data-action="linkCurrentDocumentToSelectedCase" ${appData.currentDocId ? '' : 'disabled'}>Link current document to this case</button>
+                    <button class="doc-action-btn" data-action="openCaseAddDocumentsModalFromSheet" data-case-id="${escapeHtmlAttrValue(caseItem.id)}">Add documents...</button>
                 </div>
                 <div class="case-linked-docs-list">
                     ${linkedDocs.length === 0 ? '<div class="empty-state-hint case-linked-docs-empty">No linked documents yet.</div>' : linkedDocs.map((doc) => `
                         <div class="case-linked-doc-row">
-                            <button class="case-linked-doc-open" onclick="openLinkedCaseDocument('${escapeJsForSingleQuotedString(doc.id)}')">${escapeHtml(doc.title)}</button>
-                            <button class="doc-action-btn" onclick="unlinkDocumentFromCaseFromSheet('${escapeJsForSingleQuotedString(caseItem.id)}', '${escapeJsForSingleQuotedString(doc.id)}')">Unlink</button>
+                            <button class="case-linked-doc-open" data-action="openLinkedCaseDocument" data-doc-id="${escapeHtmlAttrValue(doc.id)}">${escapeHtml(doc.title)}</button>
+                            <button class="doc-action-btn" data-action="unlinkDocumentFromCaseFromSheet" data-case-id="${escapeHtmlAttrValue(caseItem.id)}" data-doc-id="${escapeHtmlAttrValue(doc.id)}">Unlink</button>
                         </div>
                     `).join('')}
                 </div>
@@ -1011,14 +1010,14 @@ function renderDocumentCasesControl() {
             <div class="document-cases-pills">
                 ${assignedCases.length === 0
                     ? '<span class="document-cases-empty">None</span>'
-                    : assignedCases.map((caseItem) => `<button class="document-case-pill" onclick="openCaseFromHeaderPill('${escapeJsForSingleQuotedString(caseItem.id)}')">${escapeHtml(caseItem.name)}</button>`).join('')}
+                    : assignedCases.map((caseItem) => `<button class="document-case-pill" data-action="openCaseFromHeaderPill" data-case-id="${escapeHtmlAttrValue(caseItem.id)}">${escapeHtml(caseItem.name)}</button>`).join('')}
             </div>
-            <button class="doc-action-btn" onclick="toggleDocumentCasesPicker(event)">+</button>
+            <button class="doc-action-btn" data-action="toggleDocumentCasesPicker">+</button>
         </div>
         <div class="document-cases-picker ${documentCasePickerState.open ? 'show' : ''}" id="documentCasesPickerPanel">
-            <input id="documentCasesSearchInput" class="form-input document-cases-search" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(documentCasePickerState.query)}" oninput="updateDocumentCasesPickerQuery(this.value)">
+            <input id="documentCasesSearchInput" class="form-input document-cases-search" type="text" placeholder="Search cases..." value="${escapeHtmlAttrValue(documentCasePickerState.query)}" data-action="updateDocumentCasesPickerQuery">
             <div class="document-cases-picker-list" id="documentCasesPickerList"></div>
-            <button class="document-cases-create-btn" onclick="createCaseFromDocumentPicker()">Create new case...</button>
+            <button class="document-cases-create-btn" data-action="createCaseFromDocumentPicker">Create new case...</button>
         </div>
     `;
 
@@ -1080,7 +1079,7 @@ function renderDocumentCasesPickerList() {
         ? '<div class="empty-state-hint">No matching cases.</div>'
         : cases.map((caseItem) => `
             <label class="document-cases-picker-item">
-                <input type="checkbox" ${assigned.has(caseItem.id) ? 'checked' : ''} onchange="toggleCaseLinkFromDocumentPicker('${escapeJsForSingleQuotedString(caseItem.id)}', this.checked)">
+                <input type="checkbox" data-action="toggleCaseLinkFromDocumentPicker" data-case-id="${escapeHtmlAttrValue(caseItem.id)}" ${assigned.has(caseItem.id) ? 'checked' : ''}>
                 <span>${escapeHtml(caseItem.name)}</span>
             </label>
         `).join('');

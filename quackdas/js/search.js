@@ -10,6 +10,41 @@ const globalSearchIndex = {
 let searchResultsDelegationBound = false;
 const GLOBAL_SEARCH_SESSION_STORAGE_PREFIX = 'quackdas-global-search-session-v1:';
 const MAX_PERSISTED_GLOBAL_RESULTS = 1000;
+const globalSearchOcrStatus = {
+    checked: false,
+    missing: false,
+    pending: null
+};
+
+function renderSearchOcrStatus() {
+    const statusEl = document.getElementById('searchOcrStatus');
+    if (!statusEl) return;
+    statusEl.hidden = !(globalSearchOcrStatus.checked && globalSearchOcrStatus.missing);
+}
+
+async function refreshSearchOcrStatus() {
+    renderSearchOcrStatus();
+    if (globalSearchOcrStatus.checked) return;
+    if (!(window.electronAPI && typeof window.electronAPI.ocrGetStatus === 'function')) return;
+    if (globalSearchOcrStatus.pending) {
+        await globalSearchOcrStatus.pending;
+        return;
+    }
+    globalSearchOcrStatus.pending = (async () => {
+        try {
+            const status = await window.electronAPI.ocrGetStatus();
+            const installed = status?.ok ? !!status.installed : true;
+            globalSearchOcrStatus.missing = !installed;
+        } catch (_) {
+            globalSearchOcrStatus.missing = false;
+        } finally {
+            globalSearchOcrStatus.checked = true;
+            globalSearchOcrStatus.pending = null;
+            renderSearchOcrStatus();
+        }
+    })();
+    await globalSearchOcrStatus.pending;
+}
 
 function initSearchResultsDelegatedHandlers() {
     if (searchResultsDelegationBound) return;
@@ -282,6 +317,7 @@ function openSearchModal() {
     const modal = document.getElementById('searchResultsModal');
     const summary = document.getElementById('searchSummary');
     const list = document.getElementById('searchResultsList');
+    refreshSearchOcrStatus();
 
     if (persistedSession && persistedSession.query) {
         showSearchResults(persistedSession.query, persistedSession.results);
@@ -695,6 +731,7 @@ function showSearchResults(query, results) {
     const modal = document.getElementById('searchResultsModal');
     const summary = document.getElementById('searchSummary');
     const list = document.getElementById('searchResultsList');
+    refreshSearchOcrStatus();
     
     // Build combined regex for highlighting
     const parsed = parseSearchQuery(query);

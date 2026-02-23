@@ -852,7 +852,6 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
         const total = pdfDoc.numPages;
         const ocrPages = [];
         let bestError = '';
-        let bestHint = '';
         let wordCount = 0;
         const status = document.createElement('div');
         status.className = 'pdf-error';
@@ -881,7 +880,6 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
                     console.warn('OCR failed for page', pageNum, ocrResult?.error || 'unknown error');
                     if (!bestError) {
                         bestError = ocrResult?.error || 'OCR failed on this machine.';
-                        bestHint = ocrResult?.hint || '';
                     }
                 }
 
@@ -906,8 +904,7 @@ async function ensureOcrForImageOnlyPdf(doc, expectedToken, container) {
                 return { ok: true, error: '' };
             }
             const emptyReason = bestError || 'OCR completed, but no readable text was detected.';
-            const emptyHint = bestHint || 'If this is an image-heavy scan, try a clearer source PDF or manual region coding.';
-            return { ok: false, error: emptyReason + (emptyHint ? ` ${emptyHint}` : '') };
+            return { ok: false, error: emptyReason };
         } finally {
             status.remove();
         }
@@ -1065,30 +1062,6 @@ async function importPdf(arrayBuffer, title) {
         created: new Date().toISOString(),
         lastAccessed: new Date().toISOString()
     };
-}
-
-/**
- * Convert ArrayBuffer to base64 string
- */
-function arrayBufferToBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-}
-
-/**
- * Convert base64 string to ArrayBuffer
- */
-function base64ToArrayBuffer(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes.buffer;
 }
 
 /**

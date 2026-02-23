@@ -1,23 +1,27 @@
 
-const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = require('electron');
 const { execFile } = require('child_process');
 const { Worker } = require('worker_threads');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { URL, fileURLToPath } = require('url');
 const { SEMANTIC_DEFAULTS } = require('./semantic/config');
 const { canonicalizeText, getDocumentTextHash } = require('./semantic/text');
 const { openSemanticStore } = require('./semantic/store');
-const { listModels, isOllamaReachable, embedText, OllamaError } = require('./semantic/ollama-embeddings');
-const { cosineSimilarity } = require('./semantic/vector');
+const { listModels, isOllamaReachable, embedText, OllamaError, assertLocalOllamaBaseUrl } = require('./semantic/ollama-embeddings');
+const { getAskModelProfile } = require('./semantic/model-profile');
 
 let win;
 let currentProjectPath = null;
 let isQuitting = false;
 let semanticAvailabilityCache = null;
 let semanticAvailabilityCheckedAt = 0;
+let tesseractInstalledCache = null;
+let tesseractInstalledCheckedAt = 0;
 const semanticIndexJobsByWebContents = new Map();
+const semanticAskJobsByWebContents = new Map();
 
 const BACKUP_MAX_RECENT = 20;
 const BACKUP_DAILY_DAYS = 14;
@@ -26,6 +30,7 @@ const LAST_PROJECT_FILE = 'last-project-path.json';
 const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
 const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
 const MAX_OCR_IMAGE_BYTES = 32 * 1024 * 1024; // 32 MB
+const TESSERACT_STATUS_CACHE_MS = 60 * 1000;
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -69,6 +74,71 @@ function formatBytes(bytes) {
   }
   const precision = value >= 100 || idx === 0 ? 0 : 1;
   return `${value.toFixed(precision)} ${units[idx]}`;
+}
+
+function ellipsizeText(text, maxChars = 20) {
+  const raw = String(text || '');
+  if (raw.length <= maxChars) return raw;
+  if (maxChars <= 1) return raw.slice(0, maxChars);
+  return `${raw.slice(0, maxChars - 1)}…`;
+}
+
+function buildWindowTitleForPath(projectPath) {
+  const base = path.basename(String(projectPath || ''), path.extname(String(projectPath || '')));
+  const visible = ellipsizeText(base || 'Untitled', 20);
+  return `${visible} - Quackdas`;
+}
+
+function updateWindowTitle() {
+  if (!win || win.isDestroyed()) return;
+  if (!currentProjectPath) {
+    win.setTitle('Quackdas - Qualitative coding');
+    return;
+  }
+  win.setTitle(buildWindowTitleForPath(currentProjectPath));
+}
+
+function destroyMainWindowForQuit() {
+  if (!win) return;
+  const targetWindow = win;
+  if (targetWindow.isDestroyed()) {
+    if (win === targetWindow) win = null;
+    return;
+  }
+  try {
+    targetWindow.destroy();
+  } catch (_) {}
+  if (win === targetWindow && targetWindow.isDestroyed()) {
+    win = null;
+  }
+}
+
+function sendMenuActionToRenderer(action) {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  wc.send('menu:action', action);
+}
+
+function isAllowedAppNavigationUrl(targetUrl) {
+  try {
+    const parsed = new URL(String(targetUrl || ''));
+    if (parsed.protocol !== 'file:') return false;
+    const targetPath = path.resolve(fileURLToPath(parsed));
+    const appIndexPath = path.resolve(path.join(__dirname, 'index.html'));
+    return targetPath === appIndexPath;
+  } catch (_) {
+    return false;
+  }
+}
+
+function maybeOpenExternalHttpUrl(targetUrl) {
+  try {
+    const parsed = new URL(String(targetUrl || ''));
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      shell.openExternal(parsed.toString()).catch(() => {});
+    }
+  } catch (_) {}
 }
 
 function estimateBase64DecodedBytes(base64Value) {
@@ -197,10 +267,62 @@ function clearSemanticAvailabilityCache() {
   semanticAvailabilityCheckedAt = 0;
 }
 
+function getSemanticIndexRootDir() {
+  return path.join(app.getPath('userData'), 'Indexes');
+}
+
+function getLegacySemanticDbPath(projectPath) {
+  const project = String(projectPath || '').trim();
+  if (!project) return '';
+  const base = path.basename(project, path.extname(project));
+  return path.join(path.dirname(project), `${base}.semantic.sqlite`);
+}
+
+function getManagedSemanticDbPath(projectPath) {
+  const project = String(projectPath || '').trim();
+  if (!project) return '';
+  const resolved = path.resolve(project);
+  const base = path.basename(resolved, path.extname(resolved));
+  const safeBase = sanitizeName(base, 'project');
+  const hash = crypto.createHash('sha1').update(resolved).digest('hex').slice(0, 16);
+  return path.join(getSemanticIndexRootDir(), `${safeBase}-${hash}.semantic.sqlite`);
+}
+
+function moveFileIfPresent(fromPath, toPath) {
+  if (!fromPath || !toPath) return;
+  if (!fs.existsSync(fromPath)) return;
+  try {
+    fs.renameSync(fromPath, toPath);
+    return;
+  } catch (_) {
+    try {
+      fs.copyFileSync(fromPath, toPath);
+      fs.unlinkSync(fromPath);
+    } catch (_) {}
+  }
+}
+
+function migrateLegacySemanticDbIfNeeded(projectPath, managedPath) {
+  if (!projectPath || !managedPath) return;
+  const legacyPath = getLegacySemanticDbPath(projectPath);
+  if (!legacyPath || legacyPath === managedPath) return;
+  if (!fs.existsSync(legacyPath)) return;
+  if (fs.existsSync(managedPath)) return;
+  try {
+    fs.mkdirSync(path.dirname(managedPath), { recursive: true });
+  } catch (_) {
+    return;
+  }
+  moveFileIfPresent(legacyPath, managedPath);
+  moveFileIfPresent(`${legacyPath}-wal`, `${managedPath}-wal`);
+  moveFileIfPresent(`${legacyPath}-shm`, `${managedPath}-shm`);
+}
+
 function getSemanticDbPath() {
   if (!currentProjectPath) return null;
-  const base = path.basename(currentProjectPath, path.extname(currentProjectPath));
-  return path.join(path.dirname(currentProjectPath), `${base}.semantic.sqlite`);
+  const managedPath = getManagedSemanticDbPath(currentProjectPath);
+  migrateLegacySemanticDbIfNeeded(currentProjectPath, managedPath);
+  return managedPath;
 }
 
 function getProjectSemanticModelName(dbPath) {
@@ -211,6 +333,21 @@ function getProjectSemanticModelName(dbPath) {
     return stored || SEMANTIC_DEFAULTS.embeddingModel;
   } finally {
     store.close();
+  }
+}
+
+function getProjectGenerationModelName(dbPath, availableModels = []) {
+  const models = Array.isArray(availableModels) ? availableModels : [];
+  const store = dbPath ? openSemanticStore(dbPath) : null;
+  try {
+    const stored = store ? String(store.getMeta('generation_model_name') || '').trim() : '';
+    if (stored) {
+      const matched = findBestInstalledModel(stored, models);
+      if (matched || models.length === 0) return matched || stored;
+    }
+    return selectDefaultGenerationModel(models);
+  } finally {
+    if (store) store.close();
   }
 }
 
@@ -226,21 +363,53 @@ function splitModelNameTag(modelName) {
 }
 
 function modelNameMatches(requestedModel, installedModel) {
-  const requested = splitModelNameTag(requestedModel);
-  const installed = splitModelNameTag(installedModel);
+  const requested = splitModelNameTag(String(requestedModel || '').toLowerCase());
+  const installed = splitModelNameTag(String(installedModel || '').toLowerCase());
   if (!requested.base || !installed.base) return false;
   if (requested.base !== installed.base) return false;
   if (!requested.tag) return true; // "bge-m3" matches "bge-m3" and "bge-m3:*"
-  return requested.tag === installed.tag;
+  if (requested.tag === installed.tag) return true;
+  if (installed.tag.startsWith(`${requested.tag}-`)) return true; // qwen2.5:7b -> qwen2.5:7b-instruct-*
+  if (installed.tag.startsWith(`${requested.tag}.`)) return true;
+  if (requested.tag === 'latest') return true;
+  return false;
 }
 
 function findBestInstalledModel(requestedModel, installedModels) {
   const models = Array.isArray(installedModels) ? installedModels : [];
   if (!requestedModel) return '';
-  const exact = models.find((name) => String(name) === String(requestedModel));
+  const requestedRaw = String(requestedModel).trim();
+  const exact = models.find((name) => String(name).trim() === requestedRaw)
+    || models.find((name) => String(name).trim().toLowerCase() === requestedRaw.toLowerCase());
   if (exact) return exact;
   const prefixed = models.find((name) => modelNameMatches(requestedModel, name));
   return prefixed || '';
+}
+
+function selectDefaultGenerationModel(installedModels) {
+  const models = (Array.isArray(installedModels) ? installedModels : []).filter(Boolean);
+  if (models.length === 0) return '';
+
+  const qwenModels = models.filter((name) => splitModelNameTag(name).base === 'qwen3');
+  if (qwenModels.length > 0) {
+    const qwen4b = qwenModels.find((name) => name.toLowerCase() === 'qwen3:4b');
+    if (qwen4b) return qwen4b;
+    const withSize = qwenModels.map((name) => {
+      const tag = splitModelNameTag(name).tag.toLowerCase();
+      const m = tag.match(/([0-9]+(?:\\.[0-9]+)?)b/);
+      return { name, size: m ? Number(m[1]) : Number.POSITIVE_INFINITY };
+    }).sort((a, b) => a.size - b.size || a.name.localeCompare(b.name));
+    return withSize[0].name;
+  }
+
+  const qwen25Models = models.filter((name) => splitModelNameTag(name).base === 'qwen2.5');
+  if (qwen25Models.length > 0) {
+    const qwen25_7b = qwen25Models.find((name) => String(name).toLowerCase().startsWith('qwen2.5:7b'));
+    if (qwen25_7b) return qwen25_7b;
+    return qwen25Models[0];
+  }
+
+  return models[0];
 }
 
 async function resolveSemanticModelAvailability(preferredModel) {
@@ -263,11 +432,13 @@ async function resolveSemanticModelAvailability(preferredModel) {
   const models = await listModels(SEMANTIC_DEFAULTS.ollamaBaseUrl, {
     timeoutMs: SEMANTIC_DEFAULTS.ollamaTimeoutMs
   });
+  const dbPath = getSemanticDbPath();
   const configured = String(preferredModel || SEMANTIC_DEFAULTS.embeddingModel);
   const selectedConfigured = findBestInstalledModel(configured, models);
   const selectedFallback = findBestInstalledModel(SEMANTIC_DEFAULTS.fallbackEmbeddingModel, models);
   const selectedModel = selectedConfigured || selectedFallback || '';
   const modelReady = !!selectedModel;
+  const selectedGenerationModel = getProjectGenerationModelName(dbPath, models);
 
   if (!modelReady) {
     return {
@@ -277,6 +448,7 @@ async function resolveSemanticModelAvailability(preferredModel) {
       selectedModel: '',
       fallbackUsed: false,
       modelReady: false,
+      generationModel: selectedGenerationModel,
       models,
       error: `No embedding model found. Pull one locally (e.g. ollama pull ${configured}).`
     };
@@ -289,6 +461,7 @@ async function resolveSemanticModelAvailability(preferredModel) {
     selectedModel,
     fallbackUsed: !!selectedFallback && selectedModel === selectedFallback && selectedModel !== selectedConfigured,
     modelReady: true,
+    generationModel: selectedGenerationModel,
     models,
     error: ''
   };
@@ -320,6 +493,55 @@ function toSemanticDocuments(payloadDocs) {
     .filter((doc) => doc.type !== 'pdf');
 }
 
+function runSemanticSearchWorker({ dbPath, modelName, queryEmbedding, queryText, topK, candidateK }) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'semantic', 'search-worker.js'), {
+      workerData: {
+        dbPath,
+        modelName,
+        queryEmbedding: Array.isArray(queryEmbedding) ? queryEmbedding : [],
+        queryText: String(queryText || ''),
+        topK,
+        candidateK
+      }
+    });
+
+    let settled = false;
+
+    worker.on('message', (msg) => {
+      if (settled || !msg || typeof msg !== 'object') return;
+      if (msg.type === 'done') {
+        settled = true;
+        resolve(msg.payload || { results: [] });
+        return;
+      }
+      if (msg.type === 'error') {
+        settled = true;
+        const payload = msg.payload || {};
+        const err = new Error(String(payload.message || 'Semantic search failed.'));
+        err.code = String(payload.code || 'SEARCH_FAILED');
+        reject(err);
+      }
+    });
+
+    worker.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+
+    worker.on('exit', (code) => {
+      if (settled) return;
+      settled = true;
+      const err = new Error(code === 0
+        ? 'Semantic search worker exited before returning a result.'
+        : `Semantic search worker exited with code ${code}.`);
+      err.code = 'SEARCH_WORKER_EXIT';
+      reject(err);
+    });
+  });
+}
+
 function stopSemanticIndexJob(webContentsId) {
   const job = semanticIndexJobsByWebContents.get(webContentsId);
   if (!job) return false;
@@ -339,6 +561,26 @@ function getSemanticIndexingState(webContentsId) {
   };
 }
 
+function stopSemanticAskJob(webContentsId) {
+  const job = semanticAskJobsByWebContents.get(webContentsId);
+  if (!job) return false;
+  try {
+    job.worker.postMessage({ type: 'cancel' });
+  } catch (_) {}
+  return true;
+}
+
+function getSemanticAskState(webContentsId) {
+  const job = semanticAskJobsByWebContents.get(webContentsId);
+  if (!job) return null;
+  return {
+    startedAt: job.startedAt,
+    status: job.status,
+    generationModel: job.generationModel || '',
+    question: job.question || ''
+  };
+}
+
 
 function createWindow() {
   win = new BrowserWindow({
@@ -353,23 +595,48 @@ function createWindow() {
     }
   });
 
-  win.loadFile(path.join(__dirname, 'index.html'));
+  const windowRef = win;
+  const webContents = windowRef.webContents;
+  const webContentsId = webContents.id;
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedAppNavigationUrl(url)) return { action: 'allow' };
+    maybeOpenExternalHttpUrl(url);
+    return { action: 'deny' };
+  });
+  webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppNavigationUrl(url)) return;
+    event.preventDefault();
+    maybeOpenExternalHttpUrl(url);
+  });
+  webContents.on('will-redirect', (event, url) => {
+    if (isAllowedAppNavigationUrl(url)) return;
+    event.preventDefault();
+    maybeOpenExternalHttpUrl(url);
+  });
+  webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+
+  windowRef.loadFile(path.join(__dirname, 'index.html'));
+  updateWindowTitle();
 
   // Handle window close properly
-  win.on('close', (e) => {
+  windowRef.on('close', (e) => {
     if (isMac && !isQuitting) {
       // On macOS, hide the window instead of closing (standard behaviour)
       e.preventDefault();
-      win.hide();
+      windowRef.hide();
     }
   });
 
-  win.on('closed', () => {
-    if (win && win.webContents) {
-      stopSemanticIndexJob(win.webContents.id);
-      semanticIndexJobsByWebContents.delete(win.webContents.id);
+  windowRef.on('closed', () => {
+    stopSemanticIndexJob(webContentsId);
+    semanticIndexJobsByWebContents.delete(webContentsId);
+    stopSemanticAskJob(webContentsId);
+    semanticAskJobsByWebContents.delete(webContentsId);
+    if (win === windowRef) {
+      win = null;
     }
-    win = null;
   });
 
   const template = [
@@ -388,11 +655,8 @@ function createWindow() {
           label: 'Quit Quackdas',
           accelerator: 'Command+Q',
           click: () => {
-            // Destroy window first to bypass the close handler that hides instead of closing
-            if (win) {
-              win.destroy();
-              win = null;
-            }
+            // Destroy window first to bypass the close handler that hides instead of closing.
+            destroyMainWindowForQuit();
             app.quit();
           }
         }
@@ -405,7 +669,7 @@ function createWindow() {
         {
           label: 'New Project',
           accelerator: 'CmdOrCtrl+N',
-          click: () => win.webContents.send('menu:action', 'newProject')
+          click: () => sendMenuActionToRenderer('newProject')
         },
         {
           label: 'Open Project…',
@@ -422,22 +686,19 @@ function createWindow() {
         {
           label: 'Save',
           accelerator: 'CmdOrCtrl+S',
-          click: () => win.webContents.send('menu:action', 'save')
+          click: () => sendMenuActionToRenderer('save')
         },
         {
           label: 'Save As…',
           accelerator: 'CmdOrCtrl+Shift+S',
-          click: () => win.webContents.send('menu:action', 'saveAs')
+          click: () => sendMenuActionToRenderer('saveAs')
         },
         { type: 'separator' },
         ...(isMac ? [] : [{
           label: 'Quit',
           accelerator: 'Alt+F4',
           click: () => {
-            if (win) {
-              win.destroy();
-              win = null;
-            }
+            destroyMainWindowForQuit();
             app.quit();
           }
         }])
@@ -476,6 +737,7 @@ async function openProject() {
   const buffer = await fs.promises.readFile(filePath);
   currentProjectPath = filePath;
   clearSemanticAvailabilityCache();
+  updateWindowTitle();
   await persistLastProjectPath(currentProjectPath);
   win.webContents.send('project:openQdpx', buffer);
 }
@@ -488,6 +750,7 @@ ipcMain.handle('project:open', async () => {
 ipcMain.handle('project:clearHandle', async () => {
   currentProjectPath = null;
   clearSemanticAvailabilityCache();
+  updateWindowTitle();
   await persistLastProjectPath(null);
   return { ok: true };
 });
@@ -496,12 +759,23 @@ ipcMain.handle('project:hasHandle', async () => {
   return !!currentProjectPath;
 });
 
+ipcMain.handle('project:getInfo', async () => {
+  const projectPath = currentProjectPath || '';
+  return {
+    ok: true,
+    hasHandle: !!projectPath,
+    path: projectPath,
+    fileName: projectPath ? path.basename(projectPath) : ''
+  };
+});
+
 
 
 ipcMain.handle('project:save', async (_evt, payload, opts) => {
   const saveAs = !!(opts && opts.saveAs);
 
   try {
+    let targetProjectPath = currentProjectPath;
     if (!currentProjectPath || saveAs) {
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
         title: 'Save Quackdas project',
@@ -511,18 +785,17 @@ ipcMain.handle('project:save', async (_evt, payload, opts) => {
         ]
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      currentProjectPath = filePath;
-      clearSemanticAvailabilityCache();
+      targetProjectPath = filePath;
     }
 
     const qdpxBase64 = (payload && typeof payload === 'object')
       ? String(payload.qdpxBase64 || '')
       : String(payload || '');
     // QDPX-only save path.
-    let ext = path.extname(currentProjectPath).toLowerCase();
+    let ext = path.extname(targetProjectPath).toLowerCase();
     if (!ext) {
       ext = '.qdpx';
-      currentProjectPath = currentProjectPath + ext;
+      targetProjectPath = targetProjectPath + ext;
     }
     if (ext !== '.qdpx') {
       throw new Error('Quackdas now saves projects in QDPX format only (.qdpx).');
@@ -531,10 +804,16 @@ ipcMain.handle('project:save', async (_evt, payload, opts) => {
       throw new Error('Could not save QDPX: binary payload is missing.');
     }
     const buffer = Buffer.from(qdpxBase64, 'base64');
-    await fs.promises.writeFile(currentProjectPath, buffer);
-    await persistLastProjectPath(currentProjectPath);
+    await fs.promises.writeFile(targetProjectPath, buffer);
 
-    return { ok: true, path: currentProjectPath };
+    if (currentProjectPath !== targetProjectPath) {
+      currentProjectPath = targetProjectPath;
+      clearSemanticAvailabilityCache();
+      updateWindowTitle();
+    }
+    await persistLastProjectPath(targetProjectPath);
+
+    return { ok: true, path: targetProjectPath };
   } catch (err) {
     dialog.showErrorBox('Save failed', err.message || String(err));
     return { ok: false, error: err.message || String(err) };
@@ -553,16 +832,18 @@ ipcMain.handle('project:openLastUsed', async () => {
     }
 
     const ext = path.extname(rememberedPath).toLowerCase();
-    currentProjectPath = rememberedPath;
-    clearSemanticAvailabilityCache();
-    await persistLastProjectPath(currentProjectPath);
-
     if (ext !== '.qdpx') {
       await persistLastProjectPath(null);
       return { ok: false, reason: 'unsupported' };
     }
     await ensureFileWithinLimit(rememberedPath, MAX_QDPX_FILE_BYTES, 'Last opened project file');
     const buffer = await fs.promises.readFile(rememberedPath);
+    if (currentProjectPath !== rememberedPath) {
+      currentProjectPath = rememberedPath;
+      clearSemanticAvailabilityCache();
+      updateWindowTitle();
+    }
+    await persistLastProjectPath(currentProjectPath);
     return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
@@ -630,10 +911,24 @@ ipcMain.handle('semantic:getAvailability', async (_evt, opts = {}) => {
 ipcMain.handle('semantic:getProjectSettings', async () => {
   try {
     const dbPath = getSemanticDbPath();
+    const availability = await getSemanticAvailability({ force: true });
     const modelName = getProjectSemanticModelName(dbPath);
-    return { ok: true, modelName, dbPath: dbPath || '' };
+    const generationModel = getProjectGenerationModelName(dbPath, availability?.models || []);
+    return {
+      ok: true,
+      modelName,
+      generationModel,
+      models: availability?.models || [],
+      dbPath: dbPath || ''
+    };
   } catch (err) {
-    return { ok: false, error: err?.message || String(err), modelName: SEMANTIC_DEFAULTS.embeddingModel };
+    return {
+      ok: false,
+      error: err?.message || String(err),
+      modelName: SEMANTIC_DEFAULTS.embeddingModel,
+      generationModel: '',
+      models: []
+    };
   }
 });
 
@@ -658,6 +953,27 @@ ipcMain.handle('semantic:setProjectModel', async (_evt, modelName) => {
   }
 });
 
+ipcMain.handle('semantic:setGenerationModel', async (_evt, modelName) => {
+  const dbPath = getSemanticDbPath();
+  if (!dbPath) {
+    return { ok: false, error: 'Save the project first to store semantic settings and index data.' };
+  }
+  try {
+    const normalized = String(modelName || '').trim();
+    if (!normalized) return { ok: false, error: 'Generation model name is required.' };
+    const store = openSemanticStore(dbPath);
+    try {
+      store.setMeta('generation_model_name', normalized);
+    } finally {
+      store.close();
+    }
+    clearSemanticAvailabilityCache();
+    return { ok: true, generationModel: normalized };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+
 ipcMain.handle('semantic:getIndexStatus', async (_evt, payload = {}) => {
   const dbPath = getSemanticDbPath();
   if (!dbPath) {
@@ -675,21 +991,95 @@ ipcMain.handle('semantic:getIndexStatus', async (_evt, payload = {}) => {
     const docs = toSemanticDocuments(payload.documents);
     const store = openSemanticStore(dbPath);
     try {
-      const states = new Map(store.getAllDocStates().map((row) => [row.docId, row]));
+      let allStates = store.getAllDocStates();
+      let states = new Map(allStates.map((row) => [row.docId, row]));
+
+      // Repair doc-id drift across project reopens by matching persisted text hashes.
+      // This keeps existing semantic index rows reusable when importer assigns new doc ids.
+      const missingDocs = docs.filter((doc) => !states.has(doc.id));
+      if (missingDocs.length > 0 && allStates.length > 0) {
+        const docsById = new Set(docs.map((doc) => doc.id));
+        const candidateRowsByHash = new Map();
+        allStates.forEach((row) => {
+          if (!row || !row.docId) return;
+          // Never remap from ids that are currently present in the loaded project.
+          if (docsById.has(row.docId)) return;
+          const key = String(row.docTextHash || '');
+          if (!key) return;
+          if (!candidateRowsByHash.has(key)) candidateRowsByHash.set(key, []);
+          candidateRowsByHash.get(key).push(row);
+        });
+        const hashCursorByKey = new Map();
+        const usedOldDocIds = new Set();
+        let changed = false;
+        store.begin();
+        try {
+          missingDocs.forEach((doc) => {
+            const expectedHash = getDocumentTextHash(doc.content);
+            const bucket = candidateRowsByHash.get(expectedHash);
+            if (!bucket || bucket.length === 0) return;
+            let cursor = hashCursorByKey.get(expectedHash) || 0;
+            while (cursor < bucket.length && usedOldDocIds.has(bucket[cursor].docId)) {
+              cursor += 1;
+            }
+            hashCursorByKey.set(expectedHash, cursor);
+            const candidate = cursor < bucket.length ? bucket[cursor] : null;
+            if (!candidate) return;
+            if (store.remapDocumentId(candidate.docId, doc.id)) {
+              usedOldDocIds.add(candidate.docId);
+              hashCursorByKey.set(expectedHash, cursor + 1);
+              changed = true;
+            }
+          });
+          if (changed) store.commit();
+          else store.rollback();
+        } catch (_) {
+          store.rollback();
+        }
+        if (changed) {
+          allStates = store.getAllDocStates();
+          states = new Map(allStates.map((row) => [row.docId, row]));
+        }
+      }
+
+      if (docs.length === 0 && states.size > 0) {
+        const chunkCount = store.getTotalChunkCount();
+        return {
+          ok: true,
+          state: 'indexed_stale',
+          indexedDocCount: states.size,
+          freshDocCount: 0,
+          totalDocs: states.size,
+          chunkCount,
+          message: 'Loaded persisted semantic index from project cache.'
+        };
+      }
       let indexedDocCount = 0;
+      let freshDocCount = 0;
       docs.forEach((doc) => {
-        const expectedHash = getDocumentTextHash(doc.content);
         const row = states.get(doc.id);
         if (!row) return;
-        if (row.docTextHash !== expectedHash) return;
-        if (Number(row.chunkCount) <= 0 && doc.content.length > 0) return;
         indexedDocCount += 1;
+        const expectedHash = getDocumentTextHash(doc.content);
+        if (row.docTextHash === expectedHash) freshDocCount += 1;
       });
       const totalDocs = docs.length;
       const chunkCount = store.getTotalChunkCount();
-      const isIndexed = totalDocs > 0 && indexedDocCount === totalDocs;
-      const state = isIndexed ? 'indexed' : 'not_indexed';
-      return { ok: true, state, indexedDocCount, totalDocs, chunkCount };
+      let state = 'not_indexed';
+      let message = '';
+      if (totalDocs > 0 && indexedDocCount === totalDocs && freshDocCount === totalDocs) {
+        state = 'indexed';
+      } else if (totalDocs > 0 && indexedDocCount === totalDocs) {
+        state = 'indexed_stale';
+        message = 'Index metadata loaded from project cache. Re-index recommended if content changed.';
+      } else if (states.size > 0 && chunkCount > 0) {
+        state = 'indexed_stale';
+        message = 'Loaded persisted semantic index from project cache.';
+      } else if (indexedDocCount > 0) {
+        state = 'partial';
+        message = `Indexed ${indexedDocCount}/${totalDocs} docs.`;
+      }
+      return { ok: true, state, indexedDocCount, freshDocCount, totalDocs, chunkCount, message };
     } finally {
       store.close();
     }
@@ -818,7 +1208,10 @@ ipcMain.handle('semantic:search', async (_evt, payload = {}) => {
     const query = canonicalizeText(payload.query || '').trim();
     if (!query) return { ok: true, results: [] };
 
-    const availability = await getSemanticAvailability({ force: true });
+    let availability = await getSemanticAvailability();
+    if (!availability.reachable || !availability.modelReady) {
+      availability = await getSemanticAvailability({ force: true });
+    }
     if (!availability.reachable) {
       return { ok: false, error: availability.error || 'Ollama is unavailable.' };
     }
@@ -831,32 +1224,163 @@ ipcMain.handle('semantic:search', async (_evt, payload = {}) => {
       timeoutMs: SEMANTIC_DEFAULTS.ollamaTimeoutMs
     });
 
-    const store = openSemanticStore(dbPath);
-    let rows = [];
-    try {
-      rows = store.getEmbeddingsForModel(modelName);
-    } finally {
-      store.close();
-    }
+    const requestedTopK = Number(payload.topK);
+    const topK = Number.isFinite(requestedTopK) && requestedTopK > 0
+      ? Math.floor(requestedTopK)
+      : SEMANTIC_DEFAULTS.searchTopK;
+    const candidateK = Math.max(
+      topK,
+      Math.floor(topK * Number(SEMANTIC_DEFAULTS.searchRerankCandidateMultiplier || 3))
+    );
 
-    const scored = rows.map((row) => ({
-      doc_id: row.docId,
-      chunk_id: row.chunkId,
-      chunk_index: row.chunkIndex,
-      start_char: row.startChar,
-      end_char: row.endChar,
-      score: cosineSimilarity(queryEmbedding, row.embedding)
-    }));
+    const search = await runSemanticSearchWorker({
+      dbPath,
+      modelName,
+      queryEmbedding,
+      queryText: query,
+      topK,
+      candidateK
+    });
 
-    scored.sort((a, b) => b.score - a.score);
-    const topK = Math.max(1, Number(payload.topK || SEMANTIC_DEFAULTS.searchTopK));
-    return { ok: true, modelName, results: scored.slice(0, topK) };
+    return { ok: true, modelName, results: Array.isArray(search?.results) ? search.results : [] };
   } catch (err) {
     if (err instanceof OllamaError) {
       return { ok: false, error: err.message, code: err.code };
     }
+    const code = err?.code ? String(err.code) : '';
+    if (code) {
+      return { ok: false, error: err?.message || String(err), code };
+    }
     return { ok: false, error: err?.message || String(err) };
   }
+});
+
+ipcMain.handle('semantic:startAsk', async (evt, payload = {}) => {
+  const webContents = evt.sender;
+  const webContentsId = webContents.id;
+  const existing = semanticAskJobsByWebContents.get(webContentsId);
+  if (existing && existing.status === 'running') {
+    return { ok: false, error: 'An Ask request is already running.' };
+  }
+
+  const dbPath = getSemanticDbPath();
+  if (!dbPath) {
+    return { ok: false, error: 'Save the project before using Ask.' };
+  }
+
+  const availability = await getSemanticAvailability({ force: true });
+  if (!availability.reachable) {
+    return { ok: false, error: availability.error || 'Ollama is unavailable.' };
+  }
+  if (!availability.modelReady) {
+    return { ok: false, error: availability.error || 'No embedding model is available.' };
+  }
+
+  const question = String(payload.question || '').trim();
+  if (!question) return { ok: false, error: 'Question is empty.' };
+
+  const selectedGeneration = String(payload.generationModel || '').trim() || String(availability.generationModel || '').trim();
+  const generationModel = findBestInstalledModel(selectedGeneration, availability.models) || selectDefaultGenerationModel(availability.models);
+  if (!generationModel) {
+    return { ok: false, error: 'No local generation model found in Ollama.' };
+  }
+  const askProfile = getAskModelProfile(generationModel, SEMANTIC_DEFAULTS);
+  const outputModeInput = String(payload.outputMode || '').trim().toLowerCase();
+  const outputMode = outputModeInput === 'strict' || outputModeInput === 'loose'
+    ? outputModeInput
+    : askProfile.recommendedMode;
+  const topK = Number(payload.topK);
+  const minCitationsOverall = Number(payload.minCitationsOverall);
+  const maxPromptChunkChars = Number(payload.maxPromptChunkChars);
+  const numCtx = Number(payload.numCtx);
+
+  const docs = toSemanticDocuments(payload.documents);
+  const worker = new Worker(path.join(__dirname, 'semantic', 'ask-worker.js'), {
+    workerData: {
+      dbPath,
+      baseUrl: assertLocalOllamaBaseUrl(SEMANTIC_DEFAULTS.ollamaBaseUrl),
+      question,
+      documents: docs,
+      embeddingModel: availability.selectedModel || availability.configuredModel,
+      generationModel,
+      outputMode,
+      outputLanguage: payload.outputLanguage || 'sv',
+      topK: Number.isFinite(topK) && topK > 0 ? topK : askProfile.topK,
+      minCitationsOverall: Number.isFinite(minCitationsOverall) && minCitationsOverall > 0 ? minCitationsOverall : askProfile.minCitationsOverall,
+      maxPromptChunkChars: Number.isFinite(maxPromptChunkChars) && maxPromptChunkChars > 200 ? maxPromptChunkChars : askProfile.maxPromptChunkChars,
+      numCtx: Number.isFinite(numCtx) && numCtx >= 1024 ? numCtx : askProfile.numCtx,
+      timeoutMs: 0,
+      retrievedChunks: Array.isArray(payload.retrievedChunks) ? payload.retrievedChunks : []
+    }
+  });
+
+  const job = {
+    worker,
+    status: 'running',
+    startedAt: Date.now(),
+    question,
+    generationModel
+  };
+  semanticAskJobsByWebContents.set(webContentsId, job);
+
+  worker.on('message', (msg) => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'retrieved') {
+      webContents.send('semantic:askRetrieved', msg.payload || {});
+      return;
+    }
+    if (msg.type === 'stream') {
+      webContents.send('semantic:askStream', msg.payload || {});
+      return;
+    }
+    if (msg.type === 'phase') {
+      webContents.send('semantic:askPhase', msg.payload || {});
+      return;
+    }
+    if (msg.type === 'done') {
+      job.status = 'done';
+      webContents.send('semantic:askDone', Object.assign({ ok: true, generationModel }, msg.payload || {}));
+      semanticAskJobsByWebContents.delete(webContentsId);
+      return;
+    }
+    if (msg.type === 'cancelled') {
+      job.status = 'cancelled';
+      webContents.send('semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
+      semanticAskJobsByWebContents.delete(webContentsId);
+      return;
+    }
+    if (msg.type === 'error') {
+      job.status = 'error';
+      webContents.send('semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
+      semanticAskJobsByWebContents.delete(webContentsId);
+    }
+  });
+
+  worker.on('error', (err) => {
+    job.status = 'error';
+    webContents.send('semantic:askError', { ok: false, code: 'ASK_WORKER_ERROR', message: err?.message || String(err) });
+    semanticAskJobsByWebContents.delete(webContentsId);
+  });
+
+  worker.on('exit', (code) => {
+    const current = semanticAskJobsByWebContents.get(webContentsId);
+    if (!current || current.worker !== worker) return;
+    if (current.status === 'running' && code !== 0) {
+      webContents.send('semantic:askError', { ok: false, code: 'ASK_WORKER_EXIT', message: `Ask worker exited with code ${code}.` });
+    }
+    semanticAskJobsByWebContents.delete(webContentsId);
+  });
+
+  return { ok: true, started: true, generationModel };
+});
+
+ipcMain.handle('semantic:cancelAsk', async (evt) => {
+  const cancelled = stopSemanticAskJob(evt.sender.id);
+  return { ok: true, cancelled };
+});
+
+ipcMain.handle('semantic:askState', async (evt) => {
+  return { ok: true, state: getSemanticAskState(evt.sender.id) };
 });
 
 ipcMain.handle('semantic:indexingState', async (evt) => {
@@ -883,10 +1407,13 @@ ipcMain.handle('file:openProjectFile', async () => {
       return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
     }
     await ensureFileWithinLimit(filePath, MAX_QDPX_FILE_BYTES, 'Selected project file');
-    currentProjectPath = filePath;
-    clearSemanticAvailabilityCache();
-    await persistLastProjectPath(currentProjectPath);
     const buffer = await fs.promises.readFile(filePath);
+    if (currentProjectPath !== filePath) {
+      currentProjectPath = filePath;
+      clearSemanticAvailabilityCache();
+      updateWindowTitle();
+    }
+    await persistLastProjectPath(filePath);
     return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
@@ -923,6 +1450,36 @@ ipcMain.handle('file:openDocumentFile', async () => {
   }
 });
 
+ipcMain.handle('ocr:getStatus', async () => {
+  const now = Date.now();
+  if (typeof tesseractInstalledCache === 'boolean' && (now - tesseractInstalledCheckedAt) < TESSERACT_STATUS_CACHE_MS) {
+    return { ok: true, installed: tesseractInstalledCache };
+  }
+
+  const installed = await new Promise((resolve) => {
+    execFile('tesseract', ['--version'], {
+      windowsHide: true,
+      timeout: 5000,
+      maxBuffer: 1024 * 1024
+    }, (error) => {
+      if (!error) {
+        resolve(true);
+        return;
+      }
+      if (error.code === 'ENOENT') {
+        resolve(false);
+        return;
+      }
+      // Binary exists but returned an error (unexpected); avoid false "not installed".
+      resolve(true);
+    });
+  });
+
+  tesseractInstalledCache = installed;
+  tesseractInstalledCheckedAt = now;
+  return { ok: true, installed };
+});
+
 // OCR helper for scanned/image-only PDFs (renderer sends page image as data URL).
 ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
   let tmpDir = null;
@@ -933,31 +1490,27 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
     if (err && err.code === 'ENOENT') {
       return {
         code: 'ENOENT',
-        error: 'Tesseract OCR was not found on this machine.',
-        hint: 'Install Tesseract and restart Quackdas. On macOS: brew install tesseract tesseract-lang'
+        error: 'Tesseract OCR was not found on this machine.'
       };
     }
 
     if (stderr.includes('Failed loading language')) {
       return {
         code: 'LANG_MISSING',
-        error: 'Tesseract could not load one or more OCR language models.',
-        hint: 'Install language data (for Swedish+English on macOS: brew install tesseract-lang).'
+        error: 'Tesseract could not load one or more OCR language models.'
       };
     }
 
     if (err && (err.killed || err.signal === 'SIGTERM')) {
       return {
         code: 'TIMEOUT',
-        error: 'OCR timed out while processing this page.',
-        hint: 'Try a lower-resolution scan or fewer pages at a time.'
+        error: 'OCR timed out while processing this page.'
       };
     }
 
     return {
       code: err?.code || 'OCR_FAILED',
-      error: raw,
-      hint: stderr ? `Tesseract details: ${stderr.slice(0, 240)}` : ''
+      error: stderr ? `${raw} (${stderr.slice(0, 240)})` : raw
     };
   };
 
@@ -989,11 +1542,11 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
       };
     }
 
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-ocr-'));
+    tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'quackdas-ocr-'));
     const imgPath = path.join(tmpDir, 'page.png');
     const outBase = path.join(tmpDir, 'ocr');
     const tsvPath = outBase + '.tsv';
-    fs.writeFileSync(imgPath, imageBuffer);
+    await fs.promises.writeFile(imgPath, imageBuffer);
 
     const runTesseract = (useLang) => {
       return new Promise((resolve, reject) => {
@@ -1020,7 +1573,7 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
       else throw e;
     }
 
-    const tsv = fs.readFileSync(tsvPath, 'utf8');
+    const tsv = await fs.promises.readFile(tsvPath, 'utf8');
     const lines = tsv.split(/\r?\n/);
     const words = [];
     let fullText = '';
@@ -1053,13 +1606,12 @@ ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
     return {
       ok: false,
       error: normalized.error,
-      code: normalized.code,
-      hint: normalized.hint || ''
+      code: normalized.code
     };
   } finally {
     if (tmpDir) {
       try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        await fs.promises.rm(tmpDir, { recursive: true, force: true });
       } catch (_) {}
     }
   }
@@ -1081,10 +1633,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   // Ensure any hidden window is destroyed to allow quit
   // This fixes dock right-click "Quit" not working
-  if (win) {
-    win.destroy();
-    win = null;
-  }
+  destroyMainWindowForQuit();
 });
 
 app.on('activate', () => {

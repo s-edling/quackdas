@@ -601,12 +601,20 @@ async function exportToQdpx() {
         } else {
             const textFileName = `${guid}.txt`;
             sourcesFolder.file(textFileName, doc.content || '');
+            let richTextPath = '';
+            const richHtml = typeof doc.richContentHtml === 'string' ? doc.richContentHtml.trim() : '';
+            if (richHtml) {
+                const richTextFileName = `${guid}.html`;
+                sourcesFolder.file(richTextFileName, richHtml);
+                richTextPath = `internal://${richTextFileName}`;
+            }
             
             sources.push({
                 type: 'TextSource',
                 guid: guid,
                 name: doc.title,
                 path: `internal://${textFileName}`,
+                richTextPath,
                 plainTextContent: doc.content,
                 created: doc.created,
                 modified: doc.lastAccessed
@@ -691,6 +699,9 @@ async function exportToQdpx() {
             xml += `    <TextSource guid="${source.guid}" `;
             xml += `name="${escapeXml(source.name)}" `;
             xml += `plainTextPath="${escapeXml(source.path)}" `;
+            if (source.richTextPath) {
+                xml += `quackdasRichTextPath="${escapeXml(source.richTextPath)}" `;
+            }
             xml += `creatingUserGUID="${userGuid}" `;
             xml += `creationDateTime="${formatDateTime(source.created)}" `;
             xml += `modifyingUserGUID="${userGuid}" `;
@@ -968,7 +979,6 @@ async function importFromQdpx(qdpxData) {
     const docsByGuid = {};
     
     // Parse codes
-    const codeElements = xmlDoc.querySelectorAll('CodeBook > Codes > Code, CodeBook > Codes Code');
     const codesByGuid = {};
     
     let importedCodeOrdinal = 0;
@@ -1027,6 +1037,7 @@ async function importFromQdpx(qdpxData) {
         const isPdf = sourceEl.tagName === 'PDFSource';
         const sourcePathAttr = sourceEl.getAttribute('path');
         const plainTextPathAttr = sourceEl.getAttribute('plainTextPath');
+        const richTextPathAttr = sourceEl.getAttribute('quackdasRichTextPath');
         const representationEl = sourceEl.querySelector(':scope > Representation');
         const representationTextPath = representationEl ? representationEl.getAttribute('plainTextPath') : '';
         
@@ -1131,10 +1142,35 @@ async function importFromQdpx(qdpxData) {
             created: sourceEl.getAttribute('creationDateTime') || new Date().toISOString(),
             lastAccessed: sourceEl.getAttribute('modifiedDateTime') || new Date().toISOString()
         };
+        if (!isPdf && richTextPathAttr) {
+            const resolvedRich = resolveZipSourceFile(richTextPathAttr, zipLookup);
+            if (resolvedRich && resolvedRich.file) {
+                const declaredBytes = getZipObjectDeclaredUncompressedBytes(resolvedRich.file);
+                if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                const richHtml = await resolvedRich.file.async('string');
+                const richBytes = getStringByteLength(richHtml);
+                if (richBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                    throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                }
+                expandedReadBytes += richBytes;
+                if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+                    throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+                }
+                if (typeof sanitizeRichImportHtml === 'function') {
+                    const safeRichHtml = sanitizeRichImportHtml(richHtml);
+                    if (safeRichHtml) doc.richContentHtml = safeRichHtml;
+                } else if (richHtml) {
+                    doc.richContentHtml = richHtml;
+                }
+            }
+        }
 
         const sourceAttributeExclusions = new Set([
             'guid', 'name', 'path', 'plainTextPath', 'creatingUserGUID',
-            'creationDateTime', 'modifyingUserGUID', 'modifiedDateTime'
+            'creationDateTime', 'modifyingUserGUID', 'modifiedDateTime',
+            'quackdasRichTextPath'
         ]);
         Array.from(sourceEl.attributes || []).forEach(attr => {
             if (!attr || sourceAttributeExclusions.has(attr.name)) return;
@@ -1561,28 +1597,4 @@ async function extractPdfText(arrayBuffer) {
     }
     
     return { text: fullText, pages };
-}
-
-/**
- * Helper: Convert ArrayBuffer to base64
- */
-function arrayBufferToBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-}
-
-/**
- * Helper: Convert base64 to ArrayBuffer  
- */
-function base64ToArrayBuffer(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes.buffer;
 }
