@@ -1,6 +1,6 @@
 {
   "name": "quackdas",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Quackdas - Qualitative Data Analysis Software (REFI-QDA compatible)",
   "main": "main.js",
   "scripts": {

@@ -10,9 +10,11 @@ const globalSearchIndex = {
 let searchResultsDelegationBound = false;
 const GLOBAL_SEARCH_SESSION_STORAGE_PREFIX = 'quackdas-global-search-session-v1:';
 const MAX_PERSISTED_GLOBAL_RESULTS = 1000;
+const SEARCH_OCR_STATUS_REFRESH_MS = 60 * 1000;
 const globalSearchOcrStatus = {
     checked: false,
     missing: false,
+    checkedAt: 0,
     pending: null
 };
 
@@ -24,7 +26,8 @@ function renderSearchOcrStatus() {
 
 async function refreshSearchOcrStatus() {
     renderSearchOcrStatus();
-    if (globalSearchOcrStatus.checked) return;
+    const now = Date.now();
+    if (globalSearchOcrStatus.checked && (now - globalSearchOcrStatus.checkedAt) < SEARCH_OCR_STATUS_REFRESH_MS) return;
     if (!(window.electronAPI && typeof window.electronAPI.ocrGetStatus === 'function')) return;
     if (globalSearchOcrStatus.pending) {
         await globalSearchOcrStatus.pending;
@@ -39,6 +42,7 @@ async function refreshSearchOcrStatus() {
             globalSearchOcrStatus.missing = false;
         } finally {
             globalSearchOcrStatus.checked = true;
+            globalSearchOcrStatus.checkedAt = Date.now();
             globalSearchOcrStatus.pending = null;
             renderSearchOcrStatus();
         }
@@ -75,8 +79,15 @@ if (typeof window !== 'undefined') {
 
 function getSearchIndexEntriesSnapshot() {
     const snapshot = new Map();
+    const docs = Array.isArray(appData.documents) ? appData.documents : [];
+    const codes = Array.isArray(appData.codes) ? appData.codes : [];
+    const segments = Array.isArray(appData.segments) ? appData.segments : [];
+    const memos = Array.isArray(appData.memos) ? appData.memos : [];
+    const docById = new Map(docs.map(doc => [doc?.id, doc]));
+    const codeById = new Map(codes.map(code => [code?.id, code]));
+    const segmentById = new Map(segments.map(segment => [segment?.id, segment]));
 
-    appData.documents.forEach(doc => {
+    docs.forEach(doc => {
         snapshot.set(`d:${doc.id}`, {
             kind: 'document',
             kindLabel: 'Document',
@@ -87,7 +98,7 @@ function getSearchIndexEntriesSnapshot() {
         });
     });
 
-    appData.codes.forEach(code => {
+    codes.forEach(code => {
         const desc = String(code.description || '').trim();
         if (!desc) return;
         snapshot.set(`c:${code.id}`, {
@@ -100,24 +111,24 @@ function getSearchIndexEntriesSnapshot() {
         });
     });
 
-    appData.memos.forEach(memo => {
+    memos.forEach(memo => {
         const searchable = [memo.content || '', memo.tag || ''].join(' ').trim();
         if (!searchable) return;
 
         let targetLabel = 'Project';
         let docId = '';
         if (memo.type === 'document') {
-            const doc = appData.documents.find(d => d.id === memo.targetId);
+            const doc = docById.get(memo.targetId);
             targetLabel = doc ? doc.title : 'Document';
             docId = memo.targetId || '';
         } else if (memo.type === 'code') {
-            const code = appData.codes.find(c => c.id === memo.targetId);
+            const code = codeById.get(memo.targetId);
             targetLabel = code ? code.name : 'Code';
         } else if (memo.type === 'segment') {
-            const segment = appData.segments.find(s => s.id === memo.targetId);
-            const doc = segment ? appData.documents.find(d => d.id === segment.docId) : null;
+            const segment = segmentById.get(memo.targetId);
+            const doc = segment ? docById.get(segment.docId) : null;
             const memoCodeId = String(memo.codeId || '').trim();
-            const linkedCode = memoCodeId ? appData.codes.find(c => c.id === memoCodeId) : null;
+            const linkedCode = memoCodeId ? codeById.get(memoCodeId) : null;
             if (doc && linkedCode) {
                 targetLabel = `${doc.title} • ${linkedCode.name}`;
             } else if (doc) {

@@ -217,6 +217,20 @@ function normaliseProject(p) {
 
     out.segments.forEach(seg => {
         if (!seg || typeof seg !== 'object') return;
+        if (!Array.isArray(seg.codeIds)) {
+            const fallbackCodeId = (typeof seg.codeId === 'string' && seg.codeId.trim())
+                ? seg.codeId.trim()
+                : '';
+            seg.codeIds = fallbackCodeId ? [fallbackCodeId] : [];
+        } else {
+            seg.codeIds = Array.from(new Set(seg.codeIds
+                .map(codeId => String(codeId || '').trim())
+                .filter(Boolean)));
+        }
+        if (!Number.isFinite(seg.startIndex)) seg.startIndex = 0;
+        if (!Number.isFinite(seg.endIndex)) seg.endIndex = seg.startIndex;
+        if (seg.endIndex < seg.startIndex) seg.endIndex = seg.startIndex;
+        if (typeof seg.text !== 'string') seg.text = String(seg.text || '');
         if (!seg.created) seg.created = new Date().toISOString();
         if (!seg.modified) seg.modified = seg.created;
         if (seg && seg.pdfRegion) {

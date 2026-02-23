@@ -94,11 +94,6 @@ function openSemanticStore(dbPath) {
         END,
         updated_at = excluded.updated_at
     `),
-    deleteDocChunksMissing: db.prepare(`
-      DELETE FROM semantic_chunks
-      WHERE doc_id = @docId
-        AND chunk_id NOT IN (${'?'.repeat(1)})
-    `),
     deleteDocChunksAll: db.prepare('DELETE FROM semantic_chunks WHERE doc_id = ?'),
     upsertDocState: db.prepare(`
       INSERT INTO semantic_doc_state(doc_id, doc_text_hash, chunk_count, updated_at)

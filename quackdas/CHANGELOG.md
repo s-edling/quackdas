@@ -25,6 +25,43 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.02.23.1
+Date: 2026-02-23
+
+Changed:
+- Hardened main-process IPC sends to avoid `Object has been destroyed` crashes during quit/close races.
+- Hardened semantic worker shutdown:
+  - cancel now marks jobs as `cancelling`,
+  - workers are force-terminated after a short grace timeout if they do not exit.
+- Added strict base64 validation and decoded-size limits for project save and backup payloads.
+- Normalized segment shape during project load (`codeIds`, index bounds, text coercion) to prevent malformed project crashes.
+- Improved global-search performance by replacing repeated `.find(...)` lookups with precomputed id maps.
+- Updated OCR availability notice refresh logic in global search to use a timed refresh window.
+- Removed dead unused semantic-store prepared statement.
+- Bumped app version to `0.6.7`.
+
+Why:
+- To eliminate high-severity quit-time crashes, reduce silent corruption risk on save/backup payload handling, and improve stability/performance on large projects.
+
+Files touched:
+- `main.js`
+- `js/state.js`
+- `js/search.js`
+- `semantic/store.js`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+Verification:
+- `npm run check:syntax`
+- `npm run check:lint`
+- `node --test tests/*.test.js`
+
+Regression checks:
+- Existing syntax/lint/test suite passes.
+- Save/backup/import code paths remain operational with stricter payload validation.
+- Semantic indexing/ask event handling remains functional with guarded sends and worker termination fallback.
+
 ### Build 2026.02.19.1
 Date: 2026-02-19
 

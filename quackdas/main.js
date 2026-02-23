@@ -31,6 +31,7 @@ const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
 const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
 const MAX_OCR_IMAGE_BYTES = 32 * 1024 * 1024; // 32 MB
 const TESSERACT_STATUS_CACHE_MS = 60 * 1000;
+const WORKER_TERMINATE_GRACE_MS = 1500;
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -116,8 +117,21 @@ function destroyMainWindowForQuit() {
 function sendMenuActionToRenderer(action) {
   if (!win || win.isDestroyed()) return;
   const wc = win.webContents;
-  if (!wc || wc.isDestroyed()) return;
-  wc.send('menu:action', action);
+  safeSendToWebContents(wc, 'menu:action', action);
+}
+
+function safeSendToWebContents(webContents, channel, payload) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    if (typeof payload === 'undefined') {
+      webContents.send(channel);
+    } else {
+      webContents.send(channel, payload);
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function isAllowedAppNavigationUrl(targetUrl) {
@@ -148,6 +162,32 @@ function estimateBase64DecodedBytes(base64Value) {
   if (base64.endsWith('==')) padding = 2;
   else if (base64.endsWith('=')) padding = 1;
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function decodeBase64PayloadOrThrow(base64Value, maxBytes, label) {
+  const raw = String(base64Value || '').trim();
+  const normalized = raw.replace(/\s+/g, '');
+  if (!normalized) {
+    throw new Error(`${label} is missing.`);
+  }
+  if ((normalized.length % 4) !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    throw new Error(`${label} is not valid base64 data.`);
+  }
+  const estimatedBytes = estimateBase64DecodedBytes(normalized);
+  if (!estimatedBytes) {
+    throw new Error(`${label} is not valid base64 data.`);
+  }
+  if (estimatedBytes > maxBytes) {
+    throw new Error(`${label} is too large (${formatBytes(estimatedBytes)}). Maximum supported size is ${formatBytes(maxBytes)}.`);
+  }
+  const buffer = Buffer.from(normalized, 'base64');
+  if (!buffer.length) {
+    throw new Error(`${label} is not valid base64 data.`);
+  }
+  if (buffer.length > maxBytes) {
+    throw new Error(`${label} is too large (${formatBytes(buffer.length)}). Maximum supported size is ${formatBytes(maxBytes)}.`);
+  }
+  return buffer;
 }
 
 async function ensureFileWithinLimit(filePath, maxBytes, label) {
@@ -545,9 +585,19 @@ function runSemanticSearchWorker({ dbPath, modelName, queryEmbedding, queryText,
 function stopSemanticIndexJob(webContentsId) {
   const job = semanticIndexJobsByWebContents.get(webContentsId);
   if (!job) return false;
+  job.status = 'cancelling';
   try {
     job.worker.postMessage({ type: 'cancel' });
   } catch (_) {}
+  if (!job.terminateTimer) {
+    const timer = globalThis.setTimeout(() => {
+      try {
+        Promise.resolve(job.worker.terminate()).catch(() => {});
+      } catch (_) {}
+    }, WORKER_TERMINATE_GRACE_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    job.terminateTimer = timer;
+  }
   return true;
 }
 
@@ -564,9 +614,19 @@ function getSemanticIndexingState(webContentsId) {
 function stopSemanticAskJob(webContentsId) {
   const job = semanticAskJobsByWebContents.get(webContentsId);
   if (!job) return false;
+  job.status = 'cancelling';
   try {
     job.worker.postMessage({ type: 'cancel' });
   } catch (_) {}
+  if (!job.terminateTimer) {
+    const timer = globalThis.setTimeout(() => {
+      try {
+        Promise.resolve(job.worker.terminate()).catch(() => {});
+      } catch (_) {}
+    }, WORKER_TERMINATE_GRACE_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    job.terminateTimer = timer;
+  }
   return true;
 }
 
@@ -631,9 +691,7 @@ function createWindow() {
 
   windowRef.on('closed', () => {
     stopSemanticIndexJob(webContentsId);
-    semanticIndexJobsByWebContents.delete(webContentsId);
     stopSemanticAskJob(webContentsId);
-    semanticAskJobsByWebContents.delete(webContentsId);
     if (win === windowRef) {
       win = null;
     }
@@ -739,7 +797,7 @@ async function openProject() {
   clearSemanticAvailabilityCache();
   updateWindowTitle();
   await persistLastProjectPath(currentProjectPath);
-  win.webContents.send('project:openQdpx', buffer);
+  safeSendToWebContents(win && win.webContents, 'project:openQdpx', buffer);
 }
 
 ipcMain.handle('project:open', async () => {
@@ -803,7 +861,7 @@ ipcMain.handle('project:save', async (_evt, payload, opts) => {
     if (!qdpxBase64) {
       throw new Error('Could not save QDPX: binary payload is missing.');
     }
-    const buffer = Buffer.from(qdpxBase64, 'base64');
+    const buffer = decodeBase64PayloadOrThrow(qdpxBase64, MAX_QDPX_FILE_BYTES, 'QDPX payload');
     await fs.promises.writeFile(targetProjectPath, buffer);
 
     if (currentProjectPath !== targetProjectPath) {
@@ -863,7 +921,7 @@ ipcMain.handle('project:createBackup', async (_evt, data, opts = {}) => {
 
     const backupName = makeBackupFileName(reason);
     const backupPath = path.join(backupDir, backupName);
-    const buffer = Buffer.from(data, 'base64');
+    const buffer = decodeBase64PayloadOrThrow(data, MAX_QDPX_FILE_BYTES, 'Backup payload');
     await fs.promises.writeFile(backupPath, buffer);
     await pruneBackups(backupDir);
 
@@ -1149,13 +1207,17 @@ ipcMain.handle('semantic:startIndexing', async (evt, payload = {}) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'progress') {
       job.progress = Object.assign({}, job.progress, msg.payload || {});
-      webContents.send('semantic:indexProgress', job.progress);
+      safeSendToWebContents(webContents, 'semantic:indexProgress', job.progress);
       return;
     }
 
     if (msg.type === 'done') {
       job.status = 'done';
-      webContents.send('semantic:indexDone', Object.assign({ ok: true }, msg.payload || {}));
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:indexDone', Object.assign({ ok: true }, msg.payload || {}));
       semanticIndexJobsByWebContents.delete(webContentsId);
       clearSemanticAvailabilityCache();
       return;
@@ -1163,28 +1225,44 @@ ipcMain.handle('semantic:startIndexing', async (evt, payload = {}) => {
 
     if (msg.type === 'cancelled') {
       job.status = 'cancelled';
-      webContents.send('semantic:indexError', msg.payload || { ok: false, code: 'INDEX_CANCELLED', message: 'Indexing cancelled.' });
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:indexError', msg.payload || { ok: false, code: 'INDEX_CANCELLED', message: 'Indexing cancelled.' });
       semanticIndexJobsByWebContents.delete(webContentsId);
       return;
     }
 
     if (msg.type === 'error') {
       job.status = 'error';
-      webContents.send('semantic:indexError', msg.payload || { ok: false, code: 'INDEX_FAILED', message: 'Indexing failed.' });
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:indexError', msg.payload || { ok: false, code: 'INDEX_FAILED', message: 'Indexing failed.' });
       semanticIndexJobsByWebContents.delete(webContentsId);
     }
   });
 
   worker.on('error', (err) => {
     job.status = 'error';
-    webContents.send('semantic:indexError', { ok: false, code: 'WORKER_ERROR', message: err?.message || String(err) });
+    if (job.terminateTimer) {
+      globalThis.clearTimeout(job.terminateTimer);
+      job.terminateTimer = null;
+    }
+    safeSendToWebContents(webContents, 'semantic:indexError', { ok: false, code: 'WORKER_ERROR', message: err?.message || String(err) });
     semanticIndexJobsByWebContents.delete(webContentsId);
   });
 
   worker.on('exit', (code) => {
+    if (job.terminateTimer) {
+      globalThis.clearTimeout(job.terminateTimer);
+      job.terminateTimer = null;
+    }
     const current = semanticIndexJobsByWebContents.get(webContentsId);
     if (current && current.worker === worker && current.status === 'running' && code !== 0) {
-      webContents.send('semantic:indexError', { ok: false, code: 'WORKER_EXIT', message: `Index worker exited with code ${code}.` });
+      safeSendToWebContents(webContents, 'semantic:indexError', { ok: false, code: 'WORKER_EXIT', message: `Index worker exited with code ${code}.` });
       semanticIndexJobsByWebContents.delete(webContentsId);
     }
   });
@@ -1326,47 +1404,67 @@ ipcMain.handle('semantic:startAsk', async (evt, payload = {}) => {
   worker.on('message', (msg) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'retrieved') {
-      webContents.send('semantic:askRetrieved', msg.payload || {});
+      safeSendToWebContents(webContents, 'semantic:askRetrieved', msg.payload || {});
       return;
     }
     if (msg.type === 'stream') {
-      webContents.send('semantic:askStream', msg.payload || {});
+      safeSendToWebContents(webContents, 'semantic:askStream', msg.payload || {});
       return;
     }
     if (msg.type === 'phase') {
-      webContents.send('semantic:askPhase', msg.payload || {});
+      safeSendToWebContents(webContents, 'semantic:askPhase', msg.payload || {});
       return;
     }
     if (msg.type === 'done') {
       job.status = 'done';
-      webContents.send('semantic:askDone', Object.assign({ ok: true, generationModel }, msg.payload || {}));
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:askDone', Object.assign({ ok: true, generationModel }, msg.payload || {}));
       semanticAskJobsByWebContents.delete(webContentsId);
       return;
     }
     if (msg.type === 'cancelled') {
       job.status = 'cancelled';
-      webContents.send('semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
       semanticAskJobsByWebContents.delete(webContentsId);
       return;
     }
     if (msg.type === 'error') {
       job.status = 'error';
-      webContents.send('semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
+      if (job.terminateTimer) {
+        globalThis.clearTimeout(job.terminateTimer);
+        job.terminateTimer = null;
+      }
+      safeSendToWebContents(webContents, 'semantic:askError', Object.assign({ ok: false }, msg.payload || {}));
       semanticAskJobsByWebContents.delete(webContentsId);
     }
   });
 
   worker.on('error', (err) => {
     job.status = 'error';
-    webContents.send('semantic:askError', { ok: false, code: 'ASK_WORKER_ERROR', message: err?.message || String(err) });
+    if (job.terminateTimer) {
+      globalThis.clearTimeout(job.terminateTimer);
+      job.terminateTimer = null;
+    }
+    safeSendToWebContents(webContents, 'semantic:askError', { ok: false, code: 'ASK_WORKER_ERROR', message: err?.message || String(err) });
     semanticAskJobsByWebContents.delete(webContentsId);
   });
 
   worker.on('exit', (code) => {
+    if (job.terminateTimer) {
+      globalThis.clearTimeout(job.terminateTimer);
+      job.terminateTimer = null;
+    }
     const current = semanticAskJobsByWebContents.get(webContentsId);
     if (!current || current.worker !== worker) return;
     if (current.status === 'running' && code !== 0) {
-      webContents.send('semantic:askError', { ok: false, code: 'ASK_WORKER_EXIT', message: `Ask worker exited with code ${code}.` });
+      safeSendToWebContents(webContents, 'semantic:askError', { ok: false, code: 'ASK_WORKER_EXIT', message: `Ask worker exited with code ${code}.` });
     }
     semanticAskJobsByWebContents.delete(webContentsId);
   });
