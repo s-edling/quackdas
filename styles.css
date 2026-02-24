@@ -3759,16 +3759,30 @@
             margin: 4px 0;
         }
 
-        .semantic-ask-prose .semantic-ask-md-h1,
+        .semantic-ask-prose .semantic-ask-md-h1 {
+            font-size: 17px;
+        }
+
         .semantic-ask-prose .semantic-ask-md-h2 {
+            font-size: 16px;
+        }
+
+        .semantic-ask-prose .semantic-ask-md-h3 {
             font-size: 15px;
         }
 
-        .semantic-ask-prose .semantic-ask-md-h3,
         .semantic-ask-prose .semantic-ask-md-h4,
         .semantic-ask-prose .semantic-ask-md-h5,
         .semantic-ask-prose .semantic-ask-md-h6 {
             font-size: 14px;
+        }
+
+        .semantic-ask-prose strong {
+            font-weight: 700;
+        }
+
+        .semantic-ask-prose em {
+            font-style: italic;
         }
 
         .semantic-ask-prose .semantic-ask-md-bullet {

@@ -47,25 +47,8 @@ function canonicalizeSemanticText(input) {
     return String(input == null ? '' : input).replace(/\r\n?/g, '\n');
 }
 
-function inferModelSizeBillionsFromName(modelName) {
-    const raw = String(modelName || '').trim().toLowerCase();
-    if (!raw) return null;
-    const bMatch = raw.match(/(^|[:/ _-])(\d+(?:\.\d+)?)\s*b(?=$|[:/ _.-])/i);
-    if (bMatch) {
-        const value = Number(bMatch[2]);
-        return Number.isFinite(value) && value > 0 ? value : null;
-    }
-    const mMatch = raw.match(/(^|[:/ _-])(\d+(?:\.\d+)?)\s*m(?=$|[:/ _.-])/i);
-    if (mMatch) {
-        const value = Number(mMatch[2]);
-        return Number.isFinite(value) && value > 0 ? (value / 1000) : null;
-    }
-    return null;
-}
-
-function getRecommendedAskMode(modelName) {
-    const sizeB = inferModelSizeBillionsFromName(modelName);
-    return Number.isFinite(sizeB) && sizeB <= 4 ? 'loose' : 'strict';
+function getRecommendedAskMode() {
+    return 'loose';
 }
 
 function getSemanticTextDocuments() {
@@ -81,6 +64,10 @@ function getSemanticTextDocuments() {
 
 function getSemanticButton() {
     return document.getElementById('semanticToolsButton');
+}
+
+function getSemanticDock() {
+    return document.getElementById('semanticToolsDock');
 }
 
 function getSemanticModal() {
@@ -186,18 +173,37 @@ function formatAskInlineMarkdown(escapedText) {
         .replace(/`([^`]+?)`/g, '<code>$1</code>');
 }
 
-function renderAskMarkdownWithCitations(rawText, markerMap = new Map()) {
+function renderAskMarkdownWithCitations(rawText, markerMap = new Map(), sourceCount = 0) {
     const citeTokens = [];
-    const withTokens = String(rawText || '').replace(/\[(\d+)\]/g, (_m, markerRaw) => {
-        const marker = Number(markerRaw);
-        if (!Number.isFinite(marker) || !markerMap.has(marker)) return `[${markerRaw}]`;
-        const sourceIdx = markerMap.get(marker);
-        const token = `@@SEM_CITE_${citeTokens.length}@@`;
+    const makeCiteToken = (sourceIdx, marker) => {
+        const token = `@@SEMCITETOKEN${citeTokens.length}@@`;
         citeTokens.push({
             token,
             html: `<button type="button" class="semantic-ask-cite-chip" data-semantic-source-index="${sourceIdx}">[${marker}]</button>`
         });
         return token;
+    };
+
+    const withBracketCites = String(rawText || '').replace(/\[(\d+)\]/g, (_m, markerRaw) => {
+        const marker = Number(markerRaw);
+        if (!Number.isFinite(marker) || !markerMap.has(marker)) return `[${markerRaw}]`;
+        const sourceIdx = markerMap.get(marker);
+        return makeCiteToken(sourceIdx, marker);
+    });
+    const withTokens = withBracketCites.replace(/@@SEM_?CITE_?(\d+)@@/gi, (_m, citeRaw) => {
+        const citeNum = Number(citeRaw);
+        if (!Number.isFinite(citeNum) || citeNum < 0) return _m;
+        const marker = citeNum + 1;
+        if (Number.isFinite(sourceCount) && sourceCount > 0 && citeNum < sourceCount) {
+            return makeCiteToken(citeNum, marker);
+        }
+        if (markerMap.has(marker)) {
+            return makeCiteToken(markerMap.get(marker), marker);
+        }
+        if (markerMap.has(citeNum)) {
+            return makeCiteToken(markerMap.get(citeNum), citeNum);
+        }
+        return _m;
     });
 
     const lines = withTokens.replace(/\r\n?/g, '\n').split('\n');
@@ -261,7 +267,7 @@ function renderAskAnswer() {
                 if (!Number.isFinite(marker) || marker <= 0) return;
                 markerMap.set(marker, idx);
             });
-            const html = renderAskMarkdownWithCitations(answerText, markerMap);
+            const html = renderAskMarkdownWithCitations(answerText, markerMap, (semanticUiState.ask.sources || []).length);
             answerEl.innerHTML = `${looseIndicator}<div class="semantic-ask-claim semantic-ask-prose">${html}</div>`;
         } else if (claims.length === 0) {
             answerEl.innerHTML = `${looseIndicator}<div class="semantic-empty-results">No grounded answer claims yet.</div>`;
@@ -342,9 +348,11 @@ function openAskSource(source) {
 
 async function refreshSemanticAvailability(force = false) {
     const btn = getSemanticButton();
+    const dock = getSemanticDock();
     const modal = getSemanticModal();
     if (!(window.electronAPI && window.electronAPI.semanticGetAvailability)) {
         if (btn) btn.hidden = true;
+        if (dock) dock.hidden = true;
         if (modal) {
             modal.classList.remove('show');
             modal.hidden = true;
@@ -356,7 +364,9 @@ async function refreshSemanticAvailability(force = false) {
     semanticUiState.availability = result && result.ok ? result : null;
 
     const reachable = !!(result && result.ok && result.reachable);
-    if (btn) btn.hidden = !reachable;
+    const hideSemanticTools = !reachable;
+    if (btn) btn.hidden = hideSemanticTools;
+    if (dock) dock.hidden = btn ? !!btn.hidden : hideSemanticTools;
     if (modal) {
         modal.hidden = !reachable;
         if (!reachable) modal.classList.remove('show');

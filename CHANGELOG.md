@@ -25,6 +25,35 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.02.24.1
+Date: 2026-02-24
+
+Changed:
+- Hid the entire Semantic tools dock in the left sidebar when Semantic tools are unavailable, instead of leaving an empty panel title visible.
+- Set Ask mode recommendation to default to `Loose` regardless of model size.
+- Fixed Ask citation rendering so loose-mode tokens like `@@SEMCITE0@@` / `@@SEM_CITE_0@@` render as clickable citation chips.
+- Improved Ask prose markdown rendering visibility for heading levels and emphasis (`strong`/`em`).
+
+Why:
+- To remove a confusing empty UI affordance when local semantic models are unavailable and restore reliable, readable Ask output/citation navigation.
+
+Files touched:
+- `index.html`
+- `js/semantic.js`
+- `styles.css`
+- `CHANGELOG.md`
+- `ENGINEERING_NOTES.md`
+
+Verification:
+- `npm run check:syntax`
+- `npm run check:lint`
+
+Regression checks:
+- With semantic availability unavailable, confirm both the Semantic tools button and dock panel are hidden.
+- In Ask, switch generation models and confirm default mode remains `Loose` unless manually changed.
+- In Ask output, verify `[n]` citations and `@@SEMCITE...@@` citations render as clickable source chips.
+- Verify markdown headings and bold/italic emphasis are visibly distinct in Ask output.
+
 ### Build 2026.02.23.1
 Date: 2026-02-23
 

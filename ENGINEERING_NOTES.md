@@ -37,7 +37,8 @@ Keep entries concise and practical.
 
 ## UI Guardrails
 
-- (Add notes)
+- 2026-02-24: Semantic Ask loose-mode responses may arrive with citation markers as `[n]` or legacy placeholders like `@@SEMCITE0@@` / `@@SEM_CITE_0@@`. UI rendering should normalize both into clickable source chips.
+- 2026-02-24: When rendering markdown-like Ask prose, use citation placeholder tokens that do not contain markdown control characters (such as `_`) to avoid accidental emphasis parsing before token replacement.
 
 ## High-Risk Regression Checklist
 
