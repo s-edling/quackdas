@@ -1,38 +1,26 @@
-# Quackdas (Electron wrapper)
+# Quackdas
 
-A qualitative data analysis application using the REFI-QDA standard (.qdpx) for project files.
+Quackdas is a qualitative data analysis app. It aims to be responsive, bloat-free, and to keep your data on your machine at all times. It uses .qdpx project files, which most comparable software (including NVivo and ATLAS.ti) can export to and import from. (Some minor aspects of an NVivo project may be lost when exporting to .qdpx, since NVivo prefers its proprietary file type.)
 
-## Setup
-1. Install Node.js (LTS).
-2. Install dependencies and run:
-   ```
-   npm install
-   npm start
-   ```
+Compared to commercial alternatives, the main drawback is that Quackdas doesn’t support text selection in PDFs. PDF coding is instead done by selecting a region of a page by click-and-dragging. Alternatively, Quackdas can extract a PDF’s text to a plain-text document. The main benefits are speed, and that there are no cloud-based AI tools where data security is predicated on, e.g., NVivo saying that OpenAI says they don’t retain uploaded data.
 
-All required libraries (PDF.js, JSZip, Mammoth) are bundled.
+To search or extract text from scanned PDFs, install Tesseract for OCR. Quackdas also includes a few local AI features (Semantic search, Ask the corpus), which require a local LLM via Ollama.
 
-## Packaging
-- macOS DMG: `npm run dist`
-- Windows NSIS: `npm run dist`
-- Linux AppImage: `npm run dist`
+Quackdas was developed as a hobby project with AI-assisted coding tools. Please let me know if anything doesn’t work as intended, or if you need a feature to reach parity in usefulness with commercial alternatives.
 
-## File Format
 
-Quackdas uses the **QDPX** format (REFI-QDA Project Exchange standard), enabling interoperability with:
-- NVivo
-- MAXQDA  
-- ATLAS.ti
-- QDA Miner
-- Other REFI-QDA compatible software
+## Development (build from source)
+Quackdas is built with Electron: a desktop app using web UI (HTML/CSS/JS) with a Node.js backend.
 
-A `.qdpx` file is a zip containing:
-- `project.qde` — XML file with codes, coded segments, and memos
-- `Sources/` — folder with original documents (PDFs, text files)
+Install Node.js (LTS), then run from the repository root:
 
-Quackdas project open/save/import uses `.qdpx` only.
+cd quackdas
+npm install
+npm start
 
-## Features
-- **PDF support**: Import PDFs with selectable, codable text
-- **Autosave**: Every 30 seconds when working with a saved project
-- **QDPX export/import**: Share projects with other QDA software
+For packaging (run inside `quackdas/`):
+
+npm run dist                # default: build current platform target
+npm run dist -- --mac       # DMG on macOS
+npm run dist -- --win       # NSIS on Windows
+npm run dist -- --linux     # AppImage on Linux

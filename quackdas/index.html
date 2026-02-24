@@ -132,6 +132,17 @@
             <div class="content-header">
                 <div class="document-title" id="documentTitle">Select or add a document</div>
                 <div class="doc-actions">
+                    <div class="document-cases-control" id="documentCasesControl" hidden></div>
+                    <div class="pdf-nav-controls" id="pdfNavControls" hidden>
+                        <button class="zoom-btn" data-action="pdfPrevPage" id="pdfPrevBtn" title="Previous page" disabled>◀</button>
+                        <span class="pdf-page-info">
+                            <span id="pdfCurrentPage">1</span>/<span id="pdfTotalPages">1</span>
+                        </span>
+                        <button class="zoom-btn" data-action="pdfNextPage" id="pdfNextBtn" title="Next page" disabled>▶</button>
+                    </div>
+                    <div class="pdf-selection-status" id="pdfSelectionStatus" hidden>
+                        Region selected. Click a code to apply. Press Esc to clear.
+                    </div>
                     <div class="history-actions">
                         <button class="history-btn" id="undoBtn" data-action="undo" title="Undo (Ctrl+Z)" disabled aria-label="Undo">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -146,17 +157,6 @@
                             </svg>
                         </button>
                     </div>
-                    <div class="pdf-nav-controls" id="pdfNavControls" hidden>
-                        <button class="zoom-btn" data-action="pdfPrevPage" id="pdfPrevBtn" title="Previous page" disabled>◀</button>
-                        <span class="pdf-page-info">
-                            <span id="pdfCurrentPage">1</span>/<span id="pdfTotalPages">1</span>
-                        </span>
-                        <button class="zoom-btn" data-action="pdfNextPage" id="pdfNextBtn" title="Next page" disabled>▶</button>
-                    </div>
-                    <div class="pdf-selection-status" id="pdfSelectionStatus" hidden>
-                        Region selected. Click a code to apply. Press Esc to clear.
-                    </div>
-                    <div class="document-cases-control" id="documentCasesControl" hidden></div>
                     <div class="zoom-controls" id="docZoomControls">
                         <button class="zoom-btn" id="docZoomOutBtn" data-action="adjustZoomOut" title="Zoom out">−</button>
                         <span class="zoom-level" id="zoomLevel">100%</span>

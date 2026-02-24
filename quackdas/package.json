@@ -2,6 +2,7 @@
   "name": "quackdas",
   "version": "0.6.7",
   "description": "Quackdas - Qualitative Data Analysis Software (REFI-QDA compatible)",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
