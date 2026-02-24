@@ -23,17 +23,3 @@ npm run dist                # default: build current platform target
 npm run dist -- --mac       # DMG on macOS
 npm run dist -- --win       # NSIS on Windows
 npm run dist -- --linux     # AppImage on Linux
-
-## Build Windows installer from GitHub (recommended from macOS)
-
-Quackdas includes a GitHub Actions workflow at `.github/workflows/windows-installer.yml` that builds the NSIS installer on `windows-latest`.
-
-Two ways to use it:
-
-1) Manual build (no release required):
-- GitHub -> Actions -> `Build Windows Installer` -> `Run workflow`.
-- Download artifact `quackdas-windows-installer` from the workflow run.
-
-2) Build on release publish:
-- Publish a GitHub Release (for example from tag `v0.6.7`).
-- The same workflow runs automatically and attaches `.exe` (and related updater files) to that release.
