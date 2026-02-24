@@ -4,7 +4,7 @@ Quackdas is a qualitative data analysis app. It aims to be responsive, bloat-fre
 
 Compared to commercial alternatives, the main drawback is that Quackdas doesn’t support text selection in PDFs. PDF coding is instead done by selecting a region of a page by click-and-dragging. Alternatively, Quackdas can extract a PDF’s text to a plain-text document. The main benefit compared to commercial alternatives are speed and that there are no cloud-based AI tools where data security is predicated on, e.g., NVivo saying that OpenAI says they don’t retain uploaded data.
 
-To search or extract text from scanned PDFs, install Tesseract for OCR. Quackdas also includes a few local AI features (Semantic search, Ask the corpus), which require a local LLM via Ollama. The app is unsigned, so you will probably need to bypass the macOS Gatekeeper or Windows equivalent to open it.
+To search or extract text from scanned PDFs, install Tesseract for OCR. Quackdas includes a few local AI features (Semantic search, Ask the corpus), which require a local LLM via Ollama. The app is unsigned, so you will probably need to bypass the macOS Gatekeeper or Windows equivalent to open it.
 
 Quackdas was developed as a hobby project with AI-assisted coding tools. Please let me know if anything doesn’t work as intended, or if you need a feature to reach parity in usefulness with commercial alternatives.
 
