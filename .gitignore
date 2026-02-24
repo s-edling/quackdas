@@ -36,7 +36,7 @@ pnpm-debug.log*
 AGENTS.local.md
 
 # Local changelog scratchpad (rolled into CHANGELOG.md when committing)
-quackdas/CHANGELOG_UNRELEASED.md
+CHANGELOG_UNRELEASED.md
 
 # Local technical scratchpad (not pushed)
-quackdas/WORKLOG_LOCAL.md
+WORKLOG_LOCAL.md

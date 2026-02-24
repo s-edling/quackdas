@@ -14,11 +14,10 @@ Quackdas is built with Electron: a desktop app using web UI (HTML/CSS/JS) with a
 
 Install Node.js (LTS), then run from the repository root:
 
-cd quackdas
 npm install
 npm start
 
-For packaging (run inside `quackdas/`):
+For packaging (run from repository root):
 
 npm run dist                # default: build current platform target
 npm run dist -- --mac       # DMG on macOS

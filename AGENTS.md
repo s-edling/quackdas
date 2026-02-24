@@ -13,27 +13,27 @@ Hard rule:
 
 Use four files with clear roles:
 
-1) `quackdas/CHANGELOG.md` (tracked)
+1) `CHANGELOG.md` (tracked)
 - User-facing release notes.
 - One concise entry per release batch (default).
 
-2) `quackdas/CHANGELOG_UNRELEASED.md` (gitignored)
+2) `CHANGELOG_UNRELEASED.md` (gitignored)
 - Local draft notes during active work.
 - Add a short user-facing summary for non-trivial changes as work progresses.
 - Roll these into `CHANGELOG.md` when committing/finalizing a batch.
 
-3) `quackdas/ENGINEERING_NOTES.md` (tracked)
+3) `ENGINEERING_NOTES.md` (tracked)
 - Durable technical memory.
 - Keep architecture decisions, invariants, import/export quirks, PDF pitfalls, performance lessons, packaged-vs-dev differences, and regression checklists.
 
-4) `quackdas/WORKLOG_LOCAL.md` (gitignored)
+4) `WORKLOG_LOCAL.md` (gitignored)
 - Temporary scratchpad for hypotheses, dead ends, and in-progress diagnostics.
 - Do not treat this as durable memory.
 - Update this during implementation for each non-trivial change (anything beyond very small/mechanical edits).
 
 ## Changelog policy
 
-When to update `quackdas/CHANGELOG.md`:
+When to update `CHANGELOG.md`:
 - Update when the user explicitly asks to commit/finalize a batch.
 - The agent does not auto-run on GUI commits; it only updates files when prompted in chat.
 - Do not add a tracked changelog entry for every micro-change.
@@ -59,7 +59,7 @@ Granularity rule:
 
 ## Engineering notes policy
 
-Update `quackdas/ENGINEERING_NOTES.md` when:
+Update `ENGINEERING_NOTES.md` when:
 - a bug reveals a non-obvious invariant,
 - a packaged build behaves differently from dev,
 - a performance fix depends on specific constraints,
@@ -81,4 +81,4 @@ When committing/finalizing a batch, update `ENGINEERING_NOTES.md` alongside `CHA
 
 ## Legacy notes
 
-Older detailed change history is in `quackdas/CHANGELOG_ARCHIVE.md`.
+Older detailed change history is in `CHANGELOG_ARCHIVE.md`.

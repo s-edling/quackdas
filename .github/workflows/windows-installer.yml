@@ -11,9 +11,6 @@ permissions:
 jobs:
   build-windows-installer:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: quackdas
 
     steps:
       - name: Checkout
@@ -24,7 +21,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: quackdas/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -40,9 +37,9 @@ jobs:
         with:
           name: quackdas-windows-installer
           path: |
-            quackdas/dist/*.exe
-            quackdas/dist/*.blockmap
-            quackdas/dist/latest*.yml
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
           if-no-files-found: error
 
       - name: Attach artifacts to GitHub release
@@ -50,6 +47,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            quackdas/dist/*.exe
-            quackdas/dist/*.blockmap
-            quackdas/dist/latest*.yml
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
