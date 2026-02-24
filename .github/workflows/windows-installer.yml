@@ -1,0 +1,55 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: quackdas
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: quackdas/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static checks
+        run: npm run check:syntax && npm run check:lint
+
+      - name: Build Windows installer
+        run: npm run dist -- --win
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quackdas-windows-installer
+          path: |
+            quackdas/dist/*.exe
+            quackdas/dist/*.blockmap
+            quackdas/dist/latest*.yml
+          if-no-files-found: error
+
+      - name: Attach artifacts to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            quackdas/dist/*.exe
+            quackdas/dist/*.blockmap
+            quackdas/dist/latest*.yml
