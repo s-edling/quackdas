@@ -4078,6 +4078,16 @@
             box-shadow: inset 0 0 0 1px rgba(193, 122, 92, 0.7);
         }
 
+        ::highlight(in-page-search) {
+            background: rgba(229, 180, 78, 0.48);
+            color: inherit;
+        }
+
+        ::highlight(in-page-search-active) {
+            background: rgba(193, 122, 92, 0.45);
+            color: inherit;
+        }
+
         .zoom-level {
             font-size: 13px;
             color: var(--text-secondary);

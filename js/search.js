@@ -880,8 +880,12 @@ function closeSearchResults() {
 let inPageSearchState = {
     query: '',
     marks: [],
-    activeIndex: -1
+    activeIndex: -1,
+    mode: 'dom'
 };
+
+const IN_PAGE_SEARCH_HIGHLIGHT_NAME = 'in-page-search';
+const IN_PAGE_SEARCH_ACTIVE_HIGHLIGHT_NAME = 'in-page-search-active';
 
 function getInPageSearchRoot() {
     return document.getElementById('documentContent');
@@ -896,6 +900,10 @@ function updateInPageSearchCount() {
 }
 
 function clearInPageSearchHighlights() {
+    if (inPageSearchState.mode === 'css' && window.CSS && CSS.highlights) {
+        CSS.highlights.delete(IN_PAGE_SEARCH_HIGHLIGHT_NAME);
+        CSS.highlights.delete(IN_PAGE_SEARCH_ACTIVE_HIGHLIGHT_NAME);
+    }
     const root = getInPageSearchRoot();
     if (!root) return;
     const marks = root.querySelectorAll('mark.in-page-search-mark');
@@ -906,23 +914,60 @@ function clearInPageSearchHighlights() {
     root.normalize();
     inPageSearchState.marks = [];
     inPageSearchState.activeIndex = -1;
+    inPageSearchState.mode = 'dom';
     updateInPageSearchCount();
+}
+
+function supportsCssInPageSearchHighlights() {
+    return !!(window.CSS && CSS.highlights && typeof window.Highlight === 'function');
+}
+
+function renderCssInPageSearchHighlights() {
+    if (inPageSearchState.mode !== 'css') return;
+    if (!supportsCssInPageSearchHighlights()) return;
+    const ranges = inPageSearchState.marks;
+    if (!Array.isArray(ranges)) return;
+
+    CSS.highlights.delete(IN_PAGE_SEARCH_HIGHLIGHT_NAME);
+    CSS.highlights.delete(IN_PAGE_SEARCH_ACTIVE_HIGHLIGHT_NAME);
+
+    if (ranges.length > 0) {
+        CSS.highlights.set(IN_PAGE_SEARCH_HIGHLIGHT_NAME, new Highlight(...ranges));
+    }
+    if (inPageSearchState.activeIndex >= 0 && inPageSearchState.activeIndex < ranges.length) {
+        CSS.highlights.set(IN_PAGE_SEARCH_ACTIVE_HIGHLIGHT_NAME, new Highlight(ranges[inPageSearchState.activeIndex]));
+    }
 }
 
 function setActiveInPageSearchMatch(index, options = {}) {
     const shouldScroll = options.scroll !== false;
     if (!inPageSearchState.marks.length) {
         inPageSearchState.activeIndex = -1;
+        if (inPageSearchState.mode === 'css') renderCssInPageSearchHighlights();
         updateInPageSearchCount();
         return;
     }
     const total = inPageSearchState.marks.length;
     inPageSearchState.activeIndex = ((index % total) + total) % total;
-    inPageSearchState.marks.forEach((mark, i) => {
-        mark.classList.toggle('active', i === inPageSearchState.activeIndex);
-    });
-    const active = inPageSearchState.marks[inPageSearchState.activeIndex];
-    if (active && shouldScroll) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (inPageSearchState.mode === 'css') {
+        renderCssInPageSearchHighlights();
+        const activeRange = inPageSearchState.marks[inPageSearchState.activeIndex];
+        if (activeRange && shouldScroll) {
+            const rect = activeRange.getBoundingClientRect();
+            const contentBody = document.querySelector('.content-body');
+            if (contentBody && rect) {
+                const containerRect = contentBody.getBoundingClientRect();
+                const scrollOffset = rect.top - containerRect.top + contentBody.scrollTop - (containerRect.height / 3);
+                contentBody.scrollTo({ top: scrollOffset, behavior: 'smooth' });
+            }
+        }
+    } else {
+        inPageSearchState.marks.forEach((mark, i) => {
+            mark.classList.toggle('active', i === inPageSearchState.activeIndex);
+        });
+        const active = inPageSearchState.marks[inPageSearchState.activeIndex];
+        if (active && shouldScroll) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     updateInPageSearchCount();
 }
 
@@ -950,6 +995,44 @@ function applyInPageSearch(query, options = {}) {
     if (!q) return;
 
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const useCssHighlights = !!(appData.filterCodeId && supportsCssInPageSearchHighlights());
+
+    if (useCssHighlights) {
+        const regex = new RegExp(escaped, 'gi');
+        const ranges = [];
+        const targets = Array.from(root.querySelectorAll(
+            '.filter-snippet .coded-segment-text, .filter-snippet .filter-snippet-memo, .filter-snippet .filter-snippet-memo-inline'
+        ));
+        targets.forEach((container) => {
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+                acceptNode: (node) => {
+                    const p = node.parentElement;
+                    if (!p) return NodeFilter.FILTER_ACCEPT;
+                    if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+            textNodes.forEach((node) => {
+                const text = node.nodeValue || '';
+                if (!text) return;
+                regex.lastIndex = 0;
+                let match;
+                while ((match = regex.exec(text)) !== null) {
+                    const range = document.createRange();
+                    range.setStart(node, match.index);
+                    range.setEnd(node, match.index + match[0].length);
+                    ranges.push(range);
+                }
+            });
+        });
+        inPageSearchState.mode = 'css';
+        inPageSearchState.marks = ranges;
+        setActiveInPageSearchMatch(0, { scroll: !skipInitialScroll });
+        return;
+    }
+
     const markTextNodesIn = (container) => {
         const regex = new RegExp(escaped, 'gi');
         const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -994,7 +1077,9 @@ function applyInPageSearch(query, options = {}) {
     };
 
     if (appData.filterCodeId) {
-        const targets = Array.from(root.querySelectorAll('.filter-snippet .coded-segment, .filter-snippet .filter-snippet-memo'));
+        const targets = Array.from(root.querySelectorAll(
+            '.filter-snippet .coded-segment-text, .filter-snippet .filter-snippet-memo, .filter-snippet .filter-snippet-memo-inline'
+        ));
         targets.forEach(markTextNodesIn);
     } else {
         markTextNodesIn(root);
@@ -1045,6 +1130,7 @@ function closeInPageSearch() {
     const bar = document.getElementById('inPageSearchBar');
     if (bar) bar.classList.remove('show');
     clearInPageSearchHighlights();
+    inPageSearchState.query = '';
     if (
         hadActiveQuery &&
         appData.filterCodeId &&
@@ -1071,7 +1157,7 @@ function refreshInPageSearchAfterRender() {
     const bar = document.getElementById('inPageSearchBar');
     const input = document.getElementById('inPageSearchInput');
     if (!bar || !bar.classList.contains('show') || !input) return;
-    applyInPageSearch(input.value || '');
+    applyInPageSearch(input.value || '', { skipInitialScroll: true });
 }
 
 function highlightSearchTermsInCurrentDocument(query) {

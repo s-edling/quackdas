@@ -1076,38 +1076,19 @@ function editSegmentGroup(segmentIds, e) {
     if (segments.length === 0) return;
     
     if (segments.length === 1) {
-        if (confirm('Remove coding from this segment?')) {
-            saveHistory();
-            appData.segments = appData.segments.filter(s => s.id !== segments[0].id);
-            saveData();
-            renderAll();
-        }
+        saveHistory();
+        appData.segments = appData.segments.filter(s => s.id !== segments[0].id);
+        saveData();
+        renderAll();
     } else {
-        // Multiple overlapping segments
-        const codes = [];
-        segments.forEach(seg => {
-            seg.codeIds.forEach(codeId => {
-                const code = appData.codes.find(c => c.id === codeId);
-                if (code && !codes.find(c => c.id === code.id)) {
-                    codes.push(code);
-                }
-            });
-        });
-        
-        const message = `This text has ${segments.length} overlapping code segments:\n\n` +
-            codes.map(c => `• ${c.name}`).join('\n') +
-            `\n\nRemove ALL codings from this text?`;
-        
-        if (confirm(message)) {
-            saveHistory();
-            appData.segments = appData.segments.filter(s => !ids.includes(s.id));
-            saveData();
-            renderAll();
-        }
+        saveHistory();
+        appData.segments = appData.segments.filter(s => !ids.includes(s.id));
+        saveData();
+        renderAll();
     }
 }
 
-function removeCodeFromSegmentGroup(segmentIds, codeId, options = {}) {
+function removeCodeFromSegmentGroup(segmentIds, codeId) {
     const ids = String(segmentIds || '').split(',').map(id => id.trim()).filter(Boolean);
     if (!ids.length || !codeId) return;
 
@@ -1119,13 +1100,6 @@ function removeCodeFromSegmentGroup(segmentIds, codeId, options = {}) {
         segment.codeIds.includes(codeId)
     ));
     if (targetSegments.length === 0) return;
-
-    const code = appData.codes.find(c => c.id === codeId);
-    const codeName = code?.name || 'selected code';
-    const prompt = options.skipConfirm
-        ? null
-        : `Remove coding "${codeName}" from this text?`;
-    if (prompt && !confirm(prompt)) return;
 
     saveHistory();
     let changed = false;

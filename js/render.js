@@ -1845,7 +1845,7 @@ function renderFilteredView() {
                     ? `<div class="filter-snippet-memo">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
                     : '<div class="filter-snippet-memo empty">No annotation.</div>';
                 const inlineTextMemoHtml = (!segment.pdfRegion && memos.length > 0)
-                    ? `<div class="filter-snippet-memo-inline">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
+                    ? `<span class="filter-snippet-memo-inline">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</span>`
                     : '';
                 const segmentCodes = Array.isArray(segment.codeIds)
                     ? segment.codeIds.map((id) => codeById.get(id)).filter(Boolean)
@@ -2159,7 +2159,6 @@ function showFilterSnippetContextMenu(segmentId, docId, event) {
 function deleteCodingFromFilter(segmentId) {
     const segment = appData.segments.find(s => s.id === segmentId);
     if (!segment) return;
-    if (!confirm('Remove this coding?')) return;
 
     saveHistory();
     appData.segments = appData.segments.filter(s => s.id !== segmentId);

@@ -25,6 +25,45 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.02.26.1
+Date: 2026-02-26
+
+Changed:
+- Fixed Code view in-page find navigation so `Enter`/next reliably advances matches even when viewport movement is required.
+- Fixed in-page find reopen behavior so previous query is retained without auto-jumping viewport until explicit navigation.
+- Fixed Code view in-page find rendering side-effects in multiline snippets by using non-mutating search highlights (`Range` + `::highlight`) when supported.
+- Stabilized highlight styling to avoid layout-affecting inline spacing.
+- Removed confirmation pop-ups for `Remove coding` / `Remove all coding` actions in Document viewer and Code view context menus; removals now happen immediately and remain undoable.
+- No app/package version bump in this batch.
+
+Why:
+- Code view virtualization and DOM-mutating highlights could desync search state during scroll-driven rerenders, causing next/Enter failures.
+- DOM wrapping highlights could alter snippet markup flow around paragraph line breaks in Code view; non-mutating highlights preserve rendered text structure.
+- Confirmation prompts in high-frequency coding cleanup actions added friction without meaningful safety because undo is available.
+
+Files touched:
+- `js/search.js`
+- `js/render.js`
+- `js/coding.js`
+- `styles.css`
+- `CHANGELOG.md`
+- `ENGINEERING_NOTES.md`
+
+Verification:
+- `node --check js/search.js`
+- `node --check js/render.js`
+- `node --check js/coding.js`
+- In Code view, search for multi-hit terms and verify repeated `Enter`/next navigation works across off-screen matches.
+- Reopen in-page find (`Cmd/Ctrl+F`) and verify old query remains without immediate viewport movement.
+- In multiline Code view snippets, verify line breaks/paragraph gaps remain unchanged while search highlights are active.
+- In both Document viewer and Code view context menus, click `Remove coding` (and `Remove all coding` where available) and verify removal is immediate with no confirmation dialog.
+
+Regression checks:
+- Confirm Document viewer in-page find behavior remains unchanged.
+- Confirm closing/clearing search in Code view restores normal scrolling/performance.
+- Confirm active/inactive highlight visuals are still distinguishable.
+- Confirm undo restores codings removed via immediate (no-confirmation) context-menu actions.
+
 ### Build 2026.02.25.1
 Date: 2026-02-25
 
