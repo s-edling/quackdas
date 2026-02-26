@@ -25,6 +25,41 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.02.25.1
+Date: 2026-02-25
+
+Changed:
+- Fixed coded-text context-menu targeting for overlapping/multi-code snippets so right-click actions follow the clicked code color.
+- Added explicit multi-code context-menu actions to separate single-code removal (`Remove coding • <clicked code>`) from full removal (`Remove all coding`).
+- Fixed packaging size regression by replacing broad Electron Builder file globbing with a runtime-file allowlist and explicit excludes for local archives/data/secrets/docs/tests/tools.
+- Updated README wording for local AI feature description.
+- Bumped app version to `0.6.9`.
+
+Why:
+- Restores precise coding workflows in dense coded passages and avoids accidental over-deletion in multi-code snippets.
+- Prevents accidental inclusion of large local artifacts (for example root `*.zip`) and sensitive/local files in packaged builds, reducing both release size and leakage risk.
+
+Files touched:
+- `js/coding.js`
+- `package.json`
+- `package-lock.json`
+- `ENGINEERING_NOTES.md`
+- `README.md`
+- `CHANGELOG.md`
+
+Verification:
+- `npm run check:syntax`
+- `npm run check:lint`
+- `npm run pack`
+- `npm run dist`
+- Inspected packaged `app.asar` contents to confirm no `.env*`, token/secret-like files, corpus-like data files, or `quackdas.zip` were bundled.
+
+Regression checks:
+- Right-click different color spans in overlapping coded text and confirm menu context/action labels follow the clicked code.
+- In multi-code snippets, verify both `Remove coding • <clicked code>` and `Remove all coding` are shown and behave distinctly.
+- Confirm single-code snippet context-menu remove action still removes coding as before.
+- Confirm packaged app still loads core UI flows (documents, coding, PDF coding, semantic features) after packaging rule tightening.
+
 ### Build 2026.02.24.1
 Date: 2026-02-24
 

@@ -1477,6 +1477,14 @@ function initFilterVirtualization(rows) {
     renderFilterVirtualWindow(true);
 }
 
+function isInPageSearchActiveWithQuery() {
+    const bar = document.getElementById('inPageSearchBar');
+    const input = document.getElementById('inPageSearchInput');
+    if (!bar || !input) return false;
+    if (!bar.classList.contains('show')) return false;
+    return String(input.value || '').trim().length > 0;
+}
+
 function renderFilteredView() {
     const code = appData.codes.find(c => c.id === appData.filterCodeId);
     if (!code) return;
@@ -1866,8 +1874,10 @@ function renderFilteredView() {
             });
         });
         const hasPdfRows = rows.some(r => r && r.type === 'snippet' && r.isPdf);
-        if (hasPdfRows) {
+        const hasActiveInPageSearch = isInPageSearchActiveWithQuery();
+        if (hasPdfRows || hasActiveInPageSearch) {
             // Mixed-height PDF previews can break absolute-position virtualization.
+            // In-page search highlights also require stable DOM nodes for reliable next/prev navigation.
             // Use normal document flow for robust layout.
             destroyFilterVirtualization();
             html += rows.map(r => r.html).join('');

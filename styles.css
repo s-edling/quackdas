@@ -4069,12 +4069,13 @@
             background: rgba(229, 180, 78, 0.48);
             color: inherit;
             border-radius: 2px;
-            padding: 0 1px;
+            padding: 0;
+            margin: 0;
         }
 
         mark.in-page-search-mark.active {
             background: rgba(193, 122, 92, 0.45);
-            box-shadow: 0 0 0 1px rgba(193, 122, 92, 0.7);
+            box-shadow: inset 0 0 0 1px rgba(193, 122, 92, 0.7);
         }
 
         .zoom-level {

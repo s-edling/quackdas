@@ -1107,6 +1107,64 @@ function editSegmentGroup(segmentIds, e) {
     }
 }
 
+function removeCodeFromSegmentGroup(segmentIds, codeId, options = {}) {
+    const ids = String(segmentIds || '').split(',').map(id => id.trim()).filter(Boolean);
+    if (!ids.length || !codeId) return;
+
+    const idSet = new Set(ids);
+    const targetSegments = appData.segments.filter((segment) => (
+        segment &&
+        idSet.has(segment.id) &&
+        Array.isArray(segment.codeIds) &&
+        segment.codeIds.includes(codeId)
+    ));
+    if (targetSegments.length === 0) return;
+
+    const code = appData.codes.find(c => c.id === codeId);
+    const codeName = code?.name || 'selected code';
+    const prompt = options.skipConfirm
+        ? null
+        : `Remove coding "${codeName}" from this text?`;
+    if (prompt && !confirm(prompt)) return;
+
+    saveHistory();
+    let changed = false;
+    const targetIdSet = new Set(targetSegments.map(segment => segment.id));
+    appData.segments = appData.segments.filter((segment) => {
+        if (!segment || !targetIdSet.has(segment.id) || !Array.isArray(segment.codeIds)) return true;
+        const nextCodeIds = segment.codeIds.filter(id => id !== codeId);
+        if (nextCodeIds.length === segment.codeIds.length) return true;
+        changed = true;
+        if (nextCodeIds.length === 0) return false;
+        segment.codeIds = nextCodeIds;
+        segment.modified = new Date().toISOString();
+        return true;
+    });
+
+    if (!changed) return;
+    coalesceExactTextSegments();
+    pruneTinyTextSegments();
+    saveData();
+    renderAll();
+}
+
+function resolveSegmentElementFromContextEvent(event) {
+    const target = event?.target;
+    if (target && typeof target.closest === 'function') {
+        const found = target.closest('.coded-segment');
+        if (found) return found;
+    }
+    const current = event?.currentTarget;
+    if (current && current !== document && typeof current.closest === 'function') {
+        const found = current.closest('.coded-segment');
+        if (found) return found;
+    }
+    if (current && current !== document && current.classList?.contains?.('coded-segment')) {
+        return current;
+    }
+    return null;
+}
+
 // Segment action modal
 function showSegmentMenu(segmentIds, event) {
     event.stopPropagation();
@@ -1141,7 +1199,7 @@ function showSegmentContextMenu(segmentIds, event) {
         });
     });
 
-    const segmentEl = event.currentTarget || event.target?.closest('.coded-segment');
+    const segmentEl = resolveSegmentElementFromContextEvent(event);
     const codeIdsFromSpan = String(segmentEl?.dataset?.codeIds || '')
         .split(',')
         .map(id => id.trim())
@@ -1162,7 +1220,7 @@ function showSegmentContextMenu(segmentIds, event) {
     });
 
     let selectedCode = orderedCodes[0] || null;
-    if (segmentEl && orderedCodes.length > 1) {
+    if (segmentEl && typeof segmentEl.getClientRects === 'function' && orderedCodes.length > 1) {
         const lineRects = Array.from(segmentEl.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
         const clickRect = lineRects.find(rect => event.clientY >= rect.top && event.clientY <= rect.bottom)
             || lineRects[0]
@@ -1176,6 +1234,7 @@ function showSegmentContextMenu(segmentIds, event) {
     const selectedCodeId = selectedCode?.id || '';
     const selectedCodeName = selectedCode?.name || '';
     const label = codes.length ? codes.map(c => c.name).join(', ') : 'Coding';
+    const hasMultipleCodes = orderedCodes.length > 1;
     const primarySegment = segments[0];
     const selectedCodeSegment = selectedCodeId
         ? (segments.find(seg => Array.isArray(seg.codeIds) && seg.codeIds.includes(selectedCodeId)) || primarySegment)
@@ -1206,7 +1265,24 @@ function showSegmentContextMenu(segmentIds, event) {
     }
 
     menuItems.push({ type: 'sep' });
-    menuItems.push({ label: `Remove coding • ${label}`, onClick: () => editSegmentGroup(segmentIds, { stopPropagation: () => {} }), danger: true });
+    menuItems.push({
+        label: hasMultipleCodes && selectedCodeName ? `Remove coding • ${selectedCodeName}` : `Remove coding • ${label}`,
+        onClick: () => {
+            if (hasMultipleCodes && selectedCodeId) {
+                removeCodeFromSegmentGroup(segmentIds, selectedCodeId);
+                return;
+            }
+            editSegmentGroup(segmentIds, { stopPropagation: () => {} });
+        },
+        danger: true
+    });
+    if (hasMultipleCodes) {
+        menuItems.push({
+            label: 'Remove all coding',
+            onClick: () => editSegmentGroup(segmentIds, { stopPropagation: () => {} }),
+            danger: true
+        });
+    }
 
     showContextMenu(menuItems, event.clientX, event.clientY);
 }

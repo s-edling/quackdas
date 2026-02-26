@@ -909,7 +909,8 @@ function clearInPageSearchHighlights() {
     updateInPageSearchCount();
 }
 
-function setActiveInPageSearchMatch(index) {
+function setActiveInPageSearchMatch(index, options = {}) {
+    const shouldScroll = options.scroll !== false;
     if (!inPageSearchState.marks.length) {
         inPageSearchState.activeIndex = -1;
         updateInPageSearchCount();
@@ -921,16 +922,30 @@ function setActiveInPageSearchMatch(index) {
         mark.classList.toggle('active', i === inPageSearchState.activeIndex);
     });
     const active = inPageSearchState.marks[inPageSearchState.activeIndex];
-    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (active && shouldScroll) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
     updateInPageSearchCount();
 }
 
-function applyInPageSearch(query) {
+function applyInPageSearch(query, options = {}) {
+    const skipInitialScroll = !!options.skipInitialScroll;
     const root = getInPageSearchRoot();
     if (!root) return;
-    clearInPageSearchHighlights();
-
+    const wasQueryActive = String(inPageSearchState.query || '').trim().length > 0;
     const q = String(query || '').trim();
+    const isQueryActive = q.length > 0;
+
+    if (
+        appData.filterCodeId &&
+        typeof codeViewUiState !== 'undefined' &&
+        codeViewUiState &&
+        codeViewUiState.mode === 'segments' &&
+        wasQueryActive !== isQueryActive &&
+        typeof renderCurrentDocument === 'function'
+    ) {
+        renderCurrentDocument();
+    }
+
+    clearInPageSearchHighlights();
     inPageSearchState.query = q;
     if (!q) return;
 
@@ -985,7 +1000,7 @@ function applyInPageSearch(query) {
         markTextNodesIn(root);
     }
 
-    setActiveInPageSearchMatch(0);
+    setActiveInPageSearchMatch(0, { scroll: !skipInitialScroll });
 }
 
 function openInPageSearch() {
@@ -1019,16 +1034,27 @@ function openInPageSearch() {
     input.focus();
     input.select();
     if (input.value.trim()) {
-        applyInPageSearch(input.value.trim());
+        applyInPageSearch(input.value.trim(), { skipInitialScroll: true });
     } else {
         updateInPageSearchCount();
     }
 }
 
 function closeInPageSearch() {
+    const hadActiveQuery = String(inPageSearchState.query || '').trim().length > 0;
     const bar = document.getElementById('inPageSearchBar');
     if (bar) bar.classList.remove('show');
     clearInPageSearchHighlights();
+    if (
+        hadActiveQuery &&
+        appData.filterCodeId &&
+        typeof codeViewUiState !== 'undefined' &&
+        codeViewUiState &&
+        codeViewUiState.mode === 'segments' &&
+        typeof renderCurrentDocument === 'function'
+    ) {
+        renderCurrentDocument();
+    }
 }
 
 function inPageSearchNext() {
