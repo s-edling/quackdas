@@ -192,6 +192,31 @@ function getEventTargetElement(event) {
     return null;
 }
 
+function findNearbyCodedSegmentForContextMenu(event, originTarget) {
+    const content = document.getElementById('documentContent');
+    if (!content || !originTarget) return null;
+    if (!(originTarget === content || content.contains(originTarget))) return null;
+
+    const x = Number(event?.clientX);
+    const y = Number(event?.clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    const verticalProbeOffsets = [0, -3, 3, -6, 6, -9, 9, -12, 12];
+    for (const dy of verticalProbeOffsets) {
+        const probeY = y + dy;
+        const stack = (typeof document.elementsFromPoint === 'function')
+            ? document.elementsFromPoint(x, probeY)
+            : [document.elementFromPoint(x, probeY)].filter(Boolean);
+        for (const el of stack) {
+            if (!el || el.nodeType !== 1 || typeof el.closest !== 'function') continue;
+            const codedSegment = el.closest('.coded-segment[data-segment-ids]');
+            if (codedSegment && content.contains(codedSegment)) return codedSegment;
+        }
+    }
+
+    return null;
+}
+
 function isInteractiveControlTarget(target) {
     const targetEl = (target && target.nodeType === 1)
         ? target
@@ -440,7 +465,8 @@ function setupStaticActionBindings() {
             return;
         }
 
-        const codedSegment = targetEl.closest('.coded-segment[data-segment-ids]');
+        const codedSegment = targetEl.closest('.coded-segment[data-segment-ids]')
+            || findNearbyCodedSegmentForContextMenu(event, targetEl);
         if (codedSegment) {
             showSegmentContextMenu(String(codedSegment.dataset.segmentIds || ''), event);
         }

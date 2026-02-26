@@ -24,6 +24,7 @@
   "build": {
     "appId": "se.staffanedling.quackdas",
     "productName": "Quackdas",
+    "artifactName": "${productName}-${version}.${ext}",
     "files": [
       "index.html",
       "main.js",
