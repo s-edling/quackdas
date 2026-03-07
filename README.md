@@ -2,7 +2,7 @@
 
 Quackdas is a qualitative data analysis app. It aims to be responsive, bloat-free, and to keep your data on your machine at all times. It uses .qdpx project files, which most comparable software (including NVivo and ATLAS.ti) can export to and import from. (Some minor aspects of an NVivo project may be lost when exporting to .qdpx, since NVivo prefers its proprietary file type.)
 
-Compared to commercial alternatives, Quackdas still has a smaller feature surface, but PDF work is now practical: text PDFs support direct text selection for coding, while scanned PDFs can be OCRed locally and still support region coding. Alternatively, Quackdas can extract a PDF’s text to a plain-text document. The main benefit compared to commercial alternatives are speed and that there are no cloud-based AI tools where data security is predicated on, e.g., NVivo saying that OpenAI says they don’t retain uploaded data.
+The main benefit compared to commercial alternatives are speed and that there are no cloud-based AI tools where data security is predicated on, e.g., NVivo saying that OpenAI says they don’t retain uploaded data. Compared to commercial alternatives, Quackdas has a smaller feature surface.
 
 To search or extract text from scanned PDFs, install Tesseract for OCR. Quackdas includes a few local AI features (Semantic search, Ask the corpus), which require a local LLM via Ollama. The app is unsigned, so you will probably need to bypass the macOS Gatekeeper or Windows equivalent to open it.
 
