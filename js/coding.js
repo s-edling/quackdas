@@ -202,7 +202,7 @@ function savePdfRegionAnnotationInline() {
         renderCodes();
         renderSegmentAnnotationList(segmentId, currentPdfAnnotationCodeId);
     } else {
-        renderAll();
+        renderDocumentsCodesAndCurrentDocument();
     }
 
     dismissPdfRegionAnnotationInline();
@@ -534,7 +534,7 @@ function findSnapSegmentRange(docId, startIndex, endIndex) {
     return best;
 }
 
-function normalizeTextSelectionForCoding(doc, rawSelection) {
+function normalizeTextSelectionForCoding(doc, rawSelection, options = {}) {
     if (!doc || !rawSelection) return null;
     let startIndex = Number(rawSelection.startIndex);
     let endIndex = Number(rawSelection.endIndex);
@@ -548,7 +548,10 @@ function normalizeTextSelectionForCoding(doc, rawSelection) {
     endIndex = Math.max(0, Math.min(endIndex, doc.content.length));
     if (!(endIndex > startIndex)) return null;
 
-    const snapped = findSnapSegmentRange(doc.id, startIndex, endIndex);
+    const allowSnapToExistingSegment = options.allowSnapToExistingSegment !== false && doc.type !== 'pdf';
+    const snapped = allowSnapToExistingSegment
+        ? findSnapSegmentRange(doc.id, startIndex, endIndex)
+        : null;
     if (snapped) {
         startIndex = snapped.startIndex;
         endIndex = snapped.endIndex;
@@ -748,6 +751,7 @@ function applyCodeToStoredSelection(codeId, options = {}) {
         : (Number.isFinite(Number(sel.startIndex)) ? Number(sel.startIndex) : 0);
 
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    const isPdfDoc = doc?.type === 'pdf';
     const isPdfRegion = sel.kind === 'pdfRegion' && sel.pdfRegion;
     if (isPdfRegion && !sel.pdfRegion) return;
     if (!isPdfRegion && (sel.startIndex === undefined || sel.endIndex === undefined)) return;
@@ -767,8 +771,12 @@ function applyCodeToStoredSelection(codeId, options = {}) {
         const normalized = normalizeTextSelectionForCoding(doc, sel);
         if (!normalized) {
             appData.selectedText = null;
-            const nativeSelection = window.getSelection();
-            if (nativeSelection) nativeSelection.removeAllRanges();
+            if (doc?.type === 'pdf' && typeof clearActivePdfTextSelection === 'function') {
+                clearActivePdfTextSelection();
+            } else {
+                const nativeSelection = window.getSelection();
+                if (nativeSelection) nativeSelection.removeAllRanges();
+            }
             return;
         }
 
@@ -790,8 +798,12 @@ function applyCodeToStoredSelection(codeId, options = {}) {
         const result = toggleCodeForTextRange(doc, normalized.startIndex, normalized.endIndex, codeId);
         if (!result.changed) {
             appData.selectedText = null;
-            const nativeSelection = window.getSelection();
-            if (nativeSelection) nativeSelection.removeAllRanges();
+            if (doc?.type === 'pdf' && typeof clearActivePdfTextSelection === 'function') {
+                clearActivePdfTextSelection();
+            } else {
+                const nativeSelection = window.getSelection();
+                if (nativeSelection) nativeSelection.removeAllRanges();
+            }
             return;
         }
         codeApplied = true;
@@ -836,27 +848,19 @@ function applyCodeToStoredSelection(codeId, options = {}) {
         codeApplied = true;
     }
 
-    const contentBody = document.querySelector('.content-body');
-    const preservedScrollTop = contentBody ? contentBody.scrollTop : 0;
-    const pdfContainer = document.getElementById('pdfContainer');
-    const preservedPdfScrollTop = pdfContainer ? pdfContainer.scrollTop : 0;
     const preservedPage = isPdfRegion ? (sel.pdfRegion.pageNum || currentPdfState.currentPage || 1) : currentPdfState.currentPage;
 
     saveData();
-    if (isPdfRegion) {
+    if (isPdfDoc) {
         renderDocuments();
         renderCodes();
-        if (doc && typeof renderPdfPage === 'function') {
+        if (doc && typeof syncPdfViewerDecorations === 'function') {
+            Promise.resolve(syncPdfViewerDecorations(doc, preservedPage)).catch(() => {});
+        } else if (doc && typeof renderPdfPage === 'function') {
             renderPdfPage(preservedPage, doc);
         }
-        setTimeout(() => {
-            const body = document.querySelector('.content-body');
-            if (body) body.scrollTop = preservedScrollTop;
-            const c = document.getElementById('pdfContainer');
-            if (c) c.scrollTop = preservedPdfScrollTop;
-        }, 0);
     } else {
-        renderAll();
+        renderDocumentsCodesAndCurrentDocument();
     }
 
     if (isPdfRegion && codeApplied && segment && segment.codeIds && segment.codeIds.length > 0) {
@@ -875,8 +879,12 @@ function applyCodeToStoredSelection(codeId, options = {}) {
     // Applying a code should clear selection state (both stored and native).
     if (!isPdfRegion) {
         appData.selectedText = null;
-        const nativeSelection = window.getSelection();
-        if (nativeSelection) nativeSelection.removeAllRanges();
+        if (doc?.type === 'pdf' && typeof clearActivePdfTextSelection === 'function') {
+            clearActivePdfTextSelection();
+        } else {
+            const nativeSelection = window.getSelection();
+            if (nativeSelection) nativeSelection.removeAllRanges();
+        }
         if (preserveCaretAfterApply && typeof showReadOnlyTextViewerCaret === 'function') {
             requestAnimationFrame(() => {
                 const contentElement = document.getElementById('documentContent');
@@ -966,6 +974,11 @@ function openCodeSelectionModal() {
 function closeCodeSelectionModal() {
     document.getElementById('codeSelectionModal').classList.remove('show');
     appData.selectedText = null;
+    const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    if (doc?.type === 'pdf' && typeof clearActivePdfTextSelection === 'function') {
+        clearActivePdfTextSelection();
+        return;
+    }
     window.getSelection().removeAllRanges();
 }
 
@@ -1032,17 +1045,37 @@ function applySelectedCodes() {
     }
     coalesceExactTextSegments();
     pruneTinyTextSegments();
+    const preservedPdfPage = doc?.type === 'pdf' ? currentPdfState.currentPage : null;
     saveData();
     closeCodeSelectionModal();
-    renderAll();
+    if (doc?.type === 'pdf') {
+        renderDocuments();
+        renderCodes();
+        if (typeof syncPdfViewerDecorations === 'function') {
+            Promise.resolve(syncPdfViewerDecorations(doc, preservedPdfPage || 1)).catch(() => {});
+        } else if (typeof renderPdfPage === 'function') {
+            renderPdfPage(preservedPdfPage || 1, doc);
+        }
+        return;
+    }
+    renderDocumentsCodesAndCurrentDocument();
 }
 
 // Quick apply code using keyboard shortcut
 function quickApplyCode(codeId) {
     if (!appData.currentDocId || appData.filterCodeId) return;
 
+    const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const stored = appData.selectedText;
-    if (stored && stored.kind === 'pdfRegion' && stored.pdfRegion) {
+    if (
+        doc &&
+        doc.type === 'pdf' &&
+        stored &&
+        (
+            (stored.kind === 'pdfRegion' && stored.pdfRegion) ||
+            (Number.isFinite(Number(stored.startIndex)) && Number.isFinite(Number(stored.endIndex)))
+        )
+    ) {
         applyCodeToStoredSelection(codeId);
         return;
     }
@@ -1053,7 +1086,6 @@ function quickApplyCode(codeId) {
     if (text.length === 0 || !selection.rangeCount) return;
 
     const range = selection.getRangeAt(0);
-    const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const contentElement = document.getElementById('documentContent');
     if (!doc || !contentElement || typeof doc.content !== 'string') return;
     const position = getTextPosition(contentElement, range, doc.content);
@@ -1065,6 +1097,34 @@ function quickApplyCode(codeId) {
         endIndex: position.end
     };
     applyCodeToStoredSelection(codeId, { preserveCaretAfterApply: true });
+}
+
+function refreshAfterTextSegmentMutation(targetDocId) {
+    const doc = appData.documents.find((item) => item && item.id === targetDocId);
+    const preservedPdfPage = !!(
+        doc &&
+        doc.type === 'pdf' &&
+        appData.currentDocId === doc.id &&
+        !appData.filterCodeId &&
+        typeof currentPdfState !== 'undefined'
+    )
+        ? Math.max(1, Number.parseInt(currentPdfState.currentPage, 10) || 1)
+        : null;
+
+    if (!preservedPdfPage || !doc) {
+        renderDocumentsCodesAndCurrentDocument();
+        return;
+    }
+
+    renderDocuments();
+    renderCodes();
+    if (typeof renderCodeInspector === 'function') renderCodeInspector();
+
+    if (typeof syncPdfViewerDecorations === 'function') {
+        Promise.resolve(syncPdfViewerDecorations(doc, preservedPdfPage)).catch(() => {});
+    } else if (typeof renderPdfPage === 'function') {
+        renderPdfPage(preservedPdfPage, doc);
+    }
 }
 
 // Handle editing/removing overlapping segments
@@ -1079,12 +1139,12 @@ function editSegmentGroup(segmentIds, e) {
         saveHistory();
         appData.segments = appData.segments.filter(s => s.id !== segments[0].id);
         saveData();
-        renderAll();
+        refreshAfterTextSegmentMutation(segments[0].docId);
     } else {
         saveHistory();
         appData.segments = appData.segments.filter(s => !ids.includes(s.id));
         saveData();
-        renderAll();
+        refreshAfterTextSegmentMutation(segments[0].docId);
     }
 }
 
@@ -1119,7 +1179,7 @@ function removeCodeFromSegmentGroup(segmentIds, codeId) {
     coalesceExactTextSegments();
     pruneTinyTextSegments();
     saveData();
-    renderAll();
+    refreshAfterTextSegmentMutation(targetSegments[0].docId);
 }
 
 function resolveSegmentElementFromContextEvent(event) {
@@ -1354,5 +1414,31 @@ function saveBoundaryEdit() {
     
     saveData();
     closeEditBoundariesModal();
-    renderAll();
+    const preservePdfPageInPlace = !!(
+        doc?.type === 'pdf' &&
+        appData.currentDocId === doc.id &&
+        !appData.filterCodeId &&
+        Number.isFinite(Number(currentPdfState.currentPage))
+    );
+    if (preservePdfPageInPlace) {
+        renderDocuments();
+        renderCodes();
+        if (typeof syncPdfViewerDecorations === 'function') {
+            Promise.resolve(syncPdfViewerDecorations(doc, currentPdfState.currentPage)).catch(() => {});
+        } else {
+            renderDocumentsCodesAndCurrentDocument();
+        }
+        return;
+    }
+    renderDocumentsCodesAndCurrentDocument();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        mergeIntervals,
+        subtractIntervalsFromRange,
+        findSnapSegmentRange,
+        normalizeTextSelectionForCoding,
+        toggleCodeForTextRange
+    };
 }

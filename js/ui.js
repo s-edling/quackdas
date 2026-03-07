@@ -8,6 +8,18 @@ let _textPromptResolve = null;
 let projectBackupTimer = null;
 let projectBackupInFlight = false;
 let lastBackedUpRevision = 0;
+let storageModeState = {
+    initialized: false,
+    supported: false,
+    platform: '',
+    diskImageStorage: false,
+    settings: null,
+    mounted: false,
+    mountPath: '',
+    blockedApps: [],
+    lastMessage: '',
+    startupMountResult: null
+};
 let cooccurrenceDelegationBound = false;
 let caseAnalysisCache = {
     revision: -1,
@@ -68,6 +80,27 @@ let qdpxExportCache = {
     base64: null,
     inFlight: null
 };
+
+function resetProjectUiTransientState() {
+    if (projectBackupTimer) {
+        clearTimeout(projectBackupTimer);
+        projectBackupTimer = null;
+    }
+    lastBackedUpRevision = 0;
+    qdpxExportCache.projectRef = null;
+    qdpxExportCache.revision = null;
+    qdpxExportCache.base64 = null;
+    qdpxExportCache.inFlight = null;
+    caseAnalysisCache.revision = -1;
+    caseAnalysisCache.caseById = new Map();
+    caseAnalysisCache.docById = new Map();
+    caseAnalysisCache.caseDocIds = new Map();
+    caseAnalysisCache.docCaseIds = new Map();
+    caseAnalysisCache.attrValuesByKey = new Map();
+    caseAnalysisCache.caseIdsByAttrPair = new Map();
+    caseCodeReferenceCountCache.revision = -1;
+    caseCodeReferenceCountCache.values = new Map();
+}
 
 function ensureQdpxExportCacheContext() {
     if (qdpxExportCache.projectRef === appData) return;
@@ -183,6 +216,227 @@ function startProjectBackupScheduler() {
     setInterval(() => {
         createProjectBackup('interval').catch(() => {});
     }, 10 * 60 * 1000);
+}
+
+function updateDiskImageStorageMenuItem() {
+    const settingsItem = document.getElementById('headerDiskImageSettingsItem');
+    const status = document.getElementById('headerDiskImageStorageStatus');
+    if (!settingsItem) return;
+
+    const visible = !!(window.electronAPI && storageModeState.supported);
+    settingsItem.hidden = !visible;
+    settingsItem.title = storageModeState.diskImageStorage
+        ? 'Save backups and semantic indexes next to the project on the mounted disk image'
+        : 'Use the default Quackdas app-data locations for backups and semantic indexes';
+
+    if (status) {
+        status.textContent = storageModeState.diskImageStorage ? 'On' : '';
+        status.style.color = 'var(--text-secondary)';
+    }
+}
+
+function getBlockedAppSummaryText(blockedApps) {
+    const rows = Array.isArray(blockedApps) ? blockedApps : [];
+    if (rows.length === 0) return 'No blocked apps detected.';
+    const names = rows.map((row) => String(row.baseName || row.command || 'Unknown')).slice(0, 4);
+    const suffix = rows.length > names.length ? `, +${rows.length - names.length} more` : '';
+    return `Blocked apps currently running: ${names.join(', ')}${suffix}.`;
+}
+
+function fillDiskImageSettingsForm() {
+    const enabledCheckbox = document.getElementById('diskImageEnabledCheckbox');
+    const pathInput = document.getElementById('diskImagePathInput');
+    const autoMountCheckbox = document.getElementById('diskImageAutoMountCheckbox');
+    const autoUnmountCheckbox = document.getElementById('diskImageAutoUnmountCheckbox');
+    const allowOverrideCheckbox = document.getElementById('diskImageAllowOverrideCheckbox');
+    const blockedAppsInput = document.getElementById('diskImageBlockedAppsInput');
+    const statusBanner = document.getElementById('diskImageStatusBanner');
+    const runtimeMeta = document.getElementById('diskImageRuntimeMeta');
+    const settings = storageModeState.settings || {};
+
+    if (enabledCheckbox) enabledCheckbox.checked = !!storageModeState.diskImageStorage;
+    if (pathInput) pathInput.value = String(settings.imagePath || '');
+    if (autoMountCheckbox) autoMountCheckbox.checked = settings.autoMount !== false;
+    if (autoUnmountCheckbox) autoUnmountCheckbox.checked = settings.autoUnmountOnClose !== false;
+    if (allowOverrideCheckbox) allowOverrideCheckbox.checked = !!settings.allowManualOverride;
+    if (blockedAppsInput) blockedAppsInput.value = Array.isArray(settings.blockedApps) ? settings.blockedApps.join('\n') : '';
+
+    if (statusBanner) {
+        const parts = [];
+        parts.push(storageModeState.mounted
+            ? `Mounted at ${storageModeState.mountPath || 'a disk-image volume'}.`
+            : 'Disk image is not mounted.');
+        if (storageModeState.lastMessage) parts.push(storageModeState.lastMessage);
+        if (storageModeState.diskImageStorage && !settings.imagePath) {
+            parts.push('Choose a disk image to make this mode useful.');
+        }
+        statusBanner.textContent = parts.join(' ');
+    }
+
+    if (runtimeMeta) {
+        runtimeMeta.textContent = getBlockedAppSummaryText(storageModeState.blockedApps);
+    }
+}
+
+async function refreshDiskImageSettingsState() {
+    if (!(window.electronAPI && typeof window.electronAPI.getDiskImageSettings === 'function')) return null;
+    try {
+        const result = await window.electronAPI.getDiskImageSettings();
+        storageModeState.initialized = true;
+        storageModeState.supported = !!result?.supported;
+        storageModeState.platform = String(result?.settings?.platform || result?.platform || '');
+        storageModeState.settings = result?.settings || storageModeState.settings || {};
+        storageModeState.diskImageStorage = !!storageModeState.settings.enabled;
+        storageModeState.mounted = !!result?.mounted;
+        storageModeState.mountPath = String(result?.mountPath || '');
+        storageModeState.blockedApps = Array.isArray(result?.blockedApps) ? result.blockedApps : [];
+        storageModeState.lastMessage = String(result?.lastMessage || '');
+        storageModeState.startupMountResult = result?.startupMountResult || null;
+    } catch (err) {
+        console.warn('Could not load disk image settings:', err);
+    }
+    updateDiskImageStorageMenuItem();
+    fillDiskImageSettingsForm();
+    return storageModeState;
+}
+
+async function initStorageModePreference() {
+    if (!(window.electronAPI && typeof window.electronAPI.getStorageMode === 'function')) {
+        updateDiskImageStorageMenuItem();
+        return;
+    }
+
+    try {
+        const result = await window.electronAPI.getStorageMode();
+        storageModeState.initialized = true;
+        storageModeState.platform = String(result?.platform || '');
+        storageModeState.supported = !!result?.supported;
+        storageModeState.diskImageStorage = !!result?.diskImageStorage;
+    } catch (err) {
+        console.warn('Could not load storage mode preference:', err);
+        storageModeState.initialized = true;
+        storageModeState.supported = false;
+        storageModeState.diskImageStorage = false;
+    }
+
+    await refreshDiskImageSettingsState();
+}
+
+function openDiskImageSettingsModal() {
+    const modal = document.getElementById('diskImageSettingsModal');
+    if (!modal) return;
+    refreshDiskImageSettingsState().catch(() => {});
+    modal.classList.add('show');
+}
+
+function closeDiskImageSettingsModal() {
+    const modal = document.getElementById('diskImageSettingsModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function openDiskImageHelpModal() {
+    const modal = document.getElementById('diskImageHelpModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeDiskImageHelpModal() {
+    const modal = document.getElementById('diskImageHelpModal');
+    if (modal) modal.classList.remove('show');
+}
+
+async function chooseDiskImagePath() {
+    if (!(window.electronAPI && typeof window.electronAPI.chooseDiskImagePath === 'function')) return;
+    const result = await window.electronAPI.chooseDiskImagePath();
+    if (!result || result.canceled) return;
+    if (!result.ok) {
+        alert(result.error || 'Could not choose disk image.');
+        return;
+    }
+    await refreshDiskImageSettingsState();
+}
+
+async function saveDiskImageSettings() {
+    if (!(window.electronAPI && typeof window.electronAPI.updateDiskImageSettings === 'function')) return;
+    if (!(window.electronAPI && typeof window.electronAPI.setDiskImageStorage === 'function')) return;
+    const enabledCheckbox = document.getElementById('diskImageEnabledCheckbox');
+    const autoMountCheckbox = document.getElementById('diskImageAutoMountCheckbox');
+    const autoUnmountCheckbox = document.getElementById('diskImageAutoUnmountCheckbox');
+    const allowOverrideCheckbox = document.getElementById('diskImageAllowOverrideCheckbox');
+    const blockedAppsInput = document.getElementById('diskImageBlockedAppsInput');
+    const pathInput = document.getElementById('diskImagePathInput');
+
+    const nextEnabled = !!enabledCheckbox?.checked;
+    const toggleResult = await window.electronAPI.setDiskImageStorage(nextEnabled);
+    if (!toggleResult?.ok) {
+        alert(toggleResult?.error || 'Could not update disk image storage setting.');
+        return;
+    }
+    storageModeState.diskImageStorage = !!toggleResult.diskImageStorage;
+
+    const patch = {
+        enabled: nextEnabled,
+        imagePath: String(pathInput?.value || '').trim(),
+        autoMount: !!autoMountCheckbox?.checked,
+        autoUnmountOnClose: !!autoUnmountCheckbox?.checked,
+        allowManualOverride: !!allowOverrideCheckbox?.checked,
+        blockedApps: String(blockedAppsInput?.value || '')
+            .split(/\r?\n/)
+            .map((value) => value.trim())
+            .filter(Boolean)
+    };
+
+    const result = await window.electronAPI.updateDiskImageSettings(patch);
+    if (!result?.ok) {
+        alert(result?.error || 'Could not save disk image settings.');
+        return;
+    }
+    await refreshDiskImageSettingsState();
+    if (storageModeState.diskImageStorage && !(storageModeState.settings && storageModeState.settings.imagePath)) {
+        openDiskImageSettingsModal();
+    }
+    if (typeof refreshSemanticModelList === 'function') {
+        await refreshSemanticModelList();
+    }
+    if (typeof refreshSemanticIndexStatus === 'function') {
+        await refreshSemanticIndexStatus();
+    }
+}
+
+async function refreshDiskImageSettings() {
+    await refreshDiskImageSettingsState();
+}
+
+async function clearDiskImagePath() {
+    if (!(window.electronAPI && typeof window.electronAPI.updateDiskImageSettings === 'function')) return;
+    const result = await window.electronAPI.updateDiskImageSettings({ imagePath: '' });
+    if (!result?.ok) {
+        alert(result?.error || 'Could not clear disk image path.');
+        return;
+    }
+    await refreshDiskImageSettingsState();
+}
+
+async function mountDiskImageNow() {
+    if (!(window.electronAPI && typeof window.electronAPI.mountDiskImage === 'function')) return;
+    let manualOverride = false;
+    if (Array.isArray(storageModeState.blockedApps) && storageModeState.blockedApps.length > 0 && storageModeState.settings?.allowManualOverride) {
+        manualOverride = confirm(`${getBlockedAppSummaryText(storageModeState.blockedApps)} Mount anyway?`);
+        if (!manualOverride) return;
+    }
+    const result = await window.electronAPI.mountDiskImage({ manualOverride });
+    if (!result?.ok) {
+        alert(result?.error || 'Could not mount disk image.');
+    }
+    await refreshDiskImageSettingsState();
+}
+
+async function unmountDiskImageNow() {
+    if (!(window.electronAPI && typeof window.electronAPI.unmountDiskImage === 'function')) return;
+    const result = await window.electronAPI.unmountDiskImage({});
+    if (!result?.ok) {
+        alert(result?.error || 'Could not unmount disk image.');
+    }
+    await refreshDiskImageSettingsState();
 }
 
 // Header dropdown functions
@@ -316,7 +570,11 @@ function closeRestoreBackupModal() {
 
 async function restoreBackupById(backupId) {
     if (!backupId) return;
-    if (!confirm('Restore this backup and replace the current project in memory?')) return;
+    if (typeof confirmProjectReplacement === 'function') {
+        if (!confirmProjectReplacement('Restore this backup')) return;
+    } else if (!confirm('Restore this backup and replace the current project in memory?')) {
+        return;
+    }
 
     try {
         const result = await window.electronAPI.restoreProjectBackup(backupId, {
@@ -438,6 +696,7 @@ function openDocumentContextMenu(docId, event) {
 
     const items = [
         { label: `Rename document: ${doc.title}`, onClick: () => renameDocument(docId) },
+        { label: 'Edit metadata', onClick: () => openDocumentMetadata(docId) },
         { label: 'Move to folder...', onClick: () => openMoveToFolderModal(docId) },
         { label: 'Assign to case...', onClick: () => openDocumentAssignCasesModal(docId) },
         { label: `Delete document: ${doc.title}`, onClick: () => deleteDocument(docId), danger: true }
@@ -599,7 +858,7 @@ function applyCodeColor(codeId, color) {
     saveHistory();
     code.color = color;
     saveData();
-    renderAll();
+    renderCodesAndCurrentDocument();
     closeCodeColorModal();
 }
 
@@ -1593,20 +1852,32 @@ function openMatrixCellInFilter(codeId, caseIdsCsv) {
 
 let lastHealthCheckReport = null;
 
-function getHealthIssueReport() {
-    const docIds = new Set(appData.documents.map(doc => doc.id));
-    const codeIds = new Set(appData.codes.map(code => code.id));
-    const segmentIds = new Set(appData.segments.map(seg => seg.id));
+function getHealthIssueReport(projectData = appData) {
+    const safeProject = projectData || appData;
+    const documents = Array.isArray(safeProject.documents) ? safeProject.documents : [];
+    const codes = Array.isArray(safeProject.codes) ? safeProject.codes : [];
+    const segments = Array.isArray(safeProject.segments) ? safeProject.segments : [];
+    const memos = Array.isArray(safeProject.memos) ? safeProject.memos : [];
+    const docIds = new Set(documents.map(doc => doc.id));
+    const codeIds = new Set(codes.map(code => code.id));
+    const segmentIds = new Set(segments.map(seg => seg.id));
+    const segmentCountByCodeId = {};
 
-    const emptyCodes = appData.codes.filter(code => getCodeSegmentCountFast(code.id) === 0);
-    const orphanSegments = appData.segments.filter(seg => !docIds.has(seg.docId));
-    const segmentsWithoutCodes = appData.segments.filter(seg => !Array.isArray(seg.codeIds) || seg.codeIds.length === 0);
-    const segmentsWithUnknownCodes = appData.segments.filter(seg =>
+    segments.forEach((seg) => {
+        (Array.isArray(seg.codeIds) ? seg.codeIds : []).forEach((codeId) => {
+            segmentCountByCodeId[codeId] = (segmentCountByCodeId[codeId] || 0) + 1;
+        });
+    });
+
+    const emptyCodes = codes.filter(code => (segmentCountByCodeId[code.id] || 0) === 0);
+    const orphanSegments = segments.filter(seg => !docIds.has(seg.docId));
+    const segmentsWithoutCodes = segments.filter(seg => !Array.isArray(seg.codeIds) || seg.codeIds.length === 0);
+    const segmentsWithUnknownCodes = segments.filter(seg =>
         Array.isArray(seg.codeIds) && seg.codeIds.some(codeId => !codeIds.has(codeId))
     );
 
     const duplicateNameGroups = {};
-    appData.codes.forEach(code => {
+    codes.forEach(code => {
         const key = String(code.name || '').trim().toLowerCase();
         if (!key) return;
         if (!duplicateNameGroups[key]) duplicateNameGroups[key] = [];
@@ -1615,7 +1886,7 @@ function getHealthIssueReport() {
     const duplicateCodeGroups = Object.values(duplicateNameGroups).filter(group => group.length > 1);
 
     const looseCodeNameGroups = {};
-    appData.codes.forEach(code => {
+    codes.forEach(code => {
         const loose = String(code.name || '')
             .trim()
             .toLowerCase()
@@ -1627,20 +1898,20 @@ function getHealthIssueReport() {
     const nearDuplicateGroups = Object.values(looseCodeNameGroups).filter(group => {
         if (group.length < 2) return false;
         const strictNames = new Set(group.map(id => {
-            const code = appData.codes.find(c => c.id === id);
+            const code = codes.find(c => c.id === id);
             return String(code?.name || '').trim().toLowerCase();
         }));
         return strictNames.size > 1;
     });
 
-    const docsMissingMetadata = appData.documents.filter(doc => {
+    const docsMissingMetadata = documents.filter(doc => {
         const meta = doc.metadata || {};
         return !String(meta.participantId || '').trim() &&
             !String(meta.date || '').trim() &&
             !String(meta.location || '').trim();
     });
 
-    const memoTargetsMissing = appData.memos.filter(memo => {
+    const memoTargetsMissing = memos.filter(memo => {
         if (!memo.targetId) return false;
         if (memo.type === 'document') return !docIds.has(memo.targetId);
         if (memo.type === 'code') return !codeIds.has(memo.targetId);
@@ -1649,13 +1920,13 @@ function getHealthIssueReport() {
             const memoCodeId = String(memo.codeId || '').trim();
             if (!memoCodeId) return false;
             if (!codeIds.has(memoCodeId)) return true;
-            const segment = appData.segments.find(seg => seg.id === memo.targetId);
+            const segment = segments.find(seg => seg.id === memo.targetId);
             return !(segment && Array.isArray(segment.codeIds) && segment.codeIds.includes(memoCodeId));
         }
         return false;
     });
 
-    const invalidPdfRegions = appData.segments.filter(seg => {
+    const invalidPdfRegions = segments.filter(seg => {
         if (!seg.pdfRegion) return false;
         const r = seg.pdfRegion;
         if (!Number.isFinite(Number(r.pageNum)) || Number(r.pageNum) < 1) return true;
@@ -1663,7 +1934,7 @@ function getHealthIssueReport() {
         return vals.some(v => v !== undefined && !Number.isFinite(Number(v)));
     });
 
-    const memosMissingEdited = appData.memos.filter(memo => !memo.edited);
+    const memosMissingEdited = memos.filter(memo => !memo.edited);
 
     const findings = [];
     if (emptyCodes.length) findings.push({ label: 'Empty codes', count: emptyCodes.length });
@@ -1688,10 +1959,10 @@ function getHealthIssueReport() {
 
     return {
         summary: {
-            documents: appData.documents.length,
-            codes: appData.codes.length,
-            segments: appData.segments.length,
-            annotations: appData.memos.length
+            documents: documents.length,
+            codes: codes.length,
+            segments: segments.length,
+            annotations: memos.length
         },
         findings,
         fixes
@@ -1837,7 +2108,7 @@ function applySelectedHealthFixes() {
 
     if (changed > 0) {
         saveData();
-        renderAll();
+        renderDocumentsCodesAndCurrentDocument();
     }
 
     lastHealthCheckReport = getHealthIssueReport();

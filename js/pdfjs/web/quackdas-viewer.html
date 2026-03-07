@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+    <title>Quackdas PDF Viewer</title>
+    <link rel="stylesheet" href="./pdf_viewer.css">
+    <style>
+        :root {
+            color-scheme: light;
+            --quackdas-viewer-bg: transparent;
+            --quackdas-page-shadow: none;
+            --quackdas-region-color: #c17a5c;
+            --quackdas-region-fill: rgba(193, 122, 92, 0.18);
+            --quackdas-region-pending-fill: rgba(193, 122, 92, 0.14);
+            --quackdas-selection-fill: rgba(78, 110, 198, 0.28);
+            --quackdas-fit-width-gutter: 0px;
+        }
+
+        html,
+        body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent;
+            font-family: system-ui, sans-serif;
+        }
+
+        body {
+            position: relative;
+        }
+
+        #viewerContainer {
+            position: absolute;
+            inset: 0;
+            overflow: auto;
+            display: block;
+            background: transparent;
+        }
+
+        #viewer {
+            position: relative;
+            min-height: 0;
+            width: 100%;
+        }
+
+        .pdfViewer.singlePageView {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 0;
+            width: 100%;
+        }
+
+        .pdfViewer .page {
+            box-shadow: var(--quackdas-page-shadow);
+        }
+
+        .pdfViewer.singlePageView .page {
+            margin: 0 auto !important;
+        }
+
+        .textLayer ::selection {
+            background: var(--quackdas-selection-fill);
+        }
+
+        .quackdas-loading,
+        .quackdas-error {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 40;
+            padding: 10px 14px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.92);
+            box-shadow: 0 8px 22px rgba(61, 52, 43, 0.12);
+            color: #5a5148;
+            font-size: 13px;
+        }
+
+        .quackdas-error {
+            max-width: 360px;
+            text-align: center;
+            color: #8a3d2e;
+        }
+
+        .quackdas-page-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 7;
+            pointer-events: none;
+        }
+
+        .quackdas-page-layer.region-mode {
+            pointer-events: auto;
+            cursor: crosshair;
+        }
+
+        .quackdas-coded-region,
+        .quackdas-pending-region,
+        .quackdas-coded-text-mark {
+            position: absolute;
+            box-sizing: border-box;
+        }
+
+        .quackdas-coded-region {
+            border: 2px solid var(--quackdas-region-color);
+            background: var(--quackdas-region-fill);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .quackdas-coded-text-mark {
+            border-radius: 2px;
+            pointer-events: none;
+            background: rgba(124, 152, 133, 0.22);
+            box-shadow: inset 0 -2px 0 0 rgba(88, 109, 96, 0.96);
+        }
+
+        .quackdas-coded-region.flash {
+            animation: quackdas-region-flash 900ms ease-out;
+        }
+
+        .quackdas-coded-text-mark.flash {
+            animation: quackdas-text-flash 900ms ease-out;
+        }
+
+        .quackdas-pending-region {
+            border: 2px dashed var(--quackdas-region-color);
+            background: var(--quackdas-region-pending-fill);
+            pointer-events: none;
+        }
+
+        .quackdas-ocr-active-selection {
+            position: absolute;
+            box-sizing: border-box;
+            pointer-events: none;
+            background: var(--quackdas-selection-fill);
+            border-radius: 2px;
+        }
+
+        .quackdas-ocr-text-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .quackdas-ocr-text-layer.selectable {
+            pointer-events: auto;
+            cursor: text;
+        }
+
+        .quackdas-ocr-text-layer span {
+            position: absolute;
+            transform-origin: 0 0;
+            white-space: pre;
+            color: transparent;
+            cursor: text;
+            user-select: none;
+            line-height: 1;
+        }
+
+        .quackdas-ocr-text-layer ::selection {
+            background: var(--quackdas-selection-fill);
+        }
+
+        @keyframes quackdas-region-flash {
+            0% {
+                box-shadow: 0 0 0 0 rgba(193, 122, 92, 0.48);
+            }
+
+            100% {
+                box-shadow: 0 0 0 12px rgba(193, 122, 92, 0);
+            }
+        }
+
+        @keyframes quackdas-text-flash {
+            0% {
+                filter: saturate(1.35);
+                box-shadow:
+                    inset 0 -2px 0 0 rgba(88, 109, 96, 1),
+                    0 0 0 0 rgba(124, 152, 133, 0.28);
+            }
+
+            100% {
+                filter: saturate(1);
+                box-shadow:
+                    inset 0 -2px 0 0 rgba(88, 109, 96, 0.96),
+                    0 0 0 8px rgba(124, 152, 133, 0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="viewerContainer">
+        <div id="viewer" class="pdfViewer"></div>
+    </div>
+    <div class="quackdas-loading" id="loadingIndicator">Loading PDF…</div>
+    <div class="quackdas-error" id="errorIndicator" hidden></div>
+    <script type="module" src="./quackdas-viewer.mjs"></script>
+</body>
+</html>

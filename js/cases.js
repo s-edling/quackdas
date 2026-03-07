@@ -200,7 +200,7 @@ function saveCase(event) {
 
     saveData();
     closeCaseModal();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function selectCase(caseId, event) {
@@ -212,7 +212,7 @@ function selectCase(caseId, event) {
     appData.filterCodeId = null;
     appData.selectedText = null;
     caseViewUiState.editingDescription = false;
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function clearSelectedCase() {
@@ -259,7 +259,7 @@ async function renameCase(caseId) {
     caseItem.name = trimmed;
     caseItem.modified = new Date().toISOString();
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function getCaseDescendantIds(caseId, visited = new Set()) {
@@ -328,7 +328,7 @@ function deleteCase(caseId, event) {
     }
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function wouldCreateCaseCycle(caseId, nextParentId) {
@@ -396,7 +396,7 @@ function moveCaseToParent(caseId, nextParentId, options = {}) {
     }
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function setupCaseDragAndDrop() {
@@ -623,7 +623,7 @@ function saveCaseTypeFromSheet(caseId) {
     caseItem.type = newType;
     caseItem.modified = new Date().toISOString();
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function toggleCaseViewNotes() {
@@ -663,7 +663,7 @@ function saveCaseDescriptionAndNotes(caseId) {
     caseItem.modified = new Date().toISOString();
     caseViewUiState.editingDescription = false;
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function addCaseAttributeFromSheet(caseId) {
@@ -696,7 +696,7 @@ function addCaseAttributeFromSheet(caseId) {
     valueInput.value = '';
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function saveCaseAttributeRow(caseId, rowIndex) {
@@ -735,7 +735,7 @@ function saveCaseAttributeRow(caseId, rowIndex) {
     caseItem.modified = new Date().toISOString();
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function deleteCaseAttributeRow(caseId, rowIndex) {
@@ -756,7 +756,7 @@ function deleteCaseAttributeRow(caseId, rowIndex) {
     }
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function buildDocCaseMapFromCases() {
@@ -831,7 +831,7 @@ function linkDocumentToCase(docId, caseId) {
     const changed = linkDocumentToCaseInternal(docId, caseId);
     if (!changed) return;
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function unlinkDocumentFromCase(docId, caseId) {
@@ -839,7 +839,7 @@ function unlinkDocumentFromCase(docId, caseId) {
     const changed = unlinkDocumentFromCaseInternal(docId, caseId);
     if (!changed) return;
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function unlinkDocumentFromCaseFromSheet(caseId, docId) {
@@ -950,7 +950,7 @@ function saveDocumentAssignCases(event) {
     syncDocumentCaseIdsFromCases();
     saveData();
     closeDocumentAssignCasesModal();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function saveCaseAddDocuments(event) {
@@ -975,7 +975,7 @@ function saveCaseAddDocuments(event) {
 
     saveData();
     closeCaseAddDocumentsModal();
-    renderAll();
+    renderCasesAndCurrentDocument();
 }
 
 function renderDocumentCasesControl() {
@@ -1097,7 +1097,7 @@ function toggleCaseLinkFromDocumentPicker(caseId, shouldLink) {
     if (!changed) return;
 
     saveData();
-    renderAll();
+    renderCasesAndCurrentDocument();
     documentCasePickerState.open = true;
 }
 

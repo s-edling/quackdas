@@ -25,6 +25,53 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.03.07.1
+Date: 2026-03-07
+
+Changed:
+- Hardened project open/save safety so QDPX paths are committed only after import succeeds, backup restore uses the same size guard as normal opens, and project saves use an atomic temp-write/rename path.
+- Reset undo/history plus project-local PDF/UI transients whenever the active project is replaced, preventing cross-project state leakage after open, restore, or new-project flows.
+- Hardened the intentional agent/PDF surfaces by making `window.quackdasAgent.docs.update` reject unsafe document types, exposing revision/editability metadata, and moving PDF host communication onto a validated `postMessage` contract.
+- Improved PDF handling substantially: born-digital PDFs now support practical text selection/coding, scanned-PDF OCR data persists across save/load, scanned PDFs render immediately while OCR continues in the background in normal cases, and multiple page-jump/page-reset regressions were fixed.
+- Cleaned up repo hygiene by removing the tracked local Node toolchain from version control and bumped the app version to `0.7.0`.
+
+Why:
+- This batch closes multiple high-risk data-loss and wrong-file-save paths, makes PDF workflows materially more usable, and aligns the release metadata/docs with the new behavior.
+
+Files touched:
+- `main.js`
+- `preload.js`
+- `electron-main/project-backups.js`
+- `electron-main/project-files.js`
+- `js/app.js`
+- `js/export.js`
+- `js/state.js`
+- `js/ui.js`
+- `js/qdpx.js`
+- `js/pdf.js`
+- `js/agent-api.js`
+- `js/pdfjs/web/quackdas-viewer.mjs`
+- `tests/*.test.js`
+- `package.json`
+- `package-lock.json`
+- `README.md`
+- `ARCHITECTURE.md`
+- `ENGINEERING_NOTES.md`
+- `.gitignore`
+- `CHANGELOG.md`
+
+Verification:
+- `npm test`
+- `npm run check:syntax`
+- `npm run check:lint`
+- Manual smoke tests across open/import/save/restore flows, PDF text selection/coding, scanned-PDF OCR reopen behavior, and PDF go-to-location.
+
+Regression checks:
+- Open a corrupt or invalid `.qdpx` and confirm the current project/save handle stays unchanged.
+- Open project B after editing project A and confirm `Undo`/`Redo` do not affect project B.
+- Save and reopen a scanned PDF project after OCR and confirm OCR does not rerun.
+- Verify born-digital PDF text selection/coding, region coding, context menus, and page navigation still behave correctly.
+
 ### Build 2026.02.26.1
 Date: 2026-02-26
 

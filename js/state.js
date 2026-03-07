@@ -511,7 +511,7 @@ let colorIndex = 0;
 function shouldUseLocalProjectCache() {
     // In Electron we use real project files (and backups), not localStorage snapshots.
     // localStorage is kept as a browser-only fallback.
-    return !(window && window.electronAPI);
+    return !(typeof window !== 'undefined' && window && window.electronAPI);
 }
 
 // Load data from storage
@@ -670,6 +670,60 @@ function applyDocumentFolderSnapshot(snapshot) {
     });
 }
 
+function clearHistoryState() {
+    history.past = [];
+    history.future = [];
+    updateHistoryButtons();
+}
+
+function resetProjectRuntimeState() {
+    clearHistoryState();
+    appDataRevision += 1;
+    if (typeof resetProjectUiTransientState === 'function') {
+        resetProjectUiTransientState();
+    }
+    if (typeof resetPdfProjectTransientState === 'function') {
+        resetPdfProjectTransientState();
+    }
+}
+
+function replaceProjectData(nextProject, options = {}) {
+    const normalized = options.skipNormalization
+        ? (nextProject || makeEmptyProject())
+        : normaliseProject(nextProject || makeEmptyProject());
+    const previousTheme = appData?.theme || 'light';
+
+    appData = normalized;
+    appData.theme = appData.theme || String(options.fallbackTheme || previousTheme || 'light');
+    appData.selectedText = null;
+    appData.selectedDocIds = [];
+    appData.lastSelectedDocId = null;
+    appData.selectedCaseId = null;
+    appData.filterCodeId = null;
+    appData.scrollPositions = {};
+
+    if (Object.prototype.hasOwnProperty.call(options, 'hasUnsavedChanges')) {
+        appData.hasUnsavedChanges = !!options.hasUnsavedChanges;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'lastSaveTime')) {
+        appData.lastSaveTime = options.lastSaveTime;
+    }
+
+    resetProjectRuntimeState();
+
+    if (typeof saveData === 'function') {
+        saveData({
+            markUnsaved: Object.prototype.hasOwnProperty.call(options, 'markUnsaved')
+                ? options.markUnsaved
+                : false
+        });
+    } else {
+        rebuildIndexes();
+    }
+
+    return appData;
+}
+
 // Undo/Redo support
 // Snapshots exclude document content since it's immutable after import.
 // This dramatically reduces memory usage for large projects.
@@ -736,6 +790,25 @@ function undo() {
     if (typeof syncDocumentCaseIdsFromCases === 'function') {
         syncDocumentCaseIdsFromCases();
     }
+
+    if (
+        typeof currentPdfState !== 'undefined' &&
+        currentPdfState &&
+        currentPdfState.docId &&
+        restored.currentDocId === currentPdfState.docId &&
+        !restored.filterCodeId &&
+        !restored.selectedCaseId
+    ) {
+        const restoredDoc = Array.isArray(appData.documents)
+            ? appData.documents.find((doc) => doc && doc.id === restored.currentDocId)
+            : null;
+        if (restoredDoc?.type === 'pdf') {
+            currentPdfState.pendingGoToPage = {
+                docId: restored.currentDocId,
+                pageNum: Math.max(1, Number.parseInt(currentPdfState.currentPage, 10) || 1)
+            };
+        }
+    }
     
     saveData();
     renderAll();
@@ -778,6 +851,25 @@ function redo() {
     if (typeof syncDocumentCaseIdsFromCases === 'function') {
         syncDocumentCaseIdsFromCases();
     }
+
+    if (
+        typeof currentPdfState !== 'undefined' &&
+        currentPdfState &&
+        currentPdfState.docId &&
+        restored.currentDocId === currentPdfState.docId &&
+        !restored.filterCodeId &&
+        !restored.selectedCaseId
+    ) {
+        const restoredDoc = Array.isArray(appData.documents)
+            ? appData.documents.find((doc) => doc && doc.id === restored.currentDocId)
+            : null;
+        if (restoredDoc?.type === 'pdf') {
+            currentPdfState.pendingGoToPage = {
+                docId: restored.currentDocId,
+                pageNum: Math.max(1, Number.parseInt(currentPdfState.currentPage, 10) || 1)
+            };
+        }
+    }
     
     saveData();
     renderAll();
@@ -787,4 +879,69 @@ function redo() {
 function updateHistoryButtons() {
     document.getElementById('undoBtn').disabled = history.past.length === 0;
     document.getElementById('redoBtn').disabled = history.future.length === 0;
+}
+
+function __setAppDataForTests(nextAppData) {
+    appData = nextAppData || makeEmptyProject();
+    rebuildIndexes();
+}
+
+function __getAppDataForTests() {
+    return appData;
+}
+
+function __setHistoryForTests(nextHistory) {
+    history = Object.assign({
+        past: [],
+        future: [],
+        maxLength: 50
+    }, nextHistory || {});
+}
+
+function __getHistoryForTests() {
+    return history;
+}
+
+function __setAppDataRevisionForTests(nextRevision) {
+    appDataRevision = Number.isFinite(Number(nextRevision)) ? Number(nextRevision) : 0;
+}
+
+function __getAppDataRevisionForTests() {
+    return appDataRevision;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        makeEmptyProject,
+        normalizeSegmentMemoCodeId,
+        pruneInvalidSegmentCodeMemosForProject,
+        normalizeCaseAttributes,
+        normalizeHexColor,
+        normalizeCasesForProject,
+        normalizePdfRegionShape,
+        normaliseProject,
+        rebuildIndexes,
+        getSegmentsForDoc,
+        getSegmentsForCode,
+        getMemosForTarget,
+        getMemoCountForTarget,
+        getSegmentMemos,
+        getSegmentMemoCount,
+        pruneInvalidSegmentCodeMemos,
+        getDocSegmentCountFast,
+        getCodeSegmentCountFast,
+        captureDocumentFolderSnapshot,
+        applyDocumentFolderSnapshot,
+        clearHistoryState,
+        replaceProjectData,
+        saveHistory,
+        undo,
+        redo,
+        __setAppDataForTests,
+        __getAppDataForTests,
+        __setHistoryForTests,
+        __getHistoryForTests,
+        __setAppDataRevisionForTests,
+        __getAppDataRevisionForTests
+    };
 }

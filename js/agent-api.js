@@ -37,6 +37,44 @@
         return doc;
     }
 
+    function getDocumentSegments(docId) {
+        const id = requireString(docId, 'doc_id');
+        if (typeof getSegmentsForDoc === 'function') {
+            return getSegmentsForDoc(id);
+        }
+        return (Array.isArray(appData.segments) ? appData.segments : []).filter((segment) => segment && segment.docId === id);
+    }
+
+    function docHasRichText(doc) {
+        return !!(doc && typeof doc.richContentHtml === 'string' && doc.richContentHtml.trim().length > 0);
+    }
+
+    function getDocRevision(doc) {
+        return Number.isFinite(Number(doc?.revision)) && Number(doc.revision) >= 0
+            ? Number(doc.revision)
+            : 0;
+    }
+
+    function describeDocument(doc, options = {}) {
+        const includeContent = !!options.includeContent;
+        const segments = getDocumentSegments(doc.id);
+        const currentRevision = getDocRevision(doc);
+        const richText = docHasRichText(doc);
+        const canUpdateContent = doc.type !== 'pdf' && !richText && segments.length === 0;
+        return {
+            id: String(doc.id),
+            title: String(doc.title || ''),
+            type: String(doc.type || 'text'),
+            revision: currentRevision,
+            length: String(doc.content || '').length,
+            lastAccessed: String(doc.lastAccessed || ''),
+            codedSegmentCount: segments.length,
+            hasRichText: richText,
+            canUpdateContent,
+            content: includeContent ? String(doc.content || '') : undefined
+        };
+    }
+
     function toSemanticDocuments() {
         return getTextDocuments().map((doc) => ({
             id: String(doc.id),
@@ -91,31 +129,17 @@
         }),
         docs: Object.freeze({
             list(options = {}) {
-                const includeContent = !!options.includeContent;
-                return getTextDocuments().map((doc) => ({
-                    id: String(doc.id),
-                    title: String(doc.title || ''),
-                    type: String(doc.type || 'text'),
-                    length: String(doc.content || '').length,
-                    lastAccessed: String(doc.lastAccessed || ''),
-                    content: includeContent ? String(doc.content || '') : undefined
-                }));
+                return getTextDocuments().map((doc) => describeDocument(doc, options));
             },
             get(input = {}) {
                 const doc = findDocument(input.doc_id || input.docId);
-                return {
-                    id: String(doc.id),
-                    title: String(doc.title || ''),
-                    type: String(doc.type || 'text'),
-                    content: String(doc.content || ''),
-                    length: String(doc.content || '').length
-                };
+                return describeDocument(doc, { includeContent: true });
             },
             update(input = {}) {
                 const doc = findDocument(input.doc_id || input.docId);
                 const nextContent = canonicalizeText(input.content);
                 const expectedRevision = Number(input.revision);
-                const currentRevision = Number(doc.revision || 0);
+                const currentRevision = getDocRevision(doc);
                 if (Number.isFinite(expectedRevision) && expectedRevision >= 0 && expectedRevision !== currentRevision) {
                     return {
                         ok: false,
@@ -123,15 +147,52 @@
                         currentRevision
                     };
                 }
+                if (doc.type === 'pdf') {
+                    return {
+                        ok: false,
+                        code: 'UNSUPPORTED_DOCUMENT_TYPE',
+                        message: 'PDF documents cannot be edited through the agent API.',
+                        currentRevision
+                    };
+                }
+                const codedSegments = getDocumentSegments(doc.id);
+                if (codedSegments.length > 0) {
+                    return {
+                        ok: false,
+                        code: 'DOCUMENT_HAS_CODING',
+                        message: 'Document has coded segments. Agent content edits are blocked to preserve coding offsets.',
+                        currentRevision,
+                        codedSegmentCount: codedSegments.length
+                    };
+                }
+                if (docHasRichText(doc)) {
+                    return {
+                        ok: false,
+                        code: 'DOCUMENT_HAS_RICH_TEXT',
+                        message: 'Document retains rich-text markup. Agent content edits are blocked to avoid stale HTML exports.',
+                        currentRevision,
+                        hasRichText: true
+                    };
+                }
+                if (nextContent === String(doc.content || '')) {
+                    return {
+                        ok: true,
+                        doc_id: doc.id,
+                        revision: currentRevision,
+                        length: nextContent.length,
+                        changed: false
+                    };
+                }
                 doc.content = nextContent;
                 doc.revision = currentRevision + 1;
                 doc.modified = nowIso();
-                markProjectChanged(false);
+                markProjectChanged(true);
                 return {
                     ok: true,
                     doc_id: doc.id,
                     revision: doc.revision,
-                    length: nextContent.length
+                    length: nextContent.length,
+                    changed: true
                 };
             },
             jump(input = {}) {

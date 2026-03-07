@@ -32,6 +32,9 @@ pnpm-debug.log*
 # Environment files
 .env*
 
+# Local toolchains / ad hoc runtime installs
+.local/
+
 # Local AI tooling overrides (kept out of repo)
 AGENTS.local.md
 

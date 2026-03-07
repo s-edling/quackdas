@@ -12,6 +12,10 @@ const { canonicalizeText, getDocumentTextHash } = require('./semantic/text');
 const { openSemanticStore } = require('./semantic/store');
 const { listModels, isOllamaReachable, embedText, OllamaError, assertLocalOllamaBaseUrl } = require('./semantic/ollama-embeddings');
 const { getAskModelProfile } = require('./semantic/model-profile');
+const { createProjectBackupService } = require('./electron-main/project-backups');
+const { registerOcrImageHandler, resolveTesseractCommand } = require('./electron-main/ocr-service');
+const { createDiskImageStorageService, normalizeDiskImageSettings } = require('./electron-main/disk-image-storage');
+const { writeFileAtomically } = require('./electron-main/project-files');
 
 let win;
 let currentProjectPath = null;
@@ -20,16 +24,18 @@ let semanticAvailabilityCache = null;
 let semanticAvailabilityCheckedAt = 0;
 let tesseractInstalledCache = null;
 let tesseractInstalledCheckedAt = 0;
+let appPreferencesCache = null;
+let pendingProjectWriteCount = 0;
+let quitPreparationInProgress = false;
+let quitPreparationComplete = false;
 const semanticIndexJobsByWebContents = new Map();
 const semanticAskJobsByWebContents = new Map();
+let diskImageStorageService = null;
 
-const BACKUP_MAX_RECENT = 20;
-const BACKUP_DAILY_DAYS = 14;
-const BACKUP_DIR_NAME = 'project-backups';
 const LAST_PROJECT_FILE = 'last-project-path.json';
+const APP_PREFERENCES_FILE = 'app-preferences.json';
 const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
 const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
-const MAX_OCR_IMAGE_BYTES = 32 * 1024 * 1024; // 32 MB
 const TESSERACT_STATUS_CACHE_MS = 60 * 1000;
 const WORKER_TERMINATE_GRACE_MS = 1500;
 
@@ -40,16 +46,10 @@ const WORKER_TERMINATE_GRACE_MS = 1500;
  * and only fully quit when the user explicitly quits (Cmd+Q or menu).
  * 
  * The `close` event handler hides the window instead of closing it (unless isQuitting is true).
- * 
- * To reliably quit, the menu quit handler uses win.destroy() BEFORE app.quit().
- * This bypasses the close event entirely, avoiding any race conditions or event ordering issues.
- * 
- * If you add new quit paths, use this pattern:
- *   if (win) { win.destroy(); win = null; }
- *   app.quit();
- * 
- * Do NOT rely solely on setting isQuitting=true before app.quit() - the event ordering
- * is not guaranteed and can cause the close handler to hide instead of quit.
+ *
+ * Quackdas now also has async quit preparation for semantic job shutdown and optional
+ * disk-image auto-unmount. New quit paths should therefore call `app.quit()` and let
+ * the shared `before-quit` handler perform preparation before the final destroy/quit pass.
  */
 
 // Ensure macOS menus show the correct app name
@@ -134,6 +134,19 @@ function safeSendToWebContents(webContents, channel, payload) {
   }
 }
 
+async function setCurrentProjectPath(projectPath) {
+  const normalizedPath = (typeof projectPath === 'string' && projectPath.trim())
+    ? projectPath
+    : null;
+  if (currentProjectPath !== normalizedPath) {
+    currentProjectPath = normalizedPath;
+    clearSemanticAvailabilityCache();
+    updateWindowTitle();
+  }
+  await persistLastProjectPath(normalizedPath);
+  return normalizedPath;
+}
+
 function isAllowedAppNavigationUrl(targetUrl) {
   try {
     const parsed = new URL(String(targetUrl || ''));
@@ -204,6 +217,139 @@ function getLastProjectPathFile() {
   return path.join(app.getPath('userData'), LAST_PROJECT_FILE);
 }
 
+function getAppPreferencesFile() {
+  return path.join(app.getPath('userData'), APP_PREFERENCES_FILE);
+}
+
+function readAppPreferences() {
+  if (appPreferencesCache) return appPreferencesCache;
+  const defaults = {
+    diskImageStorage: false,
+    diskImageSettings: normalizeDiskImageSettings({})
+  };
+  try {
+    const raw = fs.readFileSync(getAppPreferencesFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    const next = Object.assign({}, defaults, parsed || {});
+    next.diskImageSettings = normalizeDiskImageSettings(Object.assign(
+      {},
+      next.diskImageSettings || {},
+      { enabled: !!(next.diskImageSettings?.enabled || next.diskImageStorage) }
+    ));
+    next.diskImageStorage = !!next.diskImageSettings.enabled;
+    appPreferencesCache = next;
+  } catch (_) {
+    appPreferencesCache = Object.assign({}, defaults);
+  }
+  return appPreferencesCache;
+}
+
+function writeAppPreferences(nextPrefs) {
+  appPreferencesCache = Object.assign({}, readAppPreferences(), nextPrefs || {});
+  appPreferencesCache.diskImageSettings = normalizeDiskImageSettings(Object.assign(
+    {},
+    readAppPreferences().diskImageSettings || {},
+    appPreferencesCache.diskImageSettings || {},
+    typeof appPreferencesCache.diskImageStorage === 'boolean'
+      ? { enabled: !!appPreferencesCache.diskImageStorage }
+      : {}
+  ));
+  appPreferencesCache.diskImageStorage = !!appPreferencesCache.diskImageSettings.enabled;
+  try {
+    fs.writeFileSync(getAppPreferencesFile(), JSON.stringify(appPreferencesCache), 'utf8');
+  } catch (_) {}
+  return appPreferencesCache;
+}
+
+function isDiskImageStorageEnabled() {
+  return supportsDiskImageStorageMode() && !!readAppPreferences().diskImageStorage;
+}
+
+function supportsDiskImageStorageMode() {
+  return process.platform === 'darwin';
+}
+
+function getDiskImageSettings() {
+  return normalizeDiskImageSettings(readAppPreferences().diskImageSettings || {});
+}
+
+function delay(ms) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function waitForPathAccessible(filePath, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts) || 1);
+  const delayMs = Math.max(0, Number(options.delayMs) || 0);
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
+      return true;
+    } catch (err) {
+      lastError = err;
+      if (attempt < (attempts - 1) && delayMs > 0) {
+        await delay(delayMs);
+      }
+    }
+  }
+  throw lastError || new Error('Path is not accessible.');
+}
+
+function getBlockedAppSummaryText(blockedApps) {
+  const rows = Array.isArray(blockedApps) ? blockedApps : [];
+  if (rows.length === 0) return 'No blocked apps detected.';
+  const names = rows.map((row) => String(row?.baseName || row?.command || 'Unknown')).slice(0, 4);
+  const suffix = rows.length > names.length ? `, +${rows.length - names.length} more` : '';
+  return `Blocked apps currently running: ${names.join(', ')}${suffix}.`;
+}
+
+async function maybeShowDiskImageStartupWarning() {
+  const status = diskImageStorageService
+    ? await diskImageStorageService.getStatus().catch(() => null)
+    : null;
+  const settings = status?.settings || getDiskImageSettings();
+  const blockedApps = Array.isArray(status?.blockedApps) ? status.blockedApps : [];
+  const mounted = !!status?.mounted;
+  if (!supportsDiskImageStorageMode() || !settings.enabled || !settings.imagePath) return;
+  if (blockedApps.length === 0) return;
+  if (!win || win.isDestroyed()) return;
+  const canMountAnyway = !mounted && !!settings.allowManualOverride;
+  const buttons = canMountAnyway ? ['Cancel', 'Mount anyway'] : ['OK'];
+  try {
+    const response = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: mounted ? 'Blocked apps detected' : 'Disk image not mounted',
+      message: mounted
+        ? 'Blocked apps are open while disk image storage mode is active.'
+        : 'Disk image storage did not auto-mount at startup.',
+      detail: mounted
+        ? `${getBlockedAppSummaryText(blockedApps)}\n\nThe configured disk image is already mounted, but blocked apps are running while disk image storage mode is active.`
+        : `${getBlockedAppSummaryText(blockedApps)}\n\nQuackdas started without mounting the configured disk image.`,
+      buttons,
+      defaultId: canMountAnyway ? 1 : 0,
+      cancelId: 0,
+      noLink: true
+    });
+    if (canMountAnyway && response.response === 1 && diskImageStorageService) {
+      const mountResult = await diskImageStorageService.mountConfiguredImage({ manualOverride: true }).catch((err) => ({
+        ok: false,
+        error: err?.message || String(err)
+      }));
+      if (!mountResult?.ok) {
+        await dialog.showMessageBox(win, {
+          type: 'error',
+          title: 'Mount failed',
+          message: 'Could not mount disk image.',
+          detail: mountResult?.error || 'Unknown error.',
+          buttons: ['OK'],
+          defaultId: 0,
+          noLink: true
+        });
+      }
+    }
+  } catch (_) {}
+}
+
 async function persistLastProjectPath(projectPath) {
   try {
     const payload = { path: projectPath || null, updatedAt: new Date().toISOString() };
@@ -222,85 +368,47 @@ async function readLastProjectPath() {
   }
 }
 
-function getBackupRootDir() {
-  return path.join(app.getPath('userData'), BACKUP_DIR_NAME);
-}
-
-function getBackupBucket(projectName = 'untitled-project') {
-  if (currentProjectPath) {
-    const abs = path.resolve(currentProjectPath);
-    const hash = crypto.createHash('sha1').update(abs).digest('hex').slice(0, 12);
-    const base = sanitizeName(path.basename(abs, path.extname(abs)), 'project');
-    return `${hash}-${base}`;
+createProjectBackupService({
+  app,
+  ipcMain,
+  fs,
+  path,
+  crypto,
+  sanitizeName,
+  decodeBase64PayloadOrThrow,
+  maxQdpxBytes: MAX_QDPX_FILE_BYTES,
+  getCurrentProjectPath: () => currentProjectPath,
+  getDiskImageStorageEnabled: () => isDiskImageStorageEnabled(),
+  onBackupWriteStateChange: (delta) => {
+    pendingProjectWriteCount = Math.max(0, pendingProjectWriteCount + Number(delta || 0));
   }
-  return `unsaved-${sanitizeName(projectName, 'untitled-project')}`;
-}
+}).registerHandlers();
 
-function parseBackupReason(fileName) {
-  const base = fileName.replace(/\.qdpx$/i, '');
-  const parts = base.split('__');
-  return parts[1] ? parts[1].replace(/-/g, ' ') : 'auto backup';
-}
+diskImageStorageService = createDiskImageStorageService({
+  app,
+  ipcMain,
+  dialog,
+  fs,
+  path,
+  execFile,
+  getWindow: () => win,
+  getPreferences: () => readAppPreferences(),
+  setPreferences: (patch) => writeAppPreferences(patch),
+  getCurrentProjectPath: () => currentProjectPath,
+  clearSemanticAvailabilityCache: () => clearSemanticAvailabilityCache()
+});
 
-function makeBackupFileName(reason = 'auto-backup') {
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const safeReason = sanitizeName(reason, 'auto-backup');
-  return `${stamp}__${safeReason}.qdpx`;
-}
+diskImageStorageService.registerHandlers();
 
-async function pruneBackups(backupDir) {
-  const names = await fs.promises.readdir(backupDir);
-  const qdpxNames = names.filter(n => /\.qdpx$/i.test(n));
-  const rows = await Promise.all(qdpxNames.map(async (name) => {
-    const fullPath = path.join(backupDir, name);
-    const stat = await fs.promises.stat(fullPath);
-    return { name, fullPath, mtimeMs: stat.mtimeMs };
-  }));
-  rows.sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  const keep = new Set();
-  rows.slice(0, BACKUP_MAX_RECENT).forEach(r => keep.add(r.name));
-
-  const now = Date.now();
-  const maxAgeMs = BACKUP_DAILY_DAYS * 24 * 60 * 60 * 1000;
-  const keptByDay = new Set();
-
-  for (const row of rows.slice(BACKUP_MAX_RECENT)) {
-    const age = now - row.mtimeMs;
-    if (age > maxAgeMs) continue;
-    const dayKey = new Date(row.mtimeMs).toISOString().slice(0, 10);
-    if (keptByDay.has(dayKey)) continue;
-    keep.add(row.name);
-    keptByDay.add(dayKey);
-  }
-
-  const deletes = rows.filter(r => !keep.has(r.name));
-  await Promise.all(deletes.map(r => fs.promises.unlink(r.fullPath).catch(() => {})));
-}
-
-async function listBackupsForBucket(projectName) {
-  const bucket = getBackupBucket(projectName);
-  const backupDir = path.join(getBackupRootDir(), bucket);
-  let names = [];
-  try {
-    names = await fs.promises.readdir(backupDir);
-  } catch (_) {
-    return { ok: true, backups: [] };
-  }
-  const qdpxNames = names.filter(n => /\.qdpx$/i.test(n));
-  const backups = await Promise.all(qdpxNames.map(async (name) => {
-    const fullPath = path.join(backupDir, name);
-    const stat = await fs.promises.stat(fullPath);
-    return {
-      id: name,
-      createdAt: new Date(stat.mtimeMs).toISOString(),
-      sizeBytes: stat.size,
-      reason: parseBackupReason(name)
-    };
-  }));
-  backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return { ok: true, backups };
-}
+registerOcrImageHandler({
+  ipcMain,
+  fs,
+  os,
+  path,
+  execFile,
+  formatBytes,
+  estimateBase64DecodedBytes
+});
 
 function clearSemanticAvailabilityCache() {
   semanticAvailabilityCache = null;
@@ -316,6 +424,17 @@ function getLegacySemanticDbPath(projectPath) {
   if (!project) return '';
   const base = path.basename(project, path.extname(project));
   return path.join(path.dirname(project), `${base}.semantic.sqlite`);
+}
+
+function getHiddenProjectLocalSemanticDbPath(projectPath) {
+  const project = String(projectPath || '').trim();
+  if (!project) return '';
+  const base = path.basename(project, path.extname(project));
+  return path.join(path.dirname(project), `.${base}.semantic.sqlite`);
+}
+
+function getProjectLocalSemanticDbPath(projectPath) {
+  return getHiddenProjectLocalSemanticDbPath(projectPath);
 }
 
 function getManagedSemanticDbPath(projectPath) {
@@ -345,22 +464,39 @@ function moveFileIfPresent(fromPath, toPath) {
 function migrateLegacySemanticDbIfNeeded(projectPath, managedPath) {
   if (!projectPath || !managedPath) return;
   const legacyPath = getLegacySemanticDbPath(projectPath);
-  if (!legacyPath || legacyPath === managedPath) return;
-  if (!fs.existsSync(legacyPath)) return;
+  const hiddenLocalPath = getProjectLocalSemanticDbPath(projectPath);
+  const sourcePath = fs.existsSync(hiddenLocalPath) ? hiddenLocalPath : legacyPath;
+  if (!sourcePath || sourcePath === managedPath) return;
+  if (!fs.existsSync(sourcePath)) return;
   if (fs.existsSync(managedPath)) return;
   try {
     fs.mkdirSync(path.dirname(managedPath), { recursive: true });
   } catch (_) {
     return;
   }
-  moveFileIfPresent(legacyPath, managedPath);
-  moveFileIfPresent(`${legacyPath}-wal`, `${managedPath}-wal`);
-  moveFileIfPresent(`${legacyPath}-shm`, `${managedPath}-shm`);
+  moveFileIfPresent(sourcePath, managedPath);
+  moveFileIfPresent(`${sourcePath}-wal`, `${managedPath}-wal`);
+  moveFileIfPresent(`${sourcePath}-shm`, `${managedPath}-shm`);
 }
 
 function getSemanticDbPath() {
   if (!currentProjectPath) return null;
   const managedPath = getManagedSemanticDbPath(currentProjectPath);
+  const projectLocalPath = getProjectLocalSemanticDbPath(currentProjectPath);
+  const legacyVisibleLocalPath = getLegacySemanticDbPath(currentProjectPath);
+  if (isDiskImageStorageEnabled()) {
+    if (legacyVisibleLocalPath && projectLocalPath && legacyVisibleLocalPath !== projectLocalPath && fs.existsSync(legacyVisibleLocalPath) && !fs.existsSync(projectLocalPath)) {
+      moveFileIfPresent(legacyVisibleLocalPath, projectLocalPath);
+      moveFileIfPresent(`${legacyVisibleLocalPath}-wal`, `${projectLocalPath}-wal`);
+      moveFileIfPresent(`${legacyVisibleLocalPath}-shm`, `${projectLocalPath}-shm`);
+    }
+    if (managedPath && projectLocalPath && fs.existsSync(managedPath) && !fs.existsSync(projectLocalPath)) {
+      moveFileIfPresent(managedPath, projectLocalPath);
+      moveFileIfPresent(`${managedPath}-wal`, `${projectLocalPath}-wal`);
+      moveFileIfPresent(`${managedPath}-shm`, `${projectLocalPath}-shm`);
+    }
+    return projectLocalPath;
+  }
   migrateLegacySemanticDbIfNeeded(currentProjectPath, managedPath);
   return managedPath;
 }
@@ -601,6 +737,38 @@ function stopSemanticIndexJob(webContentsId) {
   return true;
 }
 
+function stopAllSemanticJobs() {
+  const ids = new Set([
+    ...semanticIndexJobsByWebContents.keys(),
+    ...semanticAskJobsByWebContents.keys()
+  ]);
+  ids.forEach((id) => {
+    stopSemanticIndexJob(id);
+    stopSemanticAskJob(id);
+  });
+}
+
+function hasActiveSemanticJobs() {
+  return semanticIndexJobsByWebContents.size > 0 || semanticAskJobsByWebContents.size > 0;
+}
+
+async function waitForShutdownQuiescence(timeoutMs = 4000) {
+  const started = Date.now();
+  while ((Date.now() - started) < timeoutMs) {
+    if (!hasActiveSemanticJobs() && pendingProjectWriteCount <= 0) return true;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+  }
+  return !hasActiveSemanticJobs() && pendingProjectWriteCount <= 0;
+}
+
+async function prepareAppForQuit() {
+  stopAllSemanticJobs();
+  await waitForShutdownQuiescence();
+  if (diskImageStorageService) {
+    await diskImageStorageService.maybeUnmountOnQuit().catch(() => {});
+  }
+}
+
 function getSemanticIndexingState(webContentsId) {
   const job = semanticIndexJobsByWebContents.get(webContentsId);
   if (!job) return null;
@@ -713,8 +881,6 @@ function createWindow() {
           label: 'Quit Quackdas',
           accelerator: 'Command+Q',
           click: () => {
-            // Destroy window first to bypass the close handler that hides instead of closing.
-            destroyMainWindowForQuit();
             app.quit();
           }
         }
@@ -732,13 +898,7 @@ function createWindow() {
         {
           label: 'Open Project…',
           accelerator: 'CmdOrCtrl+O',
-          click: async () => {
-            try {
-              await openProject();
-            } catch (err) {
-              dialog.showErrorBox('Open Project Failed', err?.message || String(err));
-            }
-          }
+          click: () => sendMenuActionToRenderer('openProject')
         },
         { type: 'separator' },
         {
@@ -756,7 +916,6 @@ function createWindow() {
           label: 'Quit',
           accelerator: 'Alt+F4',
           click: () => {
-            destroyMainWindowForQuit();
             app.quit();
           }
         }])
@@ -771,46 +930,69 @@ function createWindow() {
   Menu.setApplicationMenu(menu);
 }
 
-async function openProject() {
+async function promptForProjectFileSelection(title = 'Open Quackdas project') {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'Open Quackdas project',
+    title,
     properties: ['openFile'],
     filters: [
       { name: 'Quackdas Project', extensions: ['qdpx'] }
     ]
   });
 
-  if (canceled || !filePaths || !filePaths[0]) return;
+  if (canceled || !filePaths || !filePaths[0]) return null;
+  return filePaths[0];
+}
 
-  const filePath = filePaths[0];
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext !== '.qdpx') {
-    dialog.showErrorBox('Unsupported project format', 'Quackdas now supports QDPX projects only. Please open a .qdpx file.');
-    return;
+async function readProjectPayload(filePath, label = 'Selected project file') {
+  const normalizedPath = String(filePath || '').trim();
+  if (!normalizedPath) {
+    return { ok: false, canceled: true };
   }
 
-  await ensureFileWithinLimit(filePath, MAX_QDPX_FILE_BYTES, 'Selected project file');
+  const ext = path.extname(normalizedPath).toLowerCase();
+  if (ext !== '.qdpx') {
+    return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
+  }
 
-  // QDPX file - read as binary and send to renderer
-  const buffer = await fs.promises.readFile(filePath);
-  currentProjectPath = filePath;
-  clearSemanticAvailabilityCache();
-  updateWindowTitle();
-  await persistLastProjectPath(currentProjectPath);
-  safeSendToWebContents(win && win.webContents, 'project:openQdpx', buffer);
+  await ensureFileWithinLimit(normalizedPath, MAX_QDPX_FILE_BYTES, label);
+  const buffer = await fs.promises.readFile(normalizedPath);
+  return {
+    ok: true,
+    kind: 'qdpx',
+    path: normalizedPath,
+    data: buffer.toString('base64')
+  };
 }
 
 ipcMain.handle('project:open', async () => {
-  await openProject();
-  return { ok: true };
+  try {
+    const filePath = await promptForProjectFileSelection('Open Quackdas project');
+    if (!filePath) return { ok: false, canceled: true };
+    return await readProjectPayload(filePath, 'Selected project file');
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 ipcMain.handle('project:clearHandle', async () => {
-  currentProjectPath = null;
-  clearSemanticAvailabilityCache();
-  updateWindowTitle();
-  await persistLastProjectPath(null);
+  await setCurrentProjectPath(null);
   return { ok: true };
+});
+
+ipcMain.handle('project:commitOpenPath', async (_evt, projectPath) => {
+  try {
+    const normalizedPath = String(projectPath || '').trim();
+    if (!normalizedPath) {
+      return { ok: false, error: 'Project path is required.' };
+    }
+    if (path.extname(normalizedPath).toLowerCase() !== '.qdpx') {
+      return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
+    }
+    await setCurrentProjectPath(normalizedPath);
+    return { ok: true, path: normalizedPath };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 ipcMain.handle('project:hasHandle', async () => {
@@ -827,10 +1009,40 @@ ipcMain.handle('project:getInfo', async () => {
   };
 });
 
+ipcMain.handle('settings:getStorageMode', async () => {
+  const diskImageSettings = getDiskImageSettings();
+  return {
+    ok: true,
+    diskImageStorage: isDiskImageStorageEnabled(),
+    platform: process.platform,
+    supported: supportsDiskImageStorageMode(),
+    autoMount: !!diskImageSettings.autoMount,
+    autoUnmountOnClose: !!diskImageSettings.autoUnmountOnClose
+  };
+});
+
+ipcMain.handle('settings:setDiskImageStorage', async (_evt, enabled) => {
+  const nextEnabled = supportsDiskImageStorageMode() && !!enabled;
+  const diskImageSettings = normalizeDiskImageSettings(Object.assign({}, getDiskImageSettings(), { enabled: nextEnabled }));
+  writeAppPreferences({
+    diskImageStorage: nextEnabled,
+    diskImageSettings
+  });
+  clearSemanticAvailabilityCache();
+  return {
+    ok: true,
+    diskImageStorage: nextEnabled,
+    platform: process.platform,
+    supported: supportsDiskImageStorageMode()
+  };
+});
+
 
 
 ipcMain.handle('project:save', async (_evt, payload, opts) => {
   const saveAs = !!(opts && opts.saveAs);
+  const silent = !!(opts && opts.silent);
+  let writeTracked = false;
 
   try {
     let targetProjectPath = currentProjectPath;
@@ -862,18 +1074,20 @@ ipcMain.handle('project:save', async (_evt, payload, opts) => {
       throw new Error('Could not save QDPX: binary payload is missing.');
     }
     const buffer = decodeBase64PayloadOrThrow(qdpxBase64, MAX_QDPX_FILE_BYTES, 'QDPX payload');
-    await fs.promises.writeFile(targetProjectPath, buffer);
+    pendingProjectWriteCount += 1;
+    writeTracked = true;
+    await writeFileAtomically({ fs, path }, targetProjectPath, buffer);
+    pendingProjectWriteCount = Math.max(0, pendingProjectWriteCount - 1);
+    writeTracked = false;
 
-    if (currentProjectPath !== targetProjectPath) {
-      currentProjectPath = targetProjectPath;
-      clearSemanticAvailabilityCache();
-      updateWindowTitle();
-    }
-    await persistLastProjectPath(targetProjectPath);
+    await setCurrentProjectPath(targetProjectPath);
 
     return { ok: true, path: targetProjectPath };
   } catch (err) {
-    dialog.showErrorBox('Save failed', err.message || String(err));
+    if (writeTracked) pendingProjectWriteCount = Math.max(0, pendingProjectWriteCount - 1);
+    if (!silent) {
+      dialog.showErrorBox('Save failed', err.message || String(err));
+    }
     return { ok: false, error: err.message || String(err) };
   }
 });
@@ -882,10 +1096,30 @@ ipcMain.handle('project:openLastUsed', async () => {
   try {
     const rememberedPath = await readLastProjectPath();
     if (!rememberedPath) return { ok: false, reason: 'none' };
+    const shouldWaitForDiskImage = !!(isDiskImageStorageEnabled() && getDiskImageSettings().imagePath);
     try {
       await fs.promises.access(rememberedPath, fs.constants.F_OK);
     } catch (_) {
-      await persistLastProjectPath(null);
+      if (shouldWaitForDiskImage) {
+        try {
+          await waitForPathAccessible(rememberedPath, { attempts: 20, delayMs: 250 });
+        } catch (_) {}
+      }
+      try {
+        await fs.promises.access(rememberedPath, fs.constants.F_OK);
+      } catch (_) {
+        if (!shouldWaitForDiskImage) {
+          await persistLastProjectPath(null);
+        }
+        return { ok: false, reason: 'missing' };
+      }
+    }
+    try {
+      await fs.promises.access(rememberedPath, fs.constants.R_OK);
+    } catch (_) {
+      if (!shouldWaitForDiskImage) {
+        await persistLastProjectPath(null);
+      }
       return { ok: false, reason: 'missing' };
     }
 
@@ -894,64 +1128,7 @@ ipcMain.handle('project:openLastUsed', async () => {
       await persistLastProjectPath(null);
       return { ok: false, reason: 'unsupported' };
     }
-    await ensureFileWithinLimit(rememberedPath, MAX_QDPX_FILE_BYTES, 'Last opened project file');
-    const buffer = await fs.promises.readFile(rememberedPath);
-    if (currentProjectPath !== rememberedPath) {
-      currentProjectPath = rememberedPath;
-      clearSemanticAvailabilityCache();
-      updateWindowTitle();
-    }
-    await persistLastProjectPath(currentProjectPath);
-    return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
-  } catch (err) {
-    return { ok: false, error: err.message || String(err) };
-  }
-});
-
-ipcMain.handle('project:createBackup', async (_evt, data, opts = {}) => {
-  try {
-    if (!data || typeof data !== 'string') {
-      return { ok: false, error: 'Invalid backup payload.' };
-    }
-    const reason = String(opts.reason || 'auto-backup');
-    const projectName = String(opts.projectName || 'untitled-project');
-    const bucket = getBackupBucket(projectName);
-    const backupDir = path.join(getBackupRootDir(), bucket);
-    await fs.promises.mkdir(backupDir, { recursive: true });
-
-    const backupName = makeBackupFileName(reason);
-    const backupPath = path.join(backupDir, backupName);
-    const buffer = decodeBase64PayloadOrThrow(data, MAX_QDPX_FILE_BYTES, 'Backup payload');
-    await fs.promises.writeFile(backupPath, buffer);
-    await pruneBackups(backupDir);
-
-    return { ok: true, id: backupName };
-  } catch (err) {
-    return { ok: false, error: err.message || String(err) };
-  }
-});
-
-ipcMain.handle('project:listBackups', async (_evt, opts = {}) => {
-  try {
-    const projectName = String(opts.projectName || 'untitled-project');
-    return await listBackupsForBucket(projectName);
-  } catch (err) {
-    return { ok: false, error: err.message || String(err), backups: [] };
-  }
-});
-
-ipcMain.handle('project:restoreBackup', async (_evt, backupId, opts = {}) => {
-  try {
-    const projectName = String(opts.projectName || 'untitled-project');
-    const id = path.basename(String(backupId || ''));
-    if (!id || !/\.qdpx$/i.test(id)) {
-      return { ok: false, error: 'Invalid backup identifier.' };
-    }
-
-    const bucket = getBackupBucket(projectName);
-    const backupPath = path.join(getBackupRootDir(), bucket, id);
-    const data = await fs.promises.readFile(backupPath);
-    return { ok: true, kind: 'qdpx', data: data.toString('base64') };
+    return await readProjectPayload(rememberedPath, 'Last opened project file');
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
@@ -1261,10 +1438,11 @@ ipcMain.handle('semantic:startIndexing', async (evt, payload = {}) => {
       job.terminateTimer = null;
     }
     const current = semanticIndexJobsByWebContents.get(webContentsId);
-    if (current && current.worker === worker && current.status === 'running' && code !== 0) {
+    if (!current || current.worker !== worker) return;
+    if (current.status === 'running' && code !== 0) {
       safeSendToWebContents(webContents, 'semantic:indexError', { ok: false, code: 'WORKER_EXIT', message: `Index worker exited with code ${code}.` });
-      semanticIndexJobsByWebContents.delete(webContentsId);
     }
+    semanticIndexJobsByWebContents.delete(webContentsId);
   });
 
   return { ok: true, started: true, modelName: availability.selectedModel || availability.configuredModel };
@@ -1489,30 +1667,10 @@ ipcMain.handle('semantic:indexingState', async (evt) => {
 
 // Native file helpers (used to avoid relying on <input type="file"> in packaged builds)
 ipcMain.handle('file:openProjectFile', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'Import Quackdas project',
-    properties: ['openFile'],
-    filters: [
-      { name: 'Quackdas Project', extensions: ['qdpx'] }
-    ]
-  });
-  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
   try {
-    const filePath = filePaths[0];
-    const ext = path.extname(filePath).toLowerCase();
-
-    if (ext !== '.qdpx') {
-      return { ok: false, error: 'Unsupported project format. Please choose a .qdpx file.' };
-    }
-    await ensureFileWithinLimit(filePath, MAX_QDPX_FILE_BYTES, 'Selected project file');
-    const buffer = await fs.promises.readFile(filePath);
-    if (currentProjectPath !== filePath) {
-      currentProjectPath = filePath;
-      clearSemanticAvailabilityCache();
-      updateWindowTitle();
-    }
-    await persistLastProjectPath(filePath);
-    return { ok: true, kind: 'qdpx', data: buffer.toString('base64') };
+    const filePath = await promptForProjectFileSelection('Open Quackdas project');
+    if (!filePath) return { ok: false, canceled: true };
+    return await readProjectPayload(filePath, 'Selected project file');
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
@@ -1554,8 +1712,9 @@ ipcMain.handle('ocr:getStatus', async () => {
     return { ok: true, installed: tesseractInstalledCache };
   }
 
+  const tesseractCommand = resolveTesseractCommand({ fs, env: process.env, platform: process.platform });
   const installed = await new Promise((resolve) => {
-    execFile('tesseract', ['--version'], {
+    execFile(tesseractCommand, ['--version'], {
       windowsHide: true,
       timeout: 5000,
       maxBuffer: 1024 * 1024
@@ -1578,145 +1737,17 @@ ipcMain.handle('ocr:getStatus', async () => {
   return { ok: true, installed };
 });
 
-// OCR helper for scanned/image-only PDFs (renderer sends page image as data URL).
-ipcMain.handle('ocr:image', async (_evt, payload = {}) => {
-  let tmpDir = null;
-  const formatOcrError = (err, stderrText = '') => {
-    const stderr = String(stderrText || '').trim();
-    const raw = String(err?.message || err || 'Unknown OCR error');
 
-    if (err && err.code === 'ENOENT') {
-      return {
-        code: 'ENOENT',
-        error: 'Tesseract OCR was not found on this machine.'
-      };
-    }
-
-    if (stderr.includes('Failed loading language')) {
-      return {
-        code: 'LANG_MISSING',
-        error: 'Tesseract could not load one or more OCR language models.'
-      };
-    }
-
-    if (err && (err.killed || err.signal === 'SIGTERM')) {
-      return {
-        code: 'TIMEOUT',
-        error: 'OCR timed out while processing this page.'
-      };
-    }
-
-    return {
-      code: err?.code || 'OCR_FAILED',
-      error: stderr ? `${raw} (${stderr.slice(0, 240)})` : raw
-    };
-  };
-
-  try {
-    const dataUrl = String(payload.dataUrl || '');
-    const lang = String(payload.lang || 'eng');
-    const psm = Number.isFinite(payload.psm) ? String(payload.psm) : '6';
-
-    if (!dataUrl.startsWith('data:image/png;base64,')) {
-      return { ok: false, error: 'Invalid OCR image payload.' };
-    }
-
-    const imageBase64 = dataUrl.substring('data:image/png;base64,'.length);
-    const estimatedImageBytes = estimateBase64DecodedBytes(imageBase64);
-    if (!estimatedImageBytes) {
-      return { ok: false, error: 'Invalid OCR image payload.' };
-    }
-    if (estimatedImageBytes > MAX_OCR_IMAGE_BYTES) {
-      return {
-        ok: false,
-        error: `OCR image is too large (${formatBytes(estimatedImageBytes)}). Maximum supported size is ${formatBytes(MAX_OCR_IMAGE_BYTES)}.`
-      };
-    }
-    const imageBuffer = Buffer.from(imageBase64, 'base64');
-    if (!imageBuffer.length || imageBuffer.length > MAX_OCR_IMAGE_BYTES) {
-      return {
-        ok: false,
-        error: `OCR image is too large (${formatBytes(imageBuffer.length)}). Maximum supported size is ${formatBytes(MAX_OCR_IMAGE_BYTES)}.`
-      };
-    }
-
-    tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'quackdas-ocr-'));
-    const imgPath = path.join(tmpDir, 'page.png');
-    const outBase = path.join(tmpDir, 'ocr');
-    const tsvPath = outBase + '.tsv';
-    await fs.promises.writeFile(imgPath, imageBuffer);
-
-    const runTesseract = (useLang) => {
-      return new Promise((resolve, reject) => {
-        execFile('tesseract', [imgPath, outBase, '-l', useLang, '--psm', psm, 'tsv'], {
-          windowsHide: true,
-          timeout: 120000,
-          maxBuffer: 16 * 1024 * 1024
-        }, (error, _stdout, stderr) => {
-          if (error) {
-            const formatted = formatOcrError(error, stderr);
-            reject(Object.assign(error, { __ocr: formatted }));
-            return;
-          }
-          resolve();
-        });
-      });
-    };
-
-    try {
-      await runTesseract(lang);
-    } catch (e) {
-      // Fallback language for systems without Swedish model installed.
-      if (lang !== 'eng') await runTesseract('eng');
-      else throw e;
-    }
-
-    const tsv = await fs.promises.readFile(tsvPath, 'utf8');
-    const lines = tsv.split(/\r?\n/);
-    const words = [];
-    let fullText = '';
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line) continue;
-      const cols = line.split('\t');
-      if (cols.length < 12) continue;
-
-      const level = Number(cols[0]);
-      const left = Number(cols[6]);
-      const top = Number(cols[7]);
-      const width = Number(cols[8]);
-      const height = Number(cols[9]);
-      const conf = Number(cols[10]);
-      const text = (cols[11] || '').trim();
-      const lineNum = Number(cols[4]);
-
-      if (level !== 5 || !text || width <= 0 || height <= 0) continue;
-      if (Number.isFinite(conf) && conf < 15) continue;
-
-      words.push({ text, left, top, width, height, conf, lineNum });
-      fullText += (fullText ? ' ' : '') + text;
-    }
-
-    return { ok: true, words, text: fullText };
-  } catch (err) {
-    const normalized = err?.__ocr || formatOcrError(err);
-    return {
-      ok: false,
-      error: normalized.error,
-      code: normalized.code
-    };
-  } finally {
-    if (tmpDir) {
-      try {
-        await fs.promises.rm(tmpDir, { recursive: true, force: true });
-      } catch (_) {}
-    }
+app.whenReady().then(async () => {
+  if (diskImageStorageService) {
+    await diskImageStorageService.prepareStartupMount().catch(() => ({ ok: false }));
   }
-});
-
-app.whenReady().then(() => {
   createWindow();
+  if (win && !win.isDestroyed()) {
+    win.webContents.once('did-finish-load', () => {
+      maybeShowDiskImageStartupWarning().catch(() => {});
+    });
+  }
   // Note: We don't register a globalShortcut for Cmd+Q because:
   // 1. The menu accelerator handles it
   // 2. globalShortcut can conflict with menu accelerators
@@ -1727,11 +1758,24 @@ app.on('window-all-closed', () => {
   if (!isMac) app.quit();
 });
 
-app.on('before-quit', () => {
-  isQuitting = true;
-  // Ensure any hidden window is destroyed to allow quit
-  // This fixes dock right-click "Quit" not working
-  destroyMainWindowForQuit();
+app.on('before-quit', (event) => {
+  if (quitPreparationComplete) {
+    isQuitting = true;
+    destroyMainWindowForQuit();
+    return;
+  }
+  event.preventDefault();
+  if (quitPreparationInProgress) return;
+  quitPreparationInProgress = true;
+  prepareAppForQuit()
+    .catch(() => {})
+    .finally(() => {
+      quitPreparationInProgress = false;
+      quitPreparationComplete = true;
+      isQuitting = true;
+      destroyMainWindowForQuit();
+      app.quit();
+    });
 });
 
 app.on('activate', () => {

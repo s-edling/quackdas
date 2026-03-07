@@ -129,7 +129,7 @@ function saveMemo(e) {
     }
 
     saveData();
-    renderAll();
+    renderDocumentsCodesAndCurrentDocument();
     closeMemoModal();
 }
 
@@ -141,9 +141,7 @@ function deleteMemo(memoId) {
     saveData();
 
     // Keep marker gutters and memo indicators in sync immediately.
-    renderDocuments();
-    renderCodes();
-    renderCurrentDocument();
+    renderDocumentsCodesAndCurrentDocument();
 
     // Refresh the modal list
     renderExistingMemos(currentMemoTarget.type, currentMemoTarget.id);

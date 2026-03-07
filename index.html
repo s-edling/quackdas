@@ -91,6 +91,11 @@
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                             Project health check
                         </button>
+                        <button class="header-dropdown-item" id="headerDiskImageSettingsItem" data-action="openDiskImageSettingsAndCloseHeaderDropdown" hidden>
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.7 1.7 0 0 0-1.82-.33 1.7 1.7 0 0 0-1 1.54V21a2 2 0 0 1-4 0v-.09a1.7 1.7 0 0 0-1-1.54 1.7 1.7 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.7 1.7 0 0 0 8.91 4.6H9a1.7 1.7 0 0 0 1-1.54V3a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 1.54 1.7 1.7 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.54 1H21a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.54 1z"/></svg>
+                            <span>Disk image storage</span>
+                            <span id="headerDiskImageStorageStatus" style="margin-left:auto;color:var(--text-tertiary);"></span>
+                        </button>
                         <button class="header-dropdown-item" data-action="openRestoreBackupModalAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3,3 3,9 9,9"/><path d="M12 7v5l3 3"/></svg>
                             Restore backup…
@@ -104,7 +109,6 @@
                 <input type="file" id="importProjectInput" accept=".qdpx" style="display: none;" data-action="importProjectChange">
             </div>
         </header>
-
         <!-- Codes Panel -->
         <aside class="codes-panel">
             <div class="panel-header">
@@ -139,6 +143,15 @@
                             <span id="pdfCurrentPage">1</span>/<span id="pdfTotalPages">1</span>
                         </span>
                         <button class="zoom-btn" data-action="pdfNextPage" id="pdfNextBtn" title="Next page" disabled>▶</button>
+                    </div>
+                    <div class="pdf-coding-mode-controls" id="pdfCodingModeControls" hidden>
+                        <button class="doc-action-btn pdf-coding-mode-toggle" id="pdfCodingModeRegionBtn" type="button" data-action="togglePdfCodingMode" aria-pressed="false" aria-label="Switch to region coding mode" title="Switch to region coding mode">
+                            <svg class="toolbar-icon pdf-coding-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="4.5" y="4.5" width="11" height="11" rx="1.5" stroke-dasharray="2.25 2.25"></rect>
+                                <path d="M14.5 13.5 19.5 18.5"></path>
+                                <path d="M15.5 18.5h4v-4"></path>
+                            </svg>
+                        </button>
                     </div>
                     <div class="pdf-selection-status" id="pdfSelectionStatus" hidden>
                         Region selected. Click a code to apply. Press Esc to clear.
@@ -190,13 +203,13 @@
 
         <!-- Documents Panel -->
         <aside class="documents-panel">
-            <div class="panel-header">
+            <div class="panel-header documents-section-header">
                 <div class="panel-title">Recent Documents</div>
             </div>
             <div class="documents-list" id="recentDocumentsList">
                 <!-- Recent documents will be populated here -->
             </div>
-            <div class="panel-header" style="border-top: 1px solid var(--border);">
+            <div class="panel-header documents-section-header documents-section-header-divider">
                 <div class="panel-title">All Documents</div>
                 <button class="panel-header-action" data-action="createFolder" title="New folder">+ Folder</button>
             </div>
@@ -370,6 +383,81 @@
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeHealthCheckModal">Close</button>
                 <button type="button" class="btn btn-primary" data-action="applySelectedHealthFixes">Apply selected</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="diskImageSettingsModal" class="modal">
+        <div class="modal-content modal-content-disk-image">
+            <div class="disk-image-modal-header">
+                <h2 class="modal-title">Disk image storage</h2>
+                <button type="button" class="doc-action-btn disk-image-help-btn" data-action="openDiskImageHelpModal" title="What is disk image storage?" aria-label="What is disk image storage?">?</button>
+            </div>
+            <div class="disk-image-status-banner" id="diskImageStatusBanner">Loading disk image settings…</div>
+            <div class="disk-image-settings-grid">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label checkbox-label">
+                        <input type="checkbox" id="diskImageEnabledCheckbox">
+                        Enable disk image storage
+                    </label>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label">Disk image</label>
+                    <div class="disk-image-path-row">
+                        <input type="text" class="form-input" id="diskImagePathInput" placeholder="No disk image selected" readonly>
+                        <button type="button" class="btn btn-secondary" data-action="chooseDiskImagePath">Choose…</button>
+                        <button type="button" class="btn btn-secondary" data-action="clearDiskImagePath">Clear</button>
+                    </div>
+                    <p class="empty-state-hint">Use a writable `.sparsebundle`, `.sparseimage`, or `.dmg` on macOS.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label checkbox-label">
+                        <input type="checkbox" id="diskImageAutoMountCheckbox" data-action="toggleDiskImageAutoMount">
+                        Auto-mount on launch
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label checkbox-label">
+                        <input type="checkbox" id="diskImageAutoUnmountCheckbox" data-action="toggleDiskImageAutoUnmount">
+                        Auto-unmount on quit
+                    </label>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label checkbox-label">
+                        <input type="checkbox" id="diskImageAllowOverrideCheckbox" data-action="toggleDiskImageAllowOverride">
+                        Allow manual override when blocked agent apps are running
+                    </label>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label class="form-label" for="diskImageBlockedAppsInput">Blocked apps</label>
+                    <textarea class="form-textarea" id="diskImageBlockedAppsInput" rows="6" placeholder="One app or process name per line"></textarea>
+                    <p class="empty-state-hint">Auto-mount is blocked while these known local agent apps are running.</p>
+                </div>
+            </div>
+            <div class="disk-image-modal-footer">
+                <div class="disk-image-runtime-meta" id="diskImageRuntimeMeta"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" data-action="refreshDiskImageSettings">Refresh</button>
+                    <button type="button" class="btn btn-secondary" data-action="mountDiskImageNow">Mount now</button>
+                    <button type="button" class="btn btn-secondary" data-action="unmountDiskImageNow">Unmount now</button>
+                    <button type="button" class="btn btn-primary" data-action="saveDiskImageSettings">Save settings</button>
+                    <button type="button" class="btn btn-secondary" data-action="closeDiskImageSettingsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="diskImageHelpModal" class="modal">
+        <div class="modal-content modal-content-disk-image-help">
+            <h2 class="modal-title">What is Disk image storage?</h2>
+            <div class="disk-image-help-copy">
+                <p>Disk image storage lets you store the project file on an encrypted disk image.</p>
+                <p>This is useful if you run local apps or AI tools that can access files on your computer and may upload data to the cloud.</p>
+                <p>Quackdas can mount the disk image automatically at startup and unmount it when you close the app.</p>
+                <p>It also warns you if you try to start the app or manually mount a disk image while common cloud-based AI agent apps are open.</p>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-action="closeDiskImageHelpModal">Close</button>
             </div>
         </div>
     </div>
@@ -830,6 +918,7 @@
     <script src="js/state.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/render.js"></script>
+    <script src="js/render-panels.js"></script>
     <script src="js/documents.js"></script>
     <script src="js/codes.js"></script>
     <script src="js/cases.js"></script>

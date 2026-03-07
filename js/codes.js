@@ -88,7 +88,7 @@ function deleteCode(codeId, e) {
     });
     
     saveData();
-    renderAll();
+    renderDocumentsCodesAndCurrentDocument();
 }
 
 async function renameCode(codeId) {
@@ -100,7 +100,7 @@ async function renameCode(codeId) {
         saveHistory();
         code.name = newName;
         saveData();
-        renderAll();
+        renderCodesAndCurrentDocument();
     }
 }
 
@@ -139,7 +139,7 @@ async function assignShortcut(codeId) {
     
     code.shortcut = trimmed;
     saveData();
-    renderAll();
+    renderCodesAndCurrentDocument();
 }
 
 function filterByCode(codeId, e) {
@@ -180,7 +180,7 @@ function filterByCode(codeId, e) {
             codeViewUiState.notesExpanded = false;
         }
     }
-    renderAll();
+    renderCodesAndCurrentDocument();
 
     // Restore scroll position when clearing filter
     if (!appData.filterCodeId && appData.currentDocId) {
@@ -198,7 +198,7 @@ function clearFilter() {
     // Don't save scroll position when in filtered view
     
     appData.filterCodeId = null;
-    renderAll();
+    renderCodesAndCurrentDocument();
     
     // Restore scroll position
     if (appData.currentDocId) {

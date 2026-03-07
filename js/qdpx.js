@@ -22,6 +22,45 @@ function generateGUID() {
 let idToGuid = {};
 let guidToId = {};
 
+function getQdpxGlobal(name) {
+    if (typeof globalThis === 'undefined') return undefined;
+    return globalThis[name];
+}
+
+function getProjectDataForQdpx() {
+    if (typeof appData !== 'undefined') return appData;
+    const project = getQdpxGlobal('appData');
+    if (project && typeof project === 'object') return project;
+    throw new Error('Project state is unavailable for QDPX operation.');
+}
+
+function getProjectFactoryForQdpx() {
+    if (typeof makeEmptyProject === 'function') return makeEmptyProject;
+    const factory = getQdpxGlobal('makeEmptyProject');
+    if (typeof factory === 'function') return factory;
+    throw new Error('Project factory is unavailable for QDPX import.');
+}
+
+function base64ToArrayBufferForQdpx(value) {
+    if (typeof base64ToArrayBuffer === 'function') return base64ToArrayBuffer(value);
+    const helper = getQdpxGlobal('base64ToArrayBuffer');
+    if (typeof helper === 'function') return helper(value);
+    throw new Error('base64ToArrayBuffer helper is unavailable for QDPX export.');
+}
+
+function arrayBufferToBase64ForQdpx(value) {
+    if (typeof arrayBufferToBase64 === 'function') return arrayBufferToBase64(value);
+    const helper = getQdpxGlobal('arrayBufferToBase64');
+    if (typeof helper === 'function') return helper(value);
+    throw new Error('arrayBufferToBase64 helper is unavailable for QDPX import.');
+}
+
+function normalizePdfRegionForQdpx(region) {
+    if (typeof normalizePdfRegionShape === 'function') return normalizePdfRegionShape(region);
+    const helper = getQdpxGlobal('normalizePdfRegionShape');
+    return typeof helper === 'function' ? helper(region) : (region || {});
+}
+
 // QDPX import safety limits (defense-in-depth for untrusted files).
 const QDPX_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024; // 512 MB compressed archive
 const QDPX_MAX_XML_BYTES = 25 * 1024 * 1024; // 25 MB project.qde
@@ -556,6 +595,7 @@ async function exportToQdpx() {
     if (typeof JSZip === 'undefined') {
         throw new Error('JSZip library not loaded');
     }
+    const projectData = getProjectDataForQdpx();
     
     const zip = new JSZip();
     const sourcesFolder = zip.folder('sources');
@@ -568,25 +608,31 @@ async function exportToQdpx() {
     const userGuid = generateGUID();
     const projectGuid = generateGUID();
     
-    appData.documents.forEach(doc => getOrCreateGuid(doc.id));
-    appData.codes.forEach(code => getOrCreateGuid(code.id));
-    appData.segments.forEach(seg => getOrCreateGuid(seg.id));
-    appData.memos.forEach(memo => getOrCreateGuid(memo.id));
-    appData.folders.forEach(folder => getOrCreateGuid(folder.id));
-    (Array.isArray(appData.cases) ? appData.cases : []).forEach(caseItem => getOrCreateGuid(caseItem.id));
-    (Array.isArray(appData.variableDefinitions) ? appData.variableDefinitions : []).forEach(variableDef => getOrCreateGuid(variableDef.id));
+    projectData.documents.forEach(doc => getOrCreateGuid(doc.id));
+    projectData.codes.forEach(code => getOrCreateGuid(code.id));
+    projectData.segments.forEach(seg => getOrCreateGuid(seg.id));
+    projectData.memos.forEach(memo => getOrCreateGuid(memo.id));
+    projectData.folders.forEach(folder => getOrCreateGuid(folder.id));
+    (Array.isArray(projectData.cases) ? projectData.cases : []).forEach(caseItem => getOrCreateGuid(caseItem.id));
+    (Array.isArray(projectData.variableDefinitions) ? projectData.variableDefinitions : []).forEach(variableDef => getOrCreateGuid(variableDef.id));
     
     // Add source files and build source list
     const sources = [];
-    for (const doc of appData.documents) {
+    for (const doc of projectData.documents) {
         const guid = getOrCreateGuid(doc.id);
         
         if (doc.type === 'pdf' && doc.pdfData) {
             const pdfFileName = `${guid}.pdf`;
             const textFileName = `${guid}.txt`;
-            const pdfBinary = base64ToArrayBuffer(doc.pdfData);
+            const pdfBinary = base64ToArrayBufferForQdpx(doc.pdfData);
             sourcesFolder.file(pdfFileName, pdfBinary);
             sourcesFolder.file(textFileName, doc.content || '');
+            let pageDataPath = '';
+            if (Array.isArray(doc.pdfPages) && doc.pdfPages.length > 0) {
+                const pageDataFileName = `${guid}.pages.json`;
+                sourcesFolder.file(pageDataFileName, JSON.stringify(doc.pdfPages));
+                pageDataPath = `internal://${pageDataFileName}`;
+            }
             
             sources.push({
                 type: 'PDFSource',
@@ -594,6 +640,7 @@ async function exportToQdpx() {
                 name: doc.title,
                 path: `internal://${pdfFileName}`,
                 representationTextPath: `internal://${textFileName}`,
+                pageDataPath,
                 plainTextContent: doc.content, // Extracted text for searching
                 created: doc.created,
                 modified: doc.lastAccessed
@@ -628,10 +675,10 @@ async function exportToQdpx() {
     // Build XML
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += `<Project xmlns="urn:QDA-XML:project:1.0" `;
-    xml += `name="${escapeXml(appData.projectName || 'Quackdas Project')}" `;
+    xml += `name="${escapeXml(projectData.projectName || 'Quackdas Project')}" `;
     xml += `origin="Quackdas" `;
     xml += `creatingUserGUID="${userGuid}" `;
-    xml += `creationDateTime="${formatDateTime(appData.lastSaveTime)}" `;
+    xml += `creationDateTime="${formatDateTime(projectData.lastSaveTime)}" `;
     xml += `modifyingUserGUID="${userGuid}" `;
     xml += `modifiedDateTime="${formatDateTime(new Date())}">\n`;
     
@@ -645,8 +692,8 @@ async function exportToQdpx() {
     xml += '    <Codes>\n';
     
     // Build code hierarchy (top-level first, then children)
-    const topLevelCodes = appData.codes.filter(c => !c.parentId);
-    const childCodes = appData.codes.filter(c => c.parentId);
+    const topLevelCodes = projectData.codes.filter(c => !c.parentId);
+    const childCodes = projectData.codes.filter(c => c.parentId);
     
     function renderCode(code, indent = '      ') {
         const guid = getOrCreateGuid(code.id);
@@ -693,7 +740,11 @@ async function exportToQdpx() {
             xml += `creationDateTime="${formatDateTime(source.created)}" `;
             xml += `modifyingUserGUID="${userGuid}" `;
             xml += `modifiedDateTime="${formatDateTime(source.modified)}">\n`;
-            xml += `      <Representation guid="${source.guid}" plainTextPath="${escapeXml(source.representationTextPath)}"/>\n`;
+            xml += `      <Representation guid="${source.guid}" plainTextPath="${escapeXml(source.representationTextPath)}"`;
+            if (source.pageDataPath) {
+                xml += ` quackdasPdfPagesPath="${escapeXml(source.pageDataPath)}"`;
+            }
+            xml += '/>\n';
             xml += '    </PDFSource>\n';
         } else {
             xml += `    <TextSource guid="${source.guid}" `;
@@ -710,7 +761,7 @@ async function exportToQdpx() {
     });
     xml += '  </Sources>\n';
     
-    const variableDefinitions = buildVariableDefinitionsForExport(appData);
+    const variableDefinitions = buildVariableDefinitionsForExport(projectData);
     const variableGuidByName = new Map();
     variableDefinitions.forEach(variableDef => {
         const variableGuid = getOrCreateGuid(variableDef.id);
@@ -727,7 +778,7 @@ async function exportToQdpx() {
 
     // Cases
     xml += '  <Cases>\n';
-    (Array.isArray(appData.cases) ? appData.cases : []).forEach(caseItem => {
+    (Array.isArray(projectData.cases) ? projectData.cases : []).forEach(caseItem => {
         if (!caseItem || typeof caseItem !== 'object') return;
         const caseGuid = getOrCreateGuid(caseItem.id);
         const caseName = String(caseItem.name || '').trim() || 'Unnamed Case';
@@ -762,7 +813,7 @@ async function exportToQdpx() {
     
     // Selections (coded segments)
     xml += '  <Selections>\n';
-    appData.segments.forEach(segment => {
+    projectData.segments.forEach(segment => {
         if (segment.pdfRegion) return;
         if (!Number.isFinite(segment.startIndex) || !Number.isFinite(segment.endIndex) || segment.endIndex <= segment.startIndex) return;
         const segGuid = getOrCreateGuid(segment.id);
@@ -788,7 +839,7 @@ async function exportToQdpx() {
     
     // Notes (memos)
     xml += '  <Notes>\n';
-    appData.memos.forEach(memo => {
+    projectData.memos.forEach(memo => {
         const memoGuid = getOrCreateGuid(memo.id);
         const targetGuid = memo.targetId ? getOrCreateGuid(memo.targetId) : null;
         const memoTag = String(memo.tag || '').trim();
@@ -813,9 +864,9 @@ async function exportToQdpx() {
     
     // Sets (folders as document sets)
     xml += '  <Sets>\n';
-    appData.folders.forEach(folder => {
+    projectData.folders.forEach(folder => {
         const folderGuid = getOrCreateGuid(folder.id);
-        const docsInFolder = appData.documents.filter(d => d.folderId === folder.id);
+        const docsInFolder = projectData.documents.filter(d => d.folderId === folder.id);
         
         xml += `    <Set guid="${folderGuid}" name="${escapeXml(folder.name)}">\n`;
         if (folder.description) {
@@ -833,7 +884,7 @@ async function exportToQdpx() {
     xml += '  <QuackdasExtensions version="1">\n';
 
     xml += '    <FolderHierarchy>\n';
-    appData.folders.forEach(folder => {
+    projectData.folders.forEach(folder => {
         const folderGuid = getOrCreateGuid(folder.id);
         const parentGuid = folder.parentId ? getOrCreateGuid(folder.parentId) : '';
         xml += `      <Folder guid="${folderGuid}" `;
@@ -844,13 +895,11 @@ async function exportToQdpx() {
     xml += '    </FolderHierarchy>\n';
 
     xml += '    <PdfRegionSelections>\n';
-    appData.segments.forEach(segment => {
+    projectData.segments.forEach(segment => {
         if (!segment || !segment.pdfRegion) return;
         const sourceGuid = getOrCreateGuid(segment.docId);
         const segGuid = getOrCreateGuid(segment.id);
-        const r = (typeof normalizePdfRegionShape === 'function')
-            ? normalizePdfRegionShape(segment.pdfRegion)
-            : (segment.pdfRegion || {});
+        const r = normalizePdfRegionForQdpx(segment.pdfRegion);
         xml += `      <PdfRegionSelection guid="${segGuid}" `;
         xml += `sourceGUID="${sourceGuid}" `;
         xml += `pageNum="${Number(r.pageNum) || 1}" `;
@@ -872,7 +921,7 @@ async function exportToQdpx() {
     xml += '    </PdfRegionSelections>\n';
 
     xml += '    <DocumentMetadata>\n';
-    appData.documents.forEach(doc => {
+    projectData.documents.forEach(doc => {
         if (!doc || !doc.metadata || typeof doc.metadata !== 'object') return;
         const entries = Object.entries(doc.metadata).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '');
         if (entries.length === 0) return;
@@ -886,7 +935,7 @@ async function exportToQdpx() {
     xml += '    </DocumentMetadata>\n';
 
     xml += '    <CodeViewPresets>\n';
-    (Array.isArray(appData.codeViewPresets) ? appData.codeViewPresets : []).forEach((preset) => {
+    (Array.isArray(projectData.codeViewPresets) ? projectData.codeViewPresets : []).forEach((preset) => {
         if (!preset || !preset.id || !preset.name) return;
         const state = preset.state || {};
         xml += `      <Preset id="${escapeXml(String(preset.id))}" name="${escapeXml(String(preset.name))}" updated="${escapeXml(String(preset.updated || ''))}">\n`;
@@ -974,7 +1023,7 @@ async function importFromQdpx(qdpxData) {
     guidToId = {};
     
     // Build new project
-    const project = makeEmptyProject();
+    const project = getProjectFactoryForQdpx()();
     project.projectName = projectEl.getAttribute('name') || 'Imported Project';
     const docsByGuid = {};
     
@@ -1040,6 +1089,7 @@ async function importFromQdpx(qdpxData) {
         const richTextPathAttr = sourceEl.getAttribute('quackdasRichTextPath');
         const representationEl = sourceEl.querySelector(':scope > Representation');
         const representationTextPath = representationEl ? representationEl.getAttribute('plainTextPath') : '';
+        const representationPdfPagesPath = representationEl ? representationEl.getAttribute('quackdasPdfPagesPath') : '';
         
         const docId = buildQdpxId('doc');
         guidToId[guid] = docId;
@@ -1066,7 +1116,7 @@ async function importFromQdpx(qdpxData) {
                 if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
                     throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
                 }
-                pdfData = arrayBufferToBase64(pdfBinary);
+                pdfData = arrayBufferToBase64ForQdpx(pdfBinary);
 
                 // Prefer representation text files when present (NVivo layout).
                 const resolvedRepText = resolveZipSourceFile(representationTextPath || plainTextPathAttr, zipLookup);
@@ -1099,6 +1149,33 @@ async function importFromQdpx(qdpxData) {
                         pdfPages = extractResult.pages;
                     } catch (e) {
                         console.warn('Could not extract PDF text:', e);
+                    }
+                }
+
+                if (representationPdfPagesPath) {
+                    const resolvedPageData = resolveZipSourceFile(representationPdfPagesPath, zipLookup);
+                    if (resolvedPageData && resolvedPageData.file) {
+                        const declaredBytes = getZipObjectDeclaredUncompressedBytes(resolvedPageData.file);
+                        if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                            throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                        }
+                        const pageDataJson = await resolvedPageData.file.async('string');
+                        const pageDataBytes = getStringByteLength(pageDataJson);
+                        if (pageDataBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+                            throw new Error(`Invalid QDPX file: source "${name}" exceeds per-file safety limit.`);
+                        }
+                        expandedReadBytes += pageDataBytes;
+                        if (expandedReadBytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+                            throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+                        }
+                        try {
+                            const parsedPages = JSON.parse(pageDataJson);
+                            if (Array.isArray(parsedPages)) {
+                                pdfPages = parsedPages;
+                            }
+                        } catch (err) {
+                            console.warn('Could not parse saved PDF page data:', err);
+                        }
                     }
                 }
             }
@@ -1385,13 +1462,7 @@ async function importFromQdpx(qdpxData) {
             codeIds,
             created: getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString(),
             modified: getAttrFirst(selEl, ['quackdasModified', 'modifiedDateTime']) || getAttrFirst(selEl, ['quackdasCreated', 'creationDateTime']) || doc.created || new Date().toISOString(),
-            pdfRegion: (typeof normalizePdfRegionShape === 'function' ? normalizePdfRegionShape({
-                pageNum: parseInt(getAttrFirst(selEl, ['pageNum']), 10) || 1,
-                xNorm: parseFloat(getAttrFirst(selEl, ['xNorm', 'x'])) || 0,
-                yNorm: parseFloat(getAttrFirst(selEl, ['yNorm', 'y'])) || 0,
-                wNorm: parseFloat(getAttrFirst(selEl, ['wNorm', 'width'])) || 0,
-                hNorm: parseFloat(getAttrFirst(selEl, ['hNorm', 'height'])) || 0
-            }) : {
+            pdfRegion: normalizePdfRegionForQdpx({
                 pageNum: parseInt(getAttrFirst(selEl, ['pageNum']), 10) || 1,
                 xNorm: parseFloat(getAttrFirst(selEl, ['xNorm', 'x'])) || 0,
                 yNorm: parseFloat(getAttrFirst(selEl, ['yNorm', 'y'])) || 0,
@@ -1597,4 +1668,28 @@ async function extractPdfText(arrayBuffer) {
     }
     
     return { text: fullText, pages };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        QDPX_MAX_ARCHIVE_BYTES,
+        QDPX_MAX_XML_BYTES,
+        QDPX_MAX_ZIP_ENTRIES,
+        QDPX_MAX_SINGLE_SOURCE_BYTES,
+        QDPX_MAX_EXPANDED_READ_BYTES,
+        getBinaryByteLength,
+        getStringByteLength,
+        getZipObjectDeclaredUncompressedBytes,
+        normalizeQdpxSourcePath,
+        buildZipFileLookup,
+        resolveZipSourceFile,
+        getSelectionCodeGuids,
+        collectPlainTextSelections,
+        normalizeSelectionRange,
+        parseColor,
+        normalizeVariableType,
+        buildVariableDefinitionsForExport,
+        exportToQdpx,
+        importFromQdpx
+    };
 }

@@ -45,9 +45,10 @@ document.addEventListener('DOMContentLoaded', async function() {
             try {
                 const result = await window.electronAPI.openLastUsedProject();
                 if (result && result.ok && result.data) {
-                    reopenedLastProject = true;
                     const buffer = decodeBase64ToArrayBuffer(result.data);
-                    await applyImportedQdpx(buffer);
+                    reopenedLastProject = await applyImportedQdpx(buffer, {
+                        projectPath: String(result.path || '')
+                    });
                 }
             } catch (err) {
                 console.warn('Could not reopen last project on startup:', err);
@@ -60,6 +61,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateHistoryButtons();
         updateSaveStatus();
         applyPlatformShortcutTooltips();
+        if (typeof initStorageModePreference === 'function') {
+            await initStorageModePreference();
+        }
         if (typeof initCodeViewDelegatedHandlers === 'function') initCodeViewDelegatedHandlers();
         if (typeof initSearchResultsDelegatedHandlers === 'function') initSearchResultsDelegatedHandlers();
         if (typeof initCooccurrenceDelegatedHandlers === 'function') initCooccurrenceDelegatedHandlers();
@@ -234,6 +238,7 @@ function setupStaticActionBindings() {
         switch (el.dataset.action) {
             case 'openSearchModal': openSearchModal(); break;
             case 'handleHeaderPrimaryAction': handleHeaderPrimaryAction(); break;
+            case 'openProject': importProjectNative(); break;
             case 'manualSave': manualSave(); break;
             case 'toggleHeaderDropdown': toggleHeaderDropdown(event); break;
             case 'newProjectAndCloseHeaderDropdown': newProject(); closeHeaderDropdown(); break;
@@ -241,6 +246,7 @@ function setupStaticActionBindings() {
             case 'manualSaveAsAndCloseHeaderDropdown': manualSave(true); closeHeaderDropdown(); break;
             case 'openStatsModalAndCloseHeaderDropdown': openStatsModal(); closeHeaderDropdown(); break;
             case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
+            case 'openDiskImageSettingsAndCloseHeaderDropdown': openDiskImageSettingsModal(); closeHeaderDropdown(); break;
             case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
             case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
             case 'openCaseModal': openCaseModal(); break;
@@ -249,6 +255,8 @@ function setupStaticActionBindings() {
             case 'redo': redo(); break;
             case 'pdfPrevPage': pdfPrevPage(); break;
             case 'pdfNextPage': pdfNextPage(); break;
+            case 'togglePdfCodingMode': togglePdfCodingMode(); break;
+            case 'setPdfCodingMode': setPdfCodingMode(String(el.dataset.pdfCodingMode || 'region')); break;
             case 'adjustZoomOut': adjustZoom(-10); break;
             case 'adjustZoomIn': adjustZoom(10); break;
             case 'openImportModal': openImportModal(); break;
@@ -265,7 +273,16 @@ function setupStaticActionBindings() {
             case 'closeMetadataModal': closeMetadataModal(); break;
             case 'closeStatsModal': closeStatsModal(); break;
             case 'closeHealthCheckModal': closeHealthCheckModal(); break;
+            case 'closeDiskImageSettingsModal': closeDiskImageSettingsModal(); break;
+            case 'openDiskImageHelpModal': openDiskImageHelpModal(); break;
+            case 'closeDiskImageHelpModal': closeDiskImageHelpModal(); break;
             case 'applySelectedHealthFixes': applySelectedHealthFixes(); break;
+            case 'chooseDiskImagePath': chooseDiskImagePath(); break;
+            case 'clearDiskImagePath': clearDiskImagePath(); break;
+            case 'refreshDiskImageSettings': refreshDiskImageSettings(); break;
+            case 'mountDiskImageNow': mountDiskImageNow(); break;
+            case 'unmountDiskImageNow': unmountDiskImageNow(); break;
+            case 'saveDiskImageSettings': saveDiskImageSettings(); break;
             case 'closeSearchResults': closeSearchResults(); break;
             case 'closeSemanticToolsModal': closeSemanticToolsModal(); break;
             case 'inPageSearchPrev': inPageSearchPrev(); break;
@@ -300,7 +317,6 @@ function setupStaticActionBindings() {
             case 'closeTextPromptOk': closeTextPrompt(true); break;
             case 'closeOcrHelpModal': closeOcrHelpModal(); break;
             case 'closePdfRegionPreviewModal': closePdfRegionPreviewModal(); break;
-            case 'openDocumentMetadataFromList': openDocumentMetadata(String(el.dataset.docId || ''), event); break;
             case 'toggleFolderExpandedFromList': toggleFolderExpanded(String(el.dataset.folderId || ''), event); break;
             case 'openFolderInfoFromList': openFolderInfo(String(el.dataset.folderId || ''), event); break;
             case 'deleteCodeFromList': deleteCode(String(el.dataset.codeId || ''), event); break;
@@ -722,8 +738,15 @@ document.addEventListener('keydown', function(e) {
     if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const selection = window.getSelection();
         const hasTextSelection = selection.toString().trim().length > 0;
+        const hasStoredPdfTextSelection = !!(
+            appData.selectedText &&
+            appData.selectedText.kind !== 'pdfRegion' &&
+            Number.isFinite(Number(appData.selectedText.startIndex)) &&
+            Number.isFinite(Number(appData.selectedText.endIndex)) &&
+            Number(appData.selectedText.endIndex) > Number(appData.selectedText.startIndex)
+        );
         const hasPdfRegionSelection = !!(appData.selectedText && appData.selectedText.kind === 'pdfRegion' && appData.selectedText.pdfRegion);
-        if (hasTextSelection || hasPdfRegionSelection) {
+        if (hasTextSelection || hasStoredPdfTextSelection || hasPdfRegionSelection) {
             const shortcutNum = e.key;
             const code = appData.codes.find(c => c.shortcut === shortcutNum);
             if (code && appData.currentDocId && !appData.filterCodeId) {
@@ -748,11 +771,13 @@ setInterval(updateSaveStatus, 60000);
 
 // Electron: listen for QDPX file open events
 if (window.electronAPI && window.electronAPI.onOpenQdpx) {
-    window.electronAPI.onOpenQdpx(async (buffer) => {
+    window.electronAPI.onOpenQdpx(async (payload) => {
         try {
+            const buffer = payload && payload.data ? payload.data : payload;
+            const projectPath = payload && typeof payload.path === 'string' ? payload.path : '';
             // Buffer comes from Electron as a Node Buffer, convert to ArrayBuffer
             const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-            await applyImportedQdpx(arrayBuffer);
+            await applyImportedQdpx(arrayBuffer, { projectPath });
         } catch (e) {
             console.error('Failed to open QDPX project:', e);
             alert('Could not open project: ' + (e.message || e));
@@ -766,6 +791,9 @@ if (window.electronAPI && window.electronAPI.onMenuAction) {
         switch (action) {
             case 'newProject':
                 newProject();
+                break;
+            case 'openProject':
+                importProjectNative();
                 break;
             case 'save':
                 manualSave(false);
