@@ -5,6 +5,7 @@
         entries: 'quackdasObserver.entries',
         lastSession: 'quackdasObserver.lastSession'
     };
+    const SETTINGS_MIRROR_KEY = 'quackdasObserver.settings.mirror';
 
     const DEFAULT_SETTINGS = {
         serverUrl: 'http://127.0.0.1:45823',
@@ -17,16 +18,79 @@
 
     async function get(key, fallbackValue) {
         const result = await browser.storage.local.get(key);
-        return Object.prototype.hasOwnProperty.call(result, key) ? result[key] : fallbackValue;
+        if (Object.prototype.hasOwnProperty.call(result, key)) {
+            return result[key];
+        }
+        if (key === KEYS.settings) {
+            const mirrored = await getMirroredSettings();
+            if (mirrored) {
+                await browser.storage.local.set({ [KEYS.settings]: mirrored });
+                return mirrored;
+            }
+        }
+        return fallbackValue;
     }
 
     async function set(key, value) {
         await browser.storage.local.set({ [key]: value });
+        if (key === KEYS.settings) {
+            await setMirroredSettings(value);
+        }
         return value;
     }
 
     async function remove(key) {
         await browser.storage.local.remove(key);
+        if (key === KEYS.settings) {
+            await removeMirroredSettings();
+        }
+    }
+
+    async function getMirroredSettings() {
+        try {
+            if (browser.storage && browser.storage.sync) {
+                const synced = await browser.storage.sync.get(KEYS.settings);
+                if (Object.prototype.hasOwnProperty.call(synced, KEYS.settings) && synced[KEYS.settings]) {
+                    return synced[KEYS.settings];
+                }
+            }
+        } catch (_) {}
+
+        try {
+            const raw = global.localStorage ? global.localStorage.getItem(SETTINGS_MIRROR_KEY) : '';
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function setMirroredSettings(value) {
+        try {
+            if (browser.storage && browser.storage.sync) {
+                await browser.storage.sync.set({ [KEYS.settings]: value });
+            }
+        } catch (_) {}
+
+        try {
+            if (global.localStorage) {
+                global.localStorage.setItem(SETTINGS_MIRROR_KEY, JSON.stringify(value));
+            }
+        } catch (_) {}
+    }
+
+    async function removeMirroredSettings() {
+        try {
+            if (browser.storage && browser.storage.sync) {
+                await browser.storage.sync.remove(KEYS.settings);
+            }
+        } catch (_) {}
+
+        try {
+            if (global.localStorage) {
+                global.localStorage.removeItem(SETTINGS_MIRROR_KEY);
+            }
+        } catch (_) {}
     }
 
     function normalizeServerUrl(value) {

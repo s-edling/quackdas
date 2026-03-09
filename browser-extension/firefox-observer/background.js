@@ -1,4 +1,5 @@
 const tabSessionState = new Map();
+const PENDING_COMMAND_KEY = 'quackdasObserver.pendingCommand';
 
 browser.runtime.onMessage.addListener(async (message) => {
     if (!message || typeof message !== 'object') return undefined;
@@ -68,6 +69,23 @@ browser.tabs.onRemoved.addListener((tabId) => {
     tabSessionState.delete(tabId);
 });
 
+browser.commands.onCommand.addListener(async (command) => {
+    if (command !== 'capture-region' && command !== 'new-note') return;
+    await queuePendingCommand(command);
+    try {
+        if (browser.sidebarAction && typeof browser.sidebarAction.open === 'function') {
+            await browser.sidebarAction.open();
+        }
+    } catch (_) {}
+
+    try {
+        await browser.runtime.sendMessage({
+            type: 'observer:runPendingShortcut',
+            command
+        });
+    } catch (_) {}
+});
+
 async function getActiveTab() {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     return tabs[0] || null;
@@ -77,4 +95,13 @@ function getTabState(tabId) {
     if (!tabId) return { ok: true, state: null };
     const state = tabSessionState.get(tabId) || null;
     return { ok: true, state };
+}
+
+async function queuePendingCommand(command) {
+    await browser.storage.local.set({
+        [PENDING_COMMAND_KEY]: {
+            command,
+            createdAt: Date.now()
+        }
+    });
 }

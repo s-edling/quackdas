@@ -75,7 +75,20 @@
     function showStatus(message, status) {
         const banner = document.getElementById('settingsStatus');
         banner.hidden = !message;
-        banner.textContent = message || '';
+        banner.innerHTML = '';
         banner.dataset.status = status || '';
+        if (!message) return;
+        const text = document.createElement('div');
+        text.className = 'status-banner-message';
+        text.textContent = message;
+        banner.appendChild(text);
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'status-banner-close';
+        close.setAttribute('aria-label', 'Dismiss message');
+        close.textContent = '×';
+        close.addEventListener('click', () => showStatus('', ''));
+        banner.appendChild(close);
     }
 })();

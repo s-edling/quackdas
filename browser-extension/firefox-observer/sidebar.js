@@ -1,6 +1,7 @@
 (function() {
     const DEFAULT_SETTINGS = ObserverStorage.DEFAULT_SETTINGS;
     const NEW_FIELDSITE_VALUE = '__new__';
+    const PENDING_COMMAND_KEY = 'quackdasObserver.pendingCommand';
     const state = {
         settings: DEFAULT_SETTINGS,
         fieldsiteHistory: {},
@@ -27,6 +28,7 @@
         }
         bindEvents();
         renderEntries();
+        await runPendingShortcutIfAny();
     }
 
     function bindEvents() {
@@ -39,6 +41,7 @@
         window.addEventListener('focus', () => {
             reloadSettings({ refreshFieldsitesAfter: true }).catch(() => {});
         });
+        browser.runtime.onMessage.addListener(onRuntimeMessage);
     }
 
     async function reloadSettings(options) {
@@ -83,15 +86,20 @@
         state.pendingManualSession = false;
     }
 
-    function canDeleteNoteEntry(entry) {
+    function entryHasCapture(entry) {
+        return !!(entry && (entry.imageDataUrl || entry.screenshotPath));
+    }
+
+    function canDeleteEmptyEntry(entry) {
         if (!entry) return false;
-        if (entry.imageDataUrl || entry.screenshotPath) return false;
         return !String(entry.note || '').trim();
     }
 
-    function setDeleteNoteVisibility(deleteRow, entry) {
+    function setDeleteNoteVisibility(deleteRow, deleteLink, entry) {
         if (!deleteRow) return;
-        deleteRow.hidden = !canDeleteNoteEntry(entry);
+        deleteRow.hidden = !canDeleteEmptyEntry(entry);
+        if (!deleteLink) return;
+        deleteLink.textContent = entryHasCapture(entry) ? 'Delete screenshot' : 'Delete note';
     }
 
     function clearPendingNoteUpdate(uuid) {
@@ -349,11 +357,11 @@
             note.value = entry.note || '';
             note.addEventListener('input', (event) => onNoteChanged(entry.uuid, event.target.value));
             note.addEventListener('input', () => resizeNoteTextarea(note, 0, 50));
-            note.addEventListener('input', () => setDeleteNoteVisibility(deleteRow, entry));
+            note.addEventListener('input', () => setDeleteNoteVisibility(deleteRow, deleteLink, entry));
             if (deleteLink) {
                 deleteLink.addEventListener('click', () => onDeleteNote(entry.uuid));
             }
-            setDeleteNoteVisibility(deleteRow, entry);
+            setDeleteNoteVisibility(deleteRow, deleteLink, entry);
 
             if (entry.imageDataUrl) {
                 imageWrap.hidden = false;
@@ -391,7 +399,8 @@
         await switchToFieldsite(normalized);
     }
 
-    async function onCaptureRegion() {
+    async function onCaptureRegion(options) {
+        if (!(await ensureObservationHostPermission({ canPrompt: !(options && options.fromShortcut) }))) return;
         if (!(await ensureReady())) return;
         try {
             const captureButton = document.getElementById('captureButton');
@@ -420,8 +429,9 @@
         showStatus('The next note or capture will start a new session.', 'success', { autoHideMs: 1800 });
     }
 
-    async function onNewNote() {
+    async function onNewNote(options) {
         if (state.noteCreating) return;
+        if (!(await ensureObservationHostPermission({ canPrompt: !(options && options.fromShortcut) }))) return;
         if (!(await ensureReady())) return;
         state.noteCreating = true;
         try {
@@ -435,7 +445,8 @@
                 imageDataUrl: '',
                 forceMetadataBox: true,
                 initialNote: '',
-                focusAnchor: button
+                focusAnchor: button,
+                forceFocus: true
             });
         } catch (err) {
             showStatus(err && err.message ? err.message : 'Could not create note entry.', 'error');
@@ -543,7 +554,7 @@
         const entriesContainer = document.getElementById('entriesContainer');
         const preservedScrollTop = entriesContainer ? entriesContainer.scrollTop : 0;
         renderEntries();
-        if (shouldAutoFocusNewEntry(input.focusAnchor)) {
+        if (input.forceFocus || shouldAutoFocusNewEntry(input.focusAnchor)) {
             focusEntryByUuid(draft.uuid);
         } else if (entriesContainer) {
             entriesContainer.scrollTop = preservedScrollTop;
@@ -580,8 +591,10 @@
 
     async function onDeleteNote(uuid) {
         const entry = state.entries.find((item) => item.uuid === uuid);
-        if (!entry || !canDeleteNoteEntry(entry)) return;
+        if (!entry || !canDeleteEmptyEntry(entry)) return;
         clearPendingNoteUpdate(uuid);
+        const entriesContainer = document.getElementById('entriesContainer');
+        const preservedScrollTop = entriesContainer ? entriesContainer.scrollTop : 0;
         try {
             const result = await ObserverConnectionClient.deleteObservation(state.settings, {
                 uuid: entry.uuid,
@@ -592,6 +605,9 @@
                 return;
             }
             await syncFieldsiteHistoryFromQuackdas(state.currentFieldsite, { showErrors: false });
+            if (entriesContainer) {
+                entriesContainer.scrollTop = preservedScrollTop;
+            }
             showStatus('Note deleted.', 'success', { autoHideMs: 1600 });
         } catch (err) {
             showStatus(err && err.message ? err.message : 'Could not delete the note.', 'error');
@@ -626,12 +642,64 @@
         return true;
     }
 
+    async function ensureObservationHostPermission(options) {
+        const canPrompt = !options || options.canPrompt !== false;
+        try {
+            const permission = {
+                origins: ['http://*/*', 'https://*/*']
+            };
+            if (!canPrompt) {
+                const alreadyGranted = await browser.permissions.contains(permission);
+                if (alreadyGranted) {
+                    return true;
+                }
+                showStatus('Grant Firefox page access once from the Capture region or New note button in the sidebar.', 'error');
+                return false;
+            }
+            const granted = await browser.permissions.request(permission);
+            if (!granted) {
+                showStatus('Firefox needs page-access permission before Quackdas can capture notes or screenshots.', 'error');
+                return false;
+            }
+            return true;
+        } catch (err) {
+            const text = err && err.message ? err.message : String(err || '');
+            if (/user input handler/i.test(text)) {
+                showStatus('Grant page access from the Capture region or New note button in the sidebar.', 'error');
+                return false;
+            }
+            throw err;
+        }
+    }
+
     async function onSelectSession(sessionStartedAt) {
         state.activeSessionStartedAt = String(sessionStartedAt || '');
         state.pendingManualSession = false;
         await persistFieldsiteHistory(state.currentFieldsite);
         renderEntries();
         showStatus('New notes and captures will be added to the selected session.', 'success', { autoHideMs: 1800 });
+    }
+
+    async function onRuntimeMessage(message) {
+        if (!message || typeof message !== 'object') return undefined;
+        if (message.type !== 'observer:runPendingShortcut') return undefined;
+        await runPendingShortcutIfAny();
+        return { ok: true };
+    }
+
+    async function runPendingShortcutIfAny() {
+        const pending = await ObserverStorage.get(PENDING_COMMAND_KEY, null);
+        if (!pending || typeof pending !== 'object' || !pending.command) return false;
+        await ObserverStorage.remove(PENDING_COMMAND_KEY);
+        if (pending.command === 'capture-region') {
+            await onCaptureRegion({ fromShortcut: true });
+            return true;
+        }
+        if (pending.command === 'new-note') {
+            await onNewNote({ fromShortcut: true });
+            return true;
+        }
+        return false;
     }
 
     function listSessions() {
@@ -723,13 +791,28 @@
             state.statusClearTimer = 0;
         }
         banner.hidden = !message;
-        banner.textContent = message || '';
+        banner.innerHTML = '';
         banner.dataset.status = status || '';
+        if (message) {
+            const text = document.createElement('div');
+            text.className = 'status-banner-message';
+            text.textContent = message;
+            banner.appendChild(text);
+
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'status-banner-close';
+            close.setAttribute('aria-label', 'Dismiss message');
+            close.textContent = '×';
+            close.addEventListener('click', () => showStatus('', ''));
+            banner.appendChild(close);
+        }
         const autoHideMs = Number(options && options.autoHideMs);
         if (message && Number.isFinite(autoHideMs) && autoHideMs > 0) {
             const expectedMessage = String(message);
             state.statusClearTimer = window.setTimeout(() => {
-                if (String(banner.textContent || '') !== expectedMessage) return;
+                const current = banner.querySelector('.status-banner-message');
+                if (String(current && current.textContent || '') !== expectedMessage) return;
                 showStatus('', '');
             }, autoHideMs);
         }
@@ -738,7 +821,8 @@
     function clearStatusIfConnectionError() {
         const banner = document.getElementById('statusBanner');
         if (!banner || banner.hidden) return;
-        const message = String(banner.textContent || '');
+        const current = banner.querySelector('.status-banner-message');
+        const message = String(current && current.textContent || '');
         if (!/Quackdas|localhost|server URL|Unauthorized|saved project/i.test(message)) return;
         showStatus('', '');
     }

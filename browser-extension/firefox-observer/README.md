@@ -55,6 +55,13 @@ After AMO signs the `.xpi`:
 6. Paste the config and save it.
 7. Use `Test connection`.
 
+## Default Keyboard Shortcuts
+
+- `Alt+Shift+R`: Capture region
+- `Alt+Shift+N`: New note
+
+Firefox lets users reassign extension shortcuts in the add-ons shortcut settings if these defaults conflict with anything else.
+
 ## Reviewer Notes
 
 This extension communicates only with a locally running Quackdas desktop app:

@@ -4,14 +4,18 @@
   "version": "0.7.1",
   "description": "Capture annotated web observation entries and send them to a running Quackdas app.",
   "icons": {
-    "48": "assets/logo.svg",
-    "96": "assets/logo.svg"
+    "48": "assets/logo.jpg",
+    "96": "assets/logo.jpg"
   },
   "permissions": [
     "activeTab",
     "tabs",
     "storage",
     "http://127.0.0.1:45823/*"
+  ],
+  "optional_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "scripts": [
@@ -20,12 +24,31 @@
   },
   "sidebar_action": {
     "default_title": "Quackdas",
-    "default_panel": "sidebar.html"
+    "default_panel": "sidebar.html",
+    "default_icon": {
+      "16": "assets/logo.jpg",
+      "32": "assets/logo.jpg",
+      "48": "assets/logo.jpg"
+    }
   },
   "options_ui": {
     "page": "settings.html",
     "browser_style": false,
     "open_in_tab": true
+  },
+  "commands": {
+    "capture-region": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Capture observation region"
+    },
+    "new-note": {
+      "suggested_key": {
+        "default": "Alt+Shift+N"
+      },
+      "description": "Create new observation note"
+    }
   },
   "browser_specific_settings": {
     "gecko": {

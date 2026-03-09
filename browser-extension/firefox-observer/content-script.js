@@ -36,6 +36,7 @@
             overlay.style.zIndex = '2147483646';
             overlay.style.cursor = 'crosshair';
             overlay.style.background = 'rgba(42, 37, 32, 0.15)';
+            overlay.tabIndex = 0;
 
             const box = document.createElement('div');
             box.style.position = 'absolute';
@@ -61,16 +62,29 @@
             let dragging = false;
 
             function cleanup(result) {
-                document.removeEventListener('keydown', onKeyDown, true);
+                document.removeEventListener('keydown', onKeyCancel, true);
+                document.removeEventListener('keyup', onKeyCancel, true);
+                window.removeEventListener('keydown', onKeyCancel, true);
+                window.removeEventListener('keyup', onKeyCancel, true);
+                overlay.removeEventListener('keydown', onKeyCancel, true);
+                overlay.removeEventListener('keyup', onKeyCancel, true);
                 overlay.remove();
                 resolve(result);
             }
 
-            function onKeyDown(event) {
-                if (event.key === 'Escape') {
-                    event.preventDefault();
-                    cleanup({ cancelled: true });
-                }
+            function isEscapeEvent(event) {
+                return event.key === 'Escape' ||
+                    event.key === 'Esc' ||
+                    event.code === 'Escape' ||
+                    event.keyCode === 27 ||
+                    event.which === 27;
+            }
+
+            function onKeyCancel(event) {
+                if (!isEscapeEvent(event)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                cleanup({ cancelled: true });
             }
 
             overlay.addEventListener('mousedown', (event) => {
@@ -109,8 +123,14 @@
                 box.style.height = `${rect.height}px`;
             }
 
-            document.addEventListener('keydown', onKeyDown, true);
+            document.addEventListener('keydown', onKeyCancel, true);
+            document.addEventListener('keyup', onKeyCancel, true);
+            window.addEventListener('keydown', onKeyCancel, true);
+            window.addEventListener('keyup', onKeyCancel, true);
             document.documentElement.appendChild(overlay);
+            overlay.addEventListener('keydown', onKeyCancel, true);
+            overlay.addEventListener('keyup', onKeyCancel, true);
+            overlay.focus({ preventScroll: true });
         });
     }
 
