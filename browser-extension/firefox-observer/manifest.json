@@ -1,11 +1,11 @@
 {
   "manifest_version": 2,
   "name": "Quackdas Online Observation",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Capture annotated web observation entries and send them to a running Quackdas app.",
   "icons": {
-    "48": "assets/logo.jpg",
-    "96": "assets/logo.jpg"
+    "48": "assets/icons/icon-48.jpg",
+    "96": "assets/icons/icon-96.jpg"
   },
   "permissions": [
     "activeTab",
@@ -14,8 +14,7 @@
     "http://127.0.0.1:45823/*"
   ],
   "optional_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "<all_urls>"
   ],
   "background": {
     "scripts": [
@@ -26,9 +25,9 @@
     "default_title": "Quackdas",
     "default_panel": "sidebar.html",
     "default_icon": {
-      "16": "assets/logo.jpg",
-      "32": "assets/logo.jpg",
-      "48": "assets/logo.jpg"
+      "16": "assets/icons/icon-16.jpg",
+      "32": "assets/icons/icon-32.jpg",
+      "48": "assets/icons/icon-48.jpg"
     }
   },
   "options_ui": {

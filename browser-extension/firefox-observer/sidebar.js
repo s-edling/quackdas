@@ -646,7 +646,7 @@
         const canPrompt = !options || options.canPrompt !== false;
         try {
             const permission = {
-                origins: ['http://*/*', 'https://*/*']
+                origins: ['<all_urls>']
             };
             if (!canPrompt) {
                 const alreadyGranted = await browser.permissions.contains(permission);

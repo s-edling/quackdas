@@ -17,7 +17,7 @@ npm run pack:firefox-extension
 This writes a package like:
 
 ```text
-dist/firefox-extension/quackdas-online-observation-0.7.1.xpi
+dist/firefox-extension/quackdas-online-observation-0.7.2.xpi
 ```
 
 That `.xpi` is the upload artifact for AMO signing. It is not installable on normal Firefox builds until Mozilla signs it.
@@ -77,6 +77,7 @@ The extension requests:
 - `activeTab`: capture the currently active page after an explicit user action
 - `tabs`: query the active tab and capture the visible tab
 - `storage`: persist extension config and sidebar cache
+- optional page-access permission (`<all_urls>`): granted from the sidebar when the user first captures or creates a note on a page, so the extension can inject its content script and capture screenshots reliably
 - `http://127.0.0.1:45823/*`: send observations to the local Quackdas app
 
 The manifest declares `websiteActivity` and `websiteContent` because the extension transmits page metadata/content to Quackdas for local processing and storage.
