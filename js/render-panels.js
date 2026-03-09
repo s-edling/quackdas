@@ -42,8 +42,13 @@ function renderDocuments() {
         const titleText = String(doc.title || 'Untitled document');
         const indentStyle = indent > 0 ? `style="margin-left: ${12 + indent * 16}px;"` : '';
         const isPdf = doc.type === 'pdf';
-        const typeIndicator = isPdf ? '<span class="doc-type-badge" title="PDF document">PDF</span>' : '';
-        const contentInfo = isPdf ? `${doc.pdfPages?.length || '?'} pages` : `${doc.content.length} chars`;
+        const isFieldnote = doc.type === 'fieldnote';
+        const typeIndicator = isPdf
+            ? '<span class="doc-type-badge" title="PDF document">PDF</span>'
+            : (isFieldnote ? '<span class="doc-type-badge" title="Online observation document">Online</span>' : '');
+        const contentInfo = isPdf
+            ? `${doc.pdfPages?.length || '?'} pages`
+            : (isFieldnote ? `${doc.fieldnoteData?.sessions?.length || 0} sessions` : `${doc.content.length} chars`);
         const codeCount = getDocSegmentCountFast(doc.id);
         const codeLabel = `${codeCount} code${codeCount !== 1 ? 's' : ''}`;
         const metaParts = [contentInfo];

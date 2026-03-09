@@ -344,6 +344,88 @@ function closeDiskImageHelpModal() {
     if (modal) modal.classList.remove('show');
 }
 
+function openOnlineObservationsHelpModal() {
+    const modal = document.getElementById('onlineObservationsHelpModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeOnlineObservationsHelpModal() {
+    const modal = document.getElementById('onlineObservationsHelpModal');
+    if (modal) modal.classList.remove('show');
+}
+
+async function refreshOnlineObservationsModal() {
+    if (!(window.electronAPI && typeof window.electronAPI.getObservationConnectionInfo === 'function')) return;
+    const result = await window.electronAPI.getObservationConnectionInfo();
+    const statusEl = document.getElementById('onlineObservationStatusText');
+    const projectPathEl = document.getElementById('onlineObservationProjectPath');
+    const serverUrlEl = document.getElementById('onlineObservationServerUrl');
+    const authTokenEl = document.getElementById('onlineObservationAuthToken');
+    const configEl = document.getElementById('onlineObservationConfig');
+    if (!statusEl || !projectPathEl || !serverUrlEl || !authTokenEl || !configEl) return;
+
+    if (!result?.ok) {
+        statusEl.textContent = result?.error || 'Could not load online observation settings.';
+        projectPathEl.value = '';
+        serverUrlEl.value = '';
+        authTokenEl.value = '';
+        configEl.value = '';
+        return;
+    }
+
+    const statusParts = [];
+    statusParts.push(result.running ? 'Server running' : 'Server not running');
+    statusParts.push(result.hasActiveProject ? 'saved project open' : 'no saved project open');
+    if (result.error) statusParts.push(`error: ${result.error}`);
+    statusEl.textContent = statusParts.join(' • ');
+    projectPathEl.value = result.activeProjectPath || '';
+    serverUrlEl.value = result.serverUrl || '';
+    authTokenEl.value = result.authToken || '';
+    configEl.value = JSON.stringify({
+        serverUrl: result.serverUrl || '',
+        authToken: result.authToken || ''
+    }, null, 2);
+}
+
+function openOnlineObservationsModal() {
+    const modal = document.getElementById('onlineObservationsModal');
+    if (!modal) return;
+    refreshOnlineObservationsModal().catch(() => {});
+    modal.classList.add('show');
+}
+
+function closeOnlineObservationsModal() {
+    const modal = document.getElementById('onlineObservationsModal');
+    if (modal) modal.classList.remove('show');
+}
+
+async function copyOnlineObservationConfig() {
+    const configEl = document.getElementById('onlineObservationConfig');
+    const text = String(configEl?.value || '').trim();
+    if (!text) {
+        alert('No extension config is available yet.');
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (error) {
+        alert('Could not copy config to clipboard: ' + (error?.message || error));
+        return;
+    }
+}
+
+async function regenerateOnlineObservationToken() {
+    if (!(window.electronAPI && typeof window.electronAPI.regenerateObservationToken === 'function')) return;
+    const confirmed = confirm('Regenerate the online observation token? Existing extension configs will stop working until updated.');
+    if (!confirmed) return;
+    const result = await window.electronAPI.regenerateObservationToken();
+    if (!result?.ok) {
+        alert(result?.error || 'Could not regenerate online observation token.');
+        return;
+    }
+    await refreshOnlineObservationsModal();
+}
+
 async function chooseDiskImagePath() {
     if (!(window.electronAPI && typeof window.electronAPI.chooseDiskImagePath === 'function')) return;
     const result = await window.electronAPI.chooseDiskImagePath();
@@ -937,6 +1019,9 @@ async function manualSave(saveAs = false) {
                 qdpxBase64: base64
             }, { saveAs, format: 'qdpx' });
             if (result && result.ok) {
+                if (typeof syncFieldnoteProjectMetadata === 'function' && result.path) {
+                    syncFieldnoteProjectMetadata(result.path);
+                }
                 if (typeof createProjectBackup === 'function') {
                     createProjectBackup(saveAs ? 'manual-save-as' : 'manual-save', { base64 }).catch(() => {});
                 }

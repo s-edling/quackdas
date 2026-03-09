@@ -1,42 +1,4 @@
-        :root {
-            /* Colours */
-            --bg-primary: #f8f6f1;
-            --bg-secondary: #ffffff;
-            --bg-hover: #f0ede5;
-            --text-primary: #2a2520;
-            --text-secondary: #8a8580;
-            --text-tertiary: #a8a4a0;
-            --border: #ddd8d0;
-            --accent: #c17a5c;
-            --accent-light: #e8d5cc;
-            --accent-dark: #a86a4e;
-            --shadow: rgba(42, 37, 32, 0.08);
-            --shadow-md: rgba(42, 37, 32, 0.12);
-            --focus-ring: rgba(193, 122, 92, 0.4);
-            
-            --code-colors: #7c9885, #b67d8f, #8b8daa, #c8956f, #8aa4b5, #a68d7c, #9a8d9e, #7d9e9c;
-            
-            /* Spacing scale (8px base) */
-            --space-1: 4px;
-            --space-2: 8px;
-            --space-3: 12px;
-            --space-4: 16px;
-            --space-5: 20px;
-            --space-6: 24px;
-            --space-8: 32px;
-            --space-10: 40px;
-            --space-12: 48px;
-
-            /* Corner system */
-            --radius-card: 0;
-            --radius-control: 2px;
-            --radius-field: 2px;
-            --radius-compact: 2px;
-            --radius-overlay: 2px;
-            
-            /* Header height */
-            --header-height: 68px;
-        }
+        @import url("./shared/quackdas-theme.css");
 
         * {
             margin: 0;
@@ -1031,6 +993,90 @@
             max-width: 680px;
             margin: 0 auto;
             user-select: text;
+        }
+
+        .content-panel.fieldnote-mode #documentContent {
+            max-width: 760px;
+            padding-right: 72px;
+        }
+
+        .fieldnote-document {
+            white-space: normal !important;
+        }
+
+        .fieldnote-session {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-5);
+        }
+
+        .fieldnote-session-heading {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent-dark);
+            margin-bottom: var(--space-2);
+        }
+
+        .fieldnote-entry {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-3);
+            margin-bottom: var(--space-6);
+        }
+
+        .fieldnote-metadata-box {
+            border: 1px solid var(--border);
+            background: var(--bg-primary);
+            padding: var(--space-3);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .fieldnote-entry-url {
+            color: var(--accent-dark);
+            text-decoration: none;
+            overflow-wrap: anywhere;
+        }
+
+        .fieldnote-entry-url:hover {
+            text-decoration: underline;
+        }
+
+        .fieldnote-entry-timestamp {
+            margin-top: var(--space-1);
+            color: var(--text-secondary);
+        }
+
+        .fieldnote-note {
+            position: relative;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .fieldnote-image-wrap {
+            position: relative;
+            border: 1px solid var(--border);
+            background: var(--bg-primary);
+            padding: var(--space-2);
+            transition: box-shadow 0.12s ease, border-color 0.12s ease;
+            cursor: pointer;
+        }
+
+        .fieldnote-image-wrap:hover {
+            border-color: var(--text-tertiary);
+        }
+
+        .fieldnote-image-wrap:focus-visible,
+        .fieldnote-image-selected {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--focus-ring);
+            outline: none;
+        }
+
+        .fieldnote-image {
+            display: block;
+            width: 100%;
+            height: auto;
         }
 
         .document-text p {

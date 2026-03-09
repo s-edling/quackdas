@@ -661,7 +661,7 @@ async function runSemanticSearch() {
     }
 
     const docsById = new Map((appData.documents || []).map((doc) => [doc.id, doc]));
-    semanticUiState.results = (Array.isArray(response.results) ? response.results : []).map((row) => {
+    semanticUiState.results = (Array.isArray(response.results) ? response.results : []).filter((row) => docsById.has(row.doc_id)).map((row) => {
         const doc = docsById.get(row.doc_id);
         const content = canonicalizeSemanticText(doc?.content || '');
         return {

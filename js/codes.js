@@ -146,16 +146,27 @@ function filterByCode(codeId, e) {
     e.stopPropagation();
     appData.selectedCaseId = null;
 
+    if (!appData.selectedText && typeof captureCurrentSelectionForCoding === 'function') {
+        captureCurrentSelectionForCoding({ clearOnMiss: false });
+    }
+
     // If the user has a stored selection, clicking a code applies it.
     // Hold Shift/Alt/Ctrl/Cmd to force filter behaviour instead.
     const sel = appData.selectedText;
     const hasTextSelection = !!(sel && typeof sel.text === 'string' && sel.text.length > 0 &&
         sel.startIndex !== undefined && sel.endIndex !== undefined);
     const hasPdfRegionSelection = !!(sel && sel.kind === 'pdfRegion' && sel.pdfRegion);
-    const hasStoredSelection = hasTextSelection || hasPdfRegionSelection;
+    const hasFieldnoteImageSelection = !!(sel && sel.kind === 'fieldnoteImage' && sel.fieldnoteImageId);
+    const hasStoredSelection = hasTextSelection || hasPdfRegionSelection || hasFieldnoteImageSelection;
+    const hasLiveNativeSelection = !!(
+        typeof window.getSelection === 'function' &&
+        window.getSelection() &&
+        window.getSelection().rangeCount &&
+        window.getSelection().toString().trim().length > 0
+    );
     const forceFilter = e.shiftKey || e.altKey || e.ctrlKey || e.metaKey;
-    if (hasStoredSelection && !forceFilter) {
-        applyCodeToStoredSelection(codeId);
+    if ((hasStoredSelection || hasLiveNativeSelection) && !forceFilter) {
+        quickApplyCode(codeId);
         return;
     }
 

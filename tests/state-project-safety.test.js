@@ -151,6 +151,38 @@ test('undo and redo preserve the current PDF page when staying in the same PDF d
   });
 });
 
+test('undo falls back to an existing document when a snapshot points at a deleted one', () => {
+  renderCalls = 0;
+
+  state.__setHistoryForTests({
+    past: [JSON.stringify({
+      documentIds: ['doc_missing'],
+      documentFolders: {},
+      codes: [],
+      segments: [],
+      memos: [],
+      folders: [],
+      cases: [],
+      variableDefinitions: [],
+      currentDocId: 'doc_missing',
+      selectedCaseId: null,
+      filterCodeId: null
+    })],
+    future: [],
+    maxLength: 10
+  });
+  state.__setAppDataForTests(state.normaliseProject({
+    documents: [
+      { id: 'doc_present', title: 'Present', content: 'Alpha', created: '2025-01-01T00:00:00.000Z' }
+    ]
+  }));
+
+  state.undo();
+
+  assert.equal(state.__getAppDataForTests().currentDocId, 'doc_present');
+  assert.equal(renderCalls, 1);
+});
+
 test('replaceProjectData clears undo history and bumps revision-driven caches on project replacement', () => {
   renderCalls = 0;
   resetUiCalls = 0;

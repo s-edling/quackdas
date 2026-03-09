@@ -2457,6 +2457,11 @@ function handlePdfTextSelection(doc) {
  * Navigation functions
  */
 function pdfPrevPage() {
+    const activeDoc = appData.documents.find(d => d && d.id === appData.currentDocId);
+    if (activeDoc && activeDoc.type === 'fieldnote' && typeof fieldnotePrevPage === 'function') {
+        fieldnotePrevPage();
+        return;
+    }
     if (currentPdfState.currentPage > 1) {
         const doc = appData.documents.find(d => d.id === currentPdfState.docId);
         if (doc) {
@@ -2466,6 +2471,11 @@ function pdfPrevPage() {
 }
 
 function pdfNextPage() {
+    const activeDoc = appData.documents.find(d => d && d.id === appData.currentDocId);
+    if (activeDoc && activeDoc.type === 'fieldnote' && typeof fieldnoteNextPage === 'function') {
+        fieldnoteNextPage();
+        return;
+    }
     if (currentPdfState.currentPage < currentPdfState.totalPages) {
         const doc = appData.documents.find(d => d.id === currentPdfState.docId);
         if (doc) {

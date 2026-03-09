@@ -21,9 +21,9 @@ Quackdas is a local-first Electron desktop app for qualitative coding.
 The app has three main runtime layers:
 
 1. Main process
-   - File system access, native dialogs, backups, OCR invocation, semantic worker orchestration, disk-image mount/unmount gating, and app/window lifecycle.
+   - File system access, native dialogs, backups, OCR invocation, semantic worker orchestration, disk-image mount/unmount gating, online-observation sidecar watching, localhost observation ingestion, and app/window lifecycle.
    - Entry point: [main.js](/Users/st3583ed/Documents/Kodning/Quackdas/main.js)
-   - Feature helpers: [electron-main/project-backups.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/project-backups.js), [electron-main/ocr-service.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/ocr-service.js), [electron-main/disk-image-storage.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/disk-image-storage.js)
+   - Feature helpers: [electron-main/project-backups.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/project-backups.js), [electron-main/ocr-service.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/ocr-service.js), [electron-main/disk-image-storage.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/disk-image-storage.js), [electron-main/online-observation.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/online-observation.js), [electron-main/online-observation-server.js](/Users/st3583ed/Documents/Kodning/Quackdas/electron-main/online-observation-server.js)
 
 2. Preload bridge
    - Narrow IPC wrapper exposed as `window.electronAPI`.
@@ -50,12 +50,31 @@ The main PDF viewer is the one deliberate exception: `js/pdf.js` embeds a same-o
 - persists app-level storage preferences under Electron `userData`,
 - manages automatic project backups,
 - mounts/unmounts opt-in macOS disk images and blocks auto-mount when configured local agent apps are running,
+- creates and watches the hidden project-local online-observation sidecar (`.[project-name]_media/`),
+- runs a localhost-only online-observation server on `127.0.0.1` and authenticates extension requests with an app-generated bearer token,
+- relays accepted observation entries to the renderer,
 - checks OCR availability and shells out to Tesseract,
 - coordinates semantic indexing / Ask jobs in worker threads,
 - mediates model access to Ollama through the semantic modules.
 
 The main process should remain the only place that touches arbitrary file paths, child processes, worker threads, and Electron app/window APIs.
 `main.js` now acts as a composition root for some privileged features: backup IPC registration and OCR image handling live in `electron-main/*`, but they still execute entirely inside the main-process boundary.
+
+## Online observation flow
+
+Quackdas now supports two observation-ingest paths that share the same fieldnote model:
+
+1. Localhost extension ingest
+   - The Firefox extension captures page metadata, DOM HTML, and optional PNG crops.
+   - It POSTs those payloads to the main-process localhost server at `127.0.0.1`.
+   - The server validates the bearer token, validates payload size/shape, writes HTML/PNG sidecar assets, and forwards the normalized observation entry to the renderer.
+   - The same localhost server also serves fieldsite lists and fieldsite history back to the extension, so the sidebar can rebuild its working state from Quackdas rather than depending only on browser-local storage.
+
+2. Sidecar watcher ingest
+   - The legacy/auxiliary watcher still watches `.[project-name]_media/incoming/`.
+   - It moves externally dropped JSON/HTML/PNG files into stable sidecar locations before notifying the renderer.
+
+The localhost server is the primary path for the bundled Firefox extension. The watcher remains useful as a project-local ingest boundary and for any future external drop/import workflows.
 
 ### Preload
 
@@ -94,6 +113,12 @@ The renderer is split by domain, not by component framework:
 
 - [js/documents.js](/Users/st3583ed/Documents/Kodning/Quackdas/js/documents.js)
   - document CRUD, import helpers, folder tree, metadata, drag/drop organization.
+
+- [js/fieldnotes.js](/Users/st3583ed/Documents/Kodning/Quackdas/js/fieldnotes.js)
+  - fieldnote document normalization,
+  - observation-entry ingest into project state,
+  - fieldnote session/page navigation,
+  - fieldnote renderer helpers and image-coding selection state.
 
 - [js/codes.js](/Users/st3583ed/Documents/Kodning/Quackdas/js/codes.js)
   - code CRUD and hierarchy behavior.
@@ -175,6 +200,12 @@ Quackdas includes import hardening for untrusted archives:
 - source path normalization to avoid path traversal,
 - XML/source size caps.
 
+Fieldnote documents are stored in QDPX as `TextSource` entries with normal plain-text content plus Quackdas-specific metadata:
+- `quackdasDocType="fieldnote"`
+- `quackdasFieldnotePath="internal://...fieldnote.json"`
+
+The sidecar media itself is not embedded during normal save/autosave. The fieldnote JSON stored inside the QDPX keeps relative `screenshots/...` and `html/...` references so normal project work stays fast.
+
 ### App-local state outside the project file
 
 Some state intentionally lives outside the `.qdpx` file:
@@ -182,6 +213,12 @@ Some state intentionally lives outside the `.qdpx` file:
 - automatic backup copies of saved/exported project snapshots,
 - semantic SQLite indexes under the Quackdas app data directory,
 - app preferences such as the macOS-only `Disk image storage` toggle.
+
+Online-observation media is the other deliberate project-local store:
+- each saved project may have a hidden sibling folder `.[project-name]_media/`,
+- `incoming/` remains an optional project-local handoff folder for externally dropped observation bundles,
+- Quackdas moves confirmed assets into `screenshots/` and `html/`,
+- the renderer keeps only relative refs in fieldnote document data during ordinary save/autosave.
 
 This split matters: semantic indexes are a derived cache, not part of project interchange.
 

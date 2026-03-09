@@ -37,7 +37,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: file:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';">
     <title>Quackdas - Qualitative Coding</title>
     <script src="js/mammoth.browser.min.js"></script>
     <link rel="stylesheet" href="styles.css">
@@ -96,6 +96,10 @@
                             <span>Disk image storage</span>
                             <span id="headerDiskImageStorageStatus" style="margin-left:auto;color:var(--text-tertiary);"></span>
                         </button>
+                        <button class="header-dropdown-item" data-action="openOnlineObservationsModalAndCloseHeaderDropdown">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M5 12h14"/><path d="M12 5v14"/><path d="M19 19H5V5h14z"/></svg>
+                            Online observations
+                        </button>
                         <button class="header-dropdown-item" data-action="openRestoreBackupModalAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3,3 3,9 9,9"/><path d="M12 7v5l3 3"/></svg>
                             Restore backup…
@@ -103,6 +107,10 @@
                         <button class="header-dropdown-item" data-action="exportCodedDataAndCloseHeaderDropdown">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
                             Export report…
+                        </button>
+                        <button class="header-dropdown-item" data-action="packProjectForExportAndCloseHeaderDropdown">
+                            <svg class="toolbar-icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/><path d="M7 3h10"/></svg>
+                            Pack for export…
                         </button>
                     </div>
                 </div>
@@ -458,6 +466,53 @@
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeDiskImageHelpModal">Close</button>
+            </div>
+        </div>
+    </div>
+    <div id="onlineObservationsModal" class="modal">
+        <div class="modal-content modal-content-wide">
+            <div class="disk-image-modal-header">
+                <h2 class="modal-title">Online observations</h2>
+                <button type="button" class="doc-action-btn disk-image-help-btn" data-action="openOnlineObservationsHelpModal" title="What is online observation?" aria-label="What is online observation?">?</button>
+            </div>
+            <div class="form-group">
+                <label>Server status</label>
+                <div id="onlineObservationStatusText" class="stats-summary-empty">Loading…</div>
+            </div>
+            <div class="form-group">
+                <label>Active project</label>
+                <input type="text" class="form-input" id="onlineObservationProjectPath" readonly>
+            </div>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" class="form-input" id="onlineObservationServerUrl" readonly>
+            </div>
+            <div class="form-group">
+                <label>Auth token</label>
+                <input type="text" class="form-input" id="onlineObservationAuthToken" readonly>
+            </div>
+            <div class="form-group">
+                <label>Extension config</label>
+                <textarea class="form-textarea" id="onlineObservationConfig" rows="4" readonly></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-action="refreshOnlineObservationsModal">Refresh</button>
+                <button type="button" class="btn btn-secondary" data-action="copyOnlineObservationConfig">Copy extension config</button>
+                <button type="button" class="btn btn-primary" data-action="regenerateOnlineObservationToken">Regenerate token</button>
+                <button type="button" class="btn btn-secondary" data-action="closeOnlineObservationsModal">Close</button>
+            </div>
+        </div>
+    </div>
+    <div id="onlineObservationsHelpModal" class="modal">
+        <div class="modal-content modal-content-disk-image-help">
+            <h2 class="modal-title">Online observations</h2>
+            <div class="disk-image-help-copy">
+                <p>This panel is for setting up the Quackdas Firefox extension for online observations. With this extension, you can take notes and screenshots in the Firefox browser which are automatically added to the Quackdas project.</p>
+                <p>These are stored in a hidden folder sitting next to the project file. If you want to move a project with online observations to another computer, use the Pack for export function to build online observations into the project file.</p>
+                <p>To set up the extension, open Firefox and go to <code>about:debugging#/runtime/this-firefox</code>, choose <code>Load Temporary Add-on</code>, and select the extension manifest at <code>browser-extension/firefox-observer/manifest.json</code> from the Quackdas folder. Then open the extension settings and paste the extension config from this panel.</p>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" data-action="closeOnlineObservationsHelpModal">Close</button>
             </div>
         </div>
     </div>
@@ -920,6 +975,7 @@
     <script src="js/render.js"></script>
     <script src="js/render-panels.js"></script>
     <script src="js/documents.js"></script>
+    <script src="js/fieldnotes.js"></script>
     <script src="js/codes.js"></script>
     <script src="js/cases.js"></script>
     <script src="js/coding.js"></script>

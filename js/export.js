@@ -173,6 +173,9 @@ async function applyImportedQdpx(buffer, options = {}) {
             if (!commitResult || !commitResult.ok) {
                 throw new Error(commitResult?.error || 'Could not commit opened project path.');
             }
+            if (typeof syncFieldnoteProjectMetadata === 'function') {
+                syncFieldnoteProjectMetadata(projectPath);
+            }
         } else if (shouldResetProjectHandle && window.electronAPI?.clearProjectHandle) {
             await window.electronAPI.clearProjectHandle().catch(() => {});
         }
@@ -230,7 +233,7 @@ function exportCodedData() {
             const doc = appData.documents.find(d => d.id === segment.docId);
             const segmentText = segment.pdfRegion
                 ? `[PDF region, page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
-                : segment.text;
+                : (segment.fieldnoteImageId ? `[Fieldnote image] ${segment.text || 'Image capture'}` : segment.text);
             report += `**${i + 1}. From: ${doc.title}**`;
             report += `\n\n`;
             report += `> ${segmentText}\n\n`;
@@ -270,11 +273,33 @@ function exportCodedData() {
     URL.revokeObjectURL(url);
 }
 
+async function packProjectForExport() {
+    try {
+        if (typeof exportToQdpx !== 'function') {
+            throw new Error('QDPX export is not available in this build.');
+        }
+        const blob = await exportToQdpx({ embedFieldnoteMedia: true });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const baseName = String(appData.projectName || 'quackdas-project').replace(/[^\w.-]+/g, '-');
+        link.href = url;
+        link.download = `${baseName}-packed.qdpx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('Packed export failed:', error);
+        alert('Packed export failed: ' + (error.message || error));
+    }
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         hasProjectDataLoadedForReplacement,
         buildProjectReplacementMessage,
         confirmProjectReplacement,
-        applyImportedQdpx
+        applyImportedQdpx,
+        packProjectForExport
     };
 }

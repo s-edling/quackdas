@@ -82,3 +82,42 @@ test('incremental indexing re-embeds only changed chunks', async () => {
     store.close();
   }
 });
+
+test('incremental indexing removes deleted documents from the semantic store', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quackdas-semantic-prune-'));
+  const dbPath = path.join(tempDir, 'semantic.sqlite');
+
+  await runIncrementalIndexing({
+    dbPath,
+    modelName: 'bge-m3',
+    documents: [
+      makeDoc('doc_a', 'Doc A', 'Alpha paragraph. '.repeat(120)),
+      makeDoc('doc_b', 'Doc B', 'Beta paragraph. '.repeat(120))
+    ],
+    embedMany: fakeEmbedMany([]),
+    chunkMin: 600,
+    chunkMax: 900,
+    chunkOverlap: 100
+  });
+
+  await runIncrementalIndexing({
+    dbPath,
+    modelName: 'bge-m3',
+    documents: [
+      makeDoc('doc_a', 'Doc A', 'Alpha paragraph. '.repeat(120))
+    ],
+    embedMany: fakeEmbedMany([]),
+    chunkMin: 600,
+    chunkMax: 900,
+    chunkOverlap: 100
+  });
+
+  const store = openSemanticStore(dbPath);
+  try {
+    assert.ok(store.getDocState('doc_a'));
+    assert.equal(store.getDocState('doc_b'), null);
+    assert.equal(store.getEmbeddingsForModel('bge-m3').some((row) => row.docId === 'doc_b'), false);
+  } finally {
+    store.close();
+  }
+});

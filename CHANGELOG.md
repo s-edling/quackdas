@@ -25,6 +25,63 @@ Verification:
 Regression checks:
 - ...
 
+### Build 2026.03.09.1
+Date: 2026-03-09
+
+Changed:
+- Added the Firefox online-observation extension plus the in-app `Online observations` setup flow, so researchers can capture browser screenshots and notes directly into Quackdas fieldsite documents.
+- Added fieldnote/online-observation persistence, localhost ingest, QDPX pack/export support, and continuation workflows so online observations remain portable and resumable across sessions and machines.
+- Hardened fieldnote coding and media behavior: online-note text selections now code accurately, coded screenshots are selectable and have the correct context menu, fieldnote history reloads back into the extension, and multiple extension UI/performance regressions were fixed.
+- Hardened related data-safety paths: semantic indexing now drops deleted documents, backups use atomic writes, imported packed fieldnote media survives normal saves, and delete-document/history behavior is clearer and safer.
+- Bumped the app version to `0.7.1`.
+
+Why:
+- This batch turns online observation into a usable end-to-end workflow while tightening the persistence, export, and coding paths that could otherwise risk data loss, stale state, or misleading behavior.
+
+Files touched:
+- `browser-extension/**/*`
+- `electron-main/online-observation*.js`
+- `main.js`
+- `preload.js`
+- `index.html`
+- `js/app.js`
+- `js/codes.js`
+- `js/coding.js`
+- `js/documents.js`
+- `js/export.js`
+- `js/fieldnotes.js`
+- `js/pdf.js`
+- `js/qdpx.js`
+- `js/render*.js`
+- `js/semantic.js`
+- `js/state.js`
+- `js/ui.js`
+- `semantic/indexing-core.js`
+- `styles.css`
+- `tests/*.test.js`
+- `ARCHITECTURE.md`
+- `ENGINEERING_NOTES.md`
+- `.gitignore`
+- `package.json`
+- `package-lock.json`
+- `CHANGELOG.md`
+
+Verification:
+- `npm test`
+- `node --check js/coding.js`
+- `node --check js/render.js`
+- `node --check js/fieldnotes.js`
+- `node --check electron-main/online-observation-server.js`
+- `node --check browser-extension/firefox-observer/sidebar.js`
+- Manual smoke tests for Firefox extension setup, note/screenshot capture, fieldsite history restore, online fieldnote coding, screenshot coding/context menus, and marker alignment.
+
+Regression checks:
+- Open Quackdas, connect the Firefox extension from `File -> Online observations`, and verify captures and notes appear in the correct fieldsite/session.
+- Restart Quackdas and reload the extension, then confirm fieldsite history reloads into the sidebar and existing notes continue updating correctly.
+- In online fieldnotes, code short one-line notes, longer notes, and screenshots; verify context menus, selection accuracy, and rendered layout stay stable.
+- Use `Pack for export`, move/open the project again, and confirm online observations still render and new observations can be added.
+- Delete a note-only extension entry and confirm the corresponding project note disappears without disturbing later fieldnote codings.
+
 ### Build 2026.03.07.1
 Date: 2026-03-07
 

@@ -869,11 +869,10 @@ function deleteDocument(docId) {
     if (segmentCount > 0 || memoCount > 0) {
         message += `\n\nThis will also delete ${segmentCount} coded segment(s) and ${memoCount} memo(s).`;
     }
+    message += '\n\nThis action cannot be undone with Ctrl+Z.';
     
     if (!confirm(message)) return;
-    
-    saveHistory();
-    
+
     // Remove document and related data
     appData.documents = appData.documents.filter(d => d.id !== docId);
     appData.segments = appData.segments.filter(s => !segmentIdsToDelete.has(s.id));
@@ -893,7 +892,10 @@ function deleteDocument(docId) {
     if (appData.currentDocId === docId) {
         appData.currentDocId = appData.documents[0]?.id || null;
     }
-    
+
+    if (typeof clearHistoryState === 'function') {
+        clearHistoryState();
+    }
     saveData();
     renderAll();
 }
@@ -1029,4 +1031,10 @@ function handleDroppedDocument(file) {
     } else {
         alert('Unsupported file format. Please use .txt, .docx, or .pdf files.');
     }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        deleteDocument
+    };
 }

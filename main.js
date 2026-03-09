@@ -16,6 +16,8 @@ const { createProjectBackupService } = require('./electron-main/project-backups'
 const { registerOcrImageHandler, resolveTesseractCommand } = require('./electron-main/ocr-service');
 const { createDiskImageStorageService, normalizeDiskImageSettings } = require('./electron-main/disk-image-storage');
 const { writeFileAtomically } = require('./electron-main/project-files');
+const { createObservationWatcher, getObservationSidecarPaths } = require('./electron-main/online-observation');
+const { createObservationServer, DEFAULT_PORT: OBSERVATION_SERVER_PORT } = require('./electron-main/online-observation-server');
 
 let win;
 let currentProjectPath = null;
@@ -31,6 +33,9 @@ let quitPreparationComplete = false;
 const semanticIndexJobsByWebContents = new Map();
 const semanticAskJobsByWebContents = new Map();
 let diskImageStorageService = null;
+let observationWatcher = null;
+let observationServer = null;
+let observationHistorySnapshot = { byFieldsite: {} };
 
 const LAST_PROJECT_FILE = 'last-project-path.json';
 const APP_PREFERENCES_FILE = 'app-preferences.json';
@@ -38,6 +43,10 @@ const MAX_QDPX_FILE_BYTES = 512 * 1024 * 1024; // 512 MB
 const MAX_DOCUMENT_FILE_BYTES = 256 * 1024 * 1024; // 256 MB
 const TESSERACT_STATUS_CACHE_MS = 60 * 1000;
 const WORKER_TERMINATE_GRACE_MS = 1500;
+
+function generateObservationAuthToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
 
 /*
  * IMPORTANT: macOS quit behaviour
@@ -134,6 +143,111 @@ function safeSendToWebContents(webContents, channel, payload) {
   }
 }
 
+function ensureObservationWatcher() {
+  if (observationWatcher) return observationWatcher;
+  observationWatcher = createObservationWatcher({
+    onEntry: async ({ entry, projectPath, sidecarPaths }) => {
+      if (!win || win.isDestroyed()) return;
+      safeSendToWebContents(win.webContents, 'observation:ingestEntry', {
+        entry,
+        projectPath,
+        sidecarPaths
+      });
+    }
+  });
+  return observationWatcher;
+}
+
+function ensureObservationServer() {
+  if (observationServer) return observationServer;
+  observationServer = createObservationServer({
+    getProjectPath: () => currentProjectPath,
+    getAuthToken: () => getOnlineObservationAuthToken(),
+    getFieldsites: () => getOnlineObservationFieldsites(),
+    getHistory: (fieldsite) => getOnlineObservationHistory(fieldsite),
+    onEntry: async ({ entry, projectPath, sidecarPaths }) => {
+      if (!win || win.isDestroyed()) return;
+      safeSendToWebContents(win.webContents, 'observation:ingestEntry', {
+        entry,
+        projectPath,
+        sidecarPaths
+      });
+    },
+    onDelete: async ({ entry, projectPath, sidecarPaths }) => {
+      removeObservationFromSnapshot(entry.fieldsite, entry.uuid);
+      if (!win || win.isDestroyed()) return;
+      safeSendToWebContents(win.webContents, 'observation:deleteEntry', {
+        entry,
+        projectPath,
+        sidecarPaths
+      });
+    }
+  });
+  return observationServer;
+}
+
+async function getOnlineObservationHistory(fieldsite) {
+  const normalizedFieldsite = String(fieldsite || '').trim();
+  const snapshotHit = observationHistorySnapshot?.byFieldsite?.[normalizedFieldsite];
+  if (snapshotHit && typeof snapshotHit === 'object') {
+    return snapshotHit;
+  }
+  if (!normalizedFieldsite || !win || win.isDestroyed() || !win.webContents) {
+    return {
+      fieldsite: normalizedFieldsite,
+      entries: [],
+      lastSession: null,
+      activeSessionStartedAt: ''
+    };
+  }
+
+  const script = `(function () {
+    const bridge = window.__quackdasObservationBridge;
+    if (!bridge || typeof bridge.getFieldsiteHistory !== 'function') {
+      return { fieldsite: ${JSON.stringify(normalizedFieldsite)}, entries: [], lastSession: null, activeSessionStartedAt: '' };
+    }
+    return bridge.getFieldsiteHistory(${JSON.stringify(normalizedFieldsite)});
+  })();`;
+
+  try {
+    const result = await win.webContents.executeJavaScript(script, true);
+    return (result && typeof result === 'object') ? result : {
+      fieldsite: normalizedFieldsite,
+      entries: [],
+      lastSession: null,
+      activeSessionStartedAt: ''
+    };
+  } catch (_) {
+    return {
+      fieldsite: normalizedFieldsite,
+      entries: [],
+      lastSession: null,
+      activeSessionStartedAt: ''
+    };
+  }
+}
+
+function getOnlineObservationFieldsites() {
+  return Object.keys(observationHistorySnapshot?.byFieldsite || {}).sort((a, b) => a.localeCompare(b));
+}
+
+function removeObservationFromSnapshot(fieldsite, uuid) {
+  const normalizedFieldsite = String(fieldsite || '').trim();
+  const normalizedUuid = String(uuid || '').trim();
+  if (!normalizedFieldsite || !normalizedUuid) return;
+  const history = observationHistorySnapshot?.byFieldsite?.[normalizedFieldsite];
+  if (!history || !Array.isArray(history.entries)) return;
+  history.entries = history.entries.filter((entry) => String(entry?.uuid || '').trim() !== normalizedUuid);
+  const lastEntry = history.entries[history.entries.length - 1] || null;
+  history.lastSession = lastEntry ? {
+    sessionDate: String(lastEntry.sessionDate || '').trim(),
+    lastCaptureAt: String(lastEntry.timestamp || '').trim(),
+    sessionStartedAt: String(lastEntry.sessionStartedAt || '').trim(),
+    sessionNumber: Number(lastEntry.sessionNumber) || 1
+  } : null;
+  history.activeSessionStartedAt = history.lastSession ? String(history.lastSession.sessionStartedAt || '').trim() : '';
+}
+
 async function setCurrentProjectPath(projectPath) {
   const normalizedPath = (typeof projectPath === 'string' && projectPath.trim())
     ? projectPath
@@ -143,7 +257,12 @@ async function setCurrentProjectPath(projectPath) {
     clearSemanticAvailabilityCache();
     updateWindowTitle();
   }
+  if (!normalizedPath) {
+    observationHistorySnapshot = { byFieldsite: {} };
+  }
   await persistLastProjectPath(normalizedPath);
+  const watcher = ensureObservationWatcher();
+  await watcher.setProjectPath(normalizedPath);
   return normalizedPath;
 }
 
@@ -225,7 +344,8 @@ function readAppPreferences() {
   if (appPreferencesCache) return appPreferencesCache;
   const defaults = {
     diskImageStorage: false,
-    diskImageSettings: normalizeDiskImageSettings({})
+    diskImageSettings: normalizeDiskImageSettings({}),
+    onlineObservationAuthToken: ''
   };
   try {
     const raw = fs.readFileSync(getAppPreferencesFile(), 'utf8');
@@ -241,6 +361,12 @@ function readAppPreferences() {
   } catch (_) {
     appPreferencesCache = Object.assign({}, defaults);
   }
+  if (!appPreferencesCache.onlineObservationAuthToken) {
+    appPreferencesCache.onlineObservationAuthToken = generateObservationAuthToken();
+    try {
+      fs.writeFileSync(getAppPreferencesFile(), JSON.stringify(appPreferencesCache), 'utf8');
+    } catch (_) {}
+  }
   return appPreferencesCache;
 }
 
@@ -255,10 +381,35 @@ function writeAppPreferences(nextPrefs) {
       : {}
   ));
   appPreferencesCache.diskImageStorage = !!appPreferencesCache.diskImageSettings.enabled;
+  appPreferencesCache.onlineObservationAuthToken = String(appPreferencesCache.onlineObservationAuthToken || '').trim() || generateObservationAuthToken();
   try {
     fs.writeFileSync(getAppPreferencesFile(), JSON.stringify(appPreferencesCache), 'utf8');
   } catch (_) {}
   return appPreferencesCache;
+}
+
+function getOnlineObservationAuthToken() {
+  return String(readAppPreferences().onlineObservationAuthToken || '').trim() || writeAppPreferences({}).onlineObservationAuthToken;
+}
+
+function regenerateOnlineObservationAuthToken() {
+  const nextToken = generateObservationAuthToken();
+  writeAppPreferences({ onlineObservationAuthToken: nextToken });
+  return nextToken;
+}
+
+async function getOnlineObservationConnectionInfo() {
+  const status = await ensureObservationServer().start();
+  return {
+    ok: true,
+    running: !!status.running,
+    serverUrl: status.serverUrl || `http://127.0.0.1:${OBSERVATION_SERVER_PORT}`,
+    authToken: getOnlineObservationAuthToken(),
+    hasActiveProject: !!currentProjectPath,
+    activeProjectPath: currentProjectPath || '',
+    activeProjectFileName: currentProjectPath ? path.basename(currentProjectPath) : '',
+    error: status.error || ''
+  };
 }
 
 function isDiskImageStorageEnabled() {
@@ -764,6 +915,9 @@ async function waitForShutdownQuiescence(timeoutMs = 4000) {
 async function prepareAppForQuit() {
   stopAllSemanticJobs();
   await waitForShutdownQuiescence();
+  if (observationServer) {
+    await observationServer.stop().catch(() => {});
+  }
   if (diskImageStorageService) {
     await diskImageStorageService.maybeUnmountOnQuit().catch(() => {});
   }
@@ -911,6 +1065,10 @@ function createWindow() {
           accelerator: 'CmdOrCtrl+Shift+S',
           click: () => sendMenuActionToRenderer('saveAs')
         },
+        {
+          label: 'Online observations…',
+          click: () => sendMenuActionToRenderer('openOnlineObservationsModal')
+        },
         { type: 'separator' },
         ...(isMac ? [] : [{
           label: 'Quit',
@@ -1001,12 +1159,62 @@ ipcMain.handle('project:hasHandle', async () => {
 
 ipcMain.handle('project:getInfo', async () => {
   const projectPath = currentProjectPath || '';
+  const watchPaths = projectPath ? getObservationSidecarPaths(projectPath) : null;
+  const observationConnection = await getOnlineObservationConnectionInfo();
   return {
     ok: true,
     hasHandle: !!projectPath,
     path: projectPath,
-    fileName: projectPath ? path.basename(projectPath) : ''
+    fileName: projectPath ? path.basename(projectPath) : '',
+    observation: watchPaths ? {
+      sidecarRoot: watchPaths.rootDir,
+      watchFolder: watchPaths.incomingDir
+    } : null,
+    onlineObservationConnection: observationConnection
   };
+});
+
+ipcMain.handle('observation:getConnectionInfo', async () => {
+  return getOnlineObservationConnectionInfo();
+});
+
+ipcMain.handle('observation:regenerateToken', async () => {
+  regenerateOnlineObservationAuthToken();
+  return getOnlineObservationConnectionInfo();
+});
+
+ipcMain.handle('observation:updateSnapshot', async (_evt, snapshot) => {
+  const next = (snapshot && typeof snapshot === 'object') ? snapshot : {};
+  observationHistorySnapshot = {
+    byFieldsite: (next.byFieldsite && typeof next.byFieldsite === 'object') ? next.byFieldsite : {}
+  };
+  return { ok: true };
+});
+
+ipcMain.handle('observation:readAsset', async (_evt, relativePath) => {
+  try {
+    if (!currentProjectPath) {
+      return { ok: false, error: 'No active project path.' };
+    }
+    const sidecar = getObservationSidecarPaths(currentProjectPath);
+    const rawRelative = String(relativePath || '').trim().replace(/\\/g, '/');
+    if (!rawRelative) {
+      return { ok: false, error: 'Asset path is required.' };
+    }
+    const targetPath = path.resolve(sidecar.rootDir, rawRelative);
+    const sidecarRoot = path.resolve(sidecar.rootDir);
+    if (!(targetPath === sidecarRoot || targetPath.startsWith(sidecarRoot + path.sep))) {
+      return { ok: false, error: 'Asset path is outside the project sidecar.' };
+    }
+    const buffer = await fs.promises.readFile(targetPath);
+    return {
+      ok: true,
+      base64: buffer.toString('base64'),
+      path: targetPath
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
 });
 
 ipcMain.handle('settings:getStorageMode', async () => {
@@ -1742,6 +1950,7 @@ app.whenReady().then(async () => {
   if (diskImageStorageService) {
     await diskImageStorageService.prepareStartupMount().catch(() => ({ ok: false }));
   }
+  await ensureObservationServer().start();
   createWindow();
   if (win && !win.isDestroyed()) {
     win.webContents.once('did-finish-load', () => {

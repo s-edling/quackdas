@@ -86,13 +86,19 @@ function renderCodeItem(code, isChild = false, index = 0) {
 
 // getCodeSegmentCount is now getCodeSegmentCountFast in state.js
 
-function setDocumentViewMode(isPdf) {
+function setDocumentViewMode(mode) {
+    const normalizedMode = mode === true ? 'pdf' : (mode === false ? 'text' : String(mode || 'text'));
+    const isPdf = normalizedMode === 'pdf';
+    const isFieldnote = normalizedMode === 'fieldnote';
     const panel = document.querySelector('.content-panel');
     const nav = document.getElementById('pdfNavControls');
     const codingModeControls = document.getElementById('pdfCodingModeControls');
     const status = document.getElementById('pdfSelectionStatus');
-    if (panel) panel.classList.toggle('pdf-mode', !!isPdf);
-    if (nav) nav.hidden = !isPdf;
+    if (panel) {
+        panel.classList.toggle('pdf-mode', !!isPdf);
+        panel.classList.toggle('fieldnote-mode', !!isFieldnote);
+    }
+    if (nav) nav.hidden = !(isPdf || isFieldnote);
     if (codingModeControls) codingModeControls.hidden = !isPdf;
     if (status && !isPdf) {
         status.hidden = true;
@@ -331,7 +337,7 @@ function renderCurrentDocument() {
         if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         if (contentElement) contentElement.classList.add('code-view-mode');
         if (contentBody) contentBody.classList.add('code-view-mode');
-        setDocumentViewMode(false);
+        setDocumentViewMode('text');
         setZoomControlsVisible(false);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         const code = appData.codes.find(c => c.id === appData.filterCodeId);
@@ -345,7 +351,7 @@ function renderCurrentDocument() {
         if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
         if (contentElement) contentElement.classList.add('code-view-mode');
         if (contentBody) contentBody.classList.add('code-view-mode');
-        setDocumentViewMode(false);
+        setDocumentViewMode('text');
         setZoomControlsVisible(false);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         const selectedCase = appData.cases.find(c => c.id === appData.selectedCaseId);
@@ -357,7 +363,7 @@ function renderCurrentDocument() {
     
     if (!doc) {
         if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
-        setDocumentViewMode(false);
+        setDocumentViewMode('text');
         setZoomControlsVisible(true);
         if (typeof renderDocumentCasesControl === 'function') renderDocumentCasesControl();
         // Show empty state if no document selected
@@ -385,7 +391,7 @@ function renderCurrentDocument() {
     // Check if this is a PDF document
     if (doc.type === 'pdf') {
         if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
-        setDocumentViewMode(true);
+        setDocumentViewMode('pdf');
         setZoomControlsVisible(true);
         if (typeof closeInPageSearch === 'function') closeInPageSearch();
         const content = document.getElementById('documentContent');
@@ -412,8 +418,22 @@ function renderCurrentDocument() {
         return;
     }
     
+    if (doc.type === 'fieldnote') {
+        if (typeof disableReadOnlyTextViewerCaret === 'function') disableReadOnlyTextViewerCaret();
+        setDocumentViewMode('fieldnote');
+        setZoomControlsVisible(true);
+        if (typeof cleanupPdfState === 'function') cleanupPdfState();
+        const content = document.getElementById('documentContent');
+        if (typeof renderFieldnoteDocument === 'function') {
+            renderFieldnoteDocument(doc, content);
+        } else {
+            content.innerHTML = '<div class="pdf-error"><p>Fieldnote rendering is not available.</p></div>';
+        }
+        return;
+    }
+
     // Clean up PDF state when switching to non-PDF document
-    setDocumentViewMode(false);
+    setDocumentViewMode('text');
     setZoomControlsVisible(true);
     if (typeof cleanupPdfState === 'function') cleanupPdfState();
     
@@ -423,6 +443,7 @@ function renderCurrentDocument() {
 function renderFullDocument(doc) {
     const content = document.getElementById('documentContent');
     content.classList.remove('document-rich-content');
+    content.classList.remove('fieldnote-document');
     const segments = getSegmentsForDoc(doc.id);
 
     if (docHasRichTextMarkup(doc)) {
@@ -626,7 +647,8 @@ function renderDocumentSegmentMarkers(contentEl) {
     clearDocumentSegmentMarkers(contentEl);
 
     const spans = Array.from(contentEl.querySelectorAll('.coded-segment'));
-    if (spans.length === 0) return;
+    const fieldnoteImageMarkers = Array.from(contentEl.querySelectorAll('.fieldnote-image-wrap[data-fieldnote-marker="true"]'));
+    if (spans.length === 0 && fieldnoteImageMarkers.length === 0) return;
 
     const contentRect = contentEl.getBoundingClientRect();
     if (!contentRect.width || !contentRect.height) return;
@@ -659,6 +681,28 @@ function renderDocumentSegmentMarkers(contentEl) {
             bands,
             memoCount,
             firstSegmentId
+        });
+    });
+
+    fieldnoteImageMarkers.forEach((imageWrap) => {
+        const rect = imageWrap.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return;
+
+        const computed = window.getComputedStyle(imageWrap);
+        const markerWidth = Math.max(2, parseFloat(computed.getPropertyValue('--seg-marker-width')) || 2);
+        const markerGradient = computed.getPropertyValue('--seg-marker-gradient').trim() || 'rgba(101, 101, 101, 0.95)';
+        const insetTop = 10;
+        const insetBottom = 10;
+        const bandTop = rect.top + insetTop;
+        const bandBottom = rect.bottom - insetBottom;
+        if (!(bandBottom > bandTop)) return;
+        if (markerWidth > maxMarkerWidth) maxMarkerWidth = markerWidth;
+        markerSpecs.push({
+            markerWidth,
+            markerGradient,
+            bands: [{ top: bandTop, bottom: bandBottom }],
+            memoCount: 0,
+            firstSegmentId: ''
         });
     });
 
@@ -727,7 +771,7 @@ function renderCodedSpan(text, activeSegments) {
     const primarySegmentId = activeSegments[0]?.id || '';
     const segmentMemoCount = primarySegmentId ? getSegmentMemoCount(primarySegmentId) : 0;
 
-    return `<span class="coded-segment" style="${segmentStyle}" data-primary-segment-id="${escapeHtmlAttrValue(primarySegmentId)}" data-segment-ids="${escapeHtmlAttrValue(segmentIds)}" data-code-ids="${escapeHtmlAttrValue(codeIds)}" data-memo-count="${segmentMemoCount}" data-tooltip="${escapeHtmlAttrValue(codeNames)} • Right-click for options"><span class="coded-segment-text">${escapeHtml(text)}</span></span>`;
+    return `<span class="coded-segment" style="${segmentStyle}" data-primary-segment-id="${escapeHtmlAttrValue(primarySegmentId)}" data-segment-ids="${escapeHtmlAttrValue(segmentIds)}" data-code-ids="${escapeHtmlAttrValue(codeIds)}" data-memo-count="${segmentMemoCount}" data-tooltip="${escapeHtmlAttrValue(codeNames)} • Right-click for options"><span class="coded-segment-text">${preserveLineBreaks(escapeHtml(text))}</span></span>`;
 }
 
 const codeLookupCache = {
@@ -913,6 +957,9 @@ function segmentSourceLabel(segment) {
     if (!segment) return '';
     if (segment.pdfRegion) {
         return `Page ${segment.pdfRegion.pageNum || '?'}`;
+    }
+    if (segment.fieldnoteImageId) {
+        return 'Image capture';
     }
     return `Char ${Number(segment.startIndex || 0)}-${Number(segment.endIndex || 0)}`;
 }
@@ -1652,10 +1699,14 @@ function renderFilteredView() {
                 const createdDiff = segmentCreatedMs(a) - segmentCreatedMs(b);
                 if (createdDiff !== 0) return createdDiff;
                 if (!!a.pdfRegion !== !!b.pdfRegion) return a.pdfRegion ? 1 : -1;
+                if (!!a.fieldnoteImageId !== !!b.fieldnoteImageId) return a.fieldnoteImageId ? 1 : -1;
                 if (a.pdfRegion && b.pdfRegion) {
                     if ((a.pdfRegion.pageNum || 0) !== (b.pdfRegion.pageNum || 0)) return (a.pdfRegion.pageNum || 0) - (b.pdfRegion.pageNum || 0);
                     if ((a.pdfRegion.yNorm || 0) !== (b.pdfRegion.yNorm || 0)) return (a.pdfRegion.yNorm || 0) - (b.pdfRegion.yNorm || 0);
                     return (a.pdfRegion.xNorm || 0) - (b.pdfRegion.xNorm || 0);
+                }
+                if (a.fieldnoteImageId && b.fieldnoteImageId) {
+                    return String(a.fieldnoteImageId).localeCompare(String(b.fieldnoteImageId));
                 }
                 return (a.startIndex || 0) - (b.startIndex || 0);
             });
@@ -1669,12 +1720,12 @@ function renderFilteredView() {
             docSegments.forEach((segment) => {
                 const snippetText = segment.pdfRegion
                     ? `[PDF page ${segment.pdfRegion.pageNum}] ${segment.text || 'Region selection'}`
-                    : segment.text;
+                    : (segment.fieldnoteImageId ? `[Image capture] ${segment.text || 'Fieldnote image'}` : segment.text);
                 const memos = getRelevantSegmentMemos(segment);
                 const memoHtml = memos.length > 0
                     ? `<div class="filter-snippet-memo">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</div>`
                     : '<div class="filter-snippet-memo empty">No annotation.</div>';
-                const inlineTextMemoHtml = (!segment.pdfRegion && memos.length > 0)
+                const inlineTextMemoHtml = (!segment.pdfRegion && !segment.fieldnoteImageId && memos.length > 0)
                     ? `<span class="filter-snippet-memo-inline">${preserveLineBreaks(escapeHtml(memos[0].content || ''))}</span>`
                     : '';
                 const segmentCodes = Array.isArray(segment.codeIds)
@@ -2020,6 +2071,34 @@ function goToSegmentLocation(docId, segmentId) {
             pdfGoToRegion(doc, segment.pdfRegion, segment.id);
         } else if (doc && doc.type === 'pdf' && typeof pdfGoToTextSegment === 'function') {
             pdfGoToTextSegment(doc, segment);
+        } else if (doc && doc.type === 'fieldnote' && typeof renderCurrentDocumentView === 'function') {
+            const sessions = doc.fieldnoteData?.sessions || [];
+            let targetPage = 0;
+            for (let idx = 0; idx < sessions.length; idx++) {
+                const session = sessions[idx];
+                if (getFieldnoteSessionHasCoding(doc, session) && segment.fieldnoteImageId) {
+                    const hit = (session.entries || []).some((entry) => entry.id === segment.fieldnoteImageId);
+                    if (hit) {
+                        targetPage = idx;
+                        break;
+                    }
+                }
+                const sessionRange = getFieldnoteSessionRange(doc, session);
+                if (sessionRange && !segment.fieldnoteImageId && Number(segment.startIndex) >= sessionRange.start && Number(segment.startIndex) <= sessionRange.end) {
+                    targetPage = idx;
+                    break;
+                }
+            }
+            setCurrentFieldnotePage(doc.id, targetPage);
+            renderCurrentDocumentView();
+            setTimeout(() => {
+                if (segment.fieldnoteImageId) {
+                    const imageEl = document.querySelector(`[data-fieldnote-image-id="${CSS.escape(String(segment.fieldnoteImageId))}"]`);
+                    if (imageEl && typeof imageEl.scrollIntoView === 'function') imageEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                } else {
+                    scrollToCharacterPosition(segment.startIndex || 0);
+                }
+            }, 50);
         } else {
             scrollToCharacterPosition(segment.startIndex || 0);
         }

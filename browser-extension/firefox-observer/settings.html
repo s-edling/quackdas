@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quackdas Observation Settings</title>
+    <link rel="stylesheet" href="quackdas-theme.css">
+    <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+    <div class="sidebar-shell settings-shell">
+        <header class="sidebar-header">
+            <div>
+                <div class="sidebar-brand">Quackdas</div>
+                <div class="sidebar-subtitle">Observation settings</div>
+            </div>
+            <div class="sidebar-logo" aria-hidden="true">
+                <img src="assets/logo.jpg" alt="">
+            </div>
+        </header>
+
+        <section class="panel-card">
+            <label class="field-label" for="configInput">Paste Quackdas config</label>
+            <textarea id="configInput" class="field-input" rows="5" placeholder='{"serverUrl":"http://127.0.0.1:45823","authToken":"..."}'></textarea>
+
+            <div class="actions-row" style="margin-top:12px;">
+                <button id="applyConfigButton" class="secondary-button" type="button">Apply config</button>
+            </div>
+
+            <label class="field-label" for="serverUrlInput" style="margin-top:16px;">Quackdas server URL</label>
+            <input id="serverUrlInput" class="field-input" type="text" placeholder="http://127.0.0.1:45823" autocomplete="off">
+
+            <label class="field-label" for="authTokenInput" style="margin-top:16px;">Auth token</label>
+            <input id="authTokenInput" class="field-input" type="text" placeholder="Paste token from Quackdas" autocomplete="off">
+
+            <label class="field-label" for="sessionModeSelect" style="margin-top:16px;">Session mode</label>
+            <select id="sessionModeSelect" class="field-input">
+                <option value="rollover">Day rollover</option>
+                <option value="gap">2-hour gap</option>
+                <option value="manual">Manual</option>
+            </select>
+
+            <label class="field-label" for="rolloverHourInput" style="margin-top:16px;">Day boundary hour</label>
+            <input id="rolloverHourInput" class="field-input" type="number" min="0" max="23" step="1">
+        </section>
+
+        <section id="settingsStatus" class="status-banner" hidden></section>
+
+        <footer class="sidebar-footer">
+            <div class="actions-row">
+                <button id="saveSettingsButton" class="primary-button" type="button">Save settings</button>
+                <button id="validateSettingsButton" class="secondary-button" type="button">Test connection</button>
+            </div>
+        </footer>
+    </div>
+
+    <script src="lib/storage.js"></script>
+    <script src="native-bridge-client.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>

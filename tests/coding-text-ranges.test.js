@@ -116,3 +116,72 @@ test('coding immediately before an existing same-code PDF segment does not uncod
     ]
   );
 });
+
+test('fieldnote text coding allows very short note selections', () => {
+  resetSegments([]);
+  global.appData.documents = [{
+    id: 'doc_fieldnote',
+    type: 'fieldnote',
+    content: 'OK'
+  }];
+
+  const doc = global.appData.documents[0];
+  const result = coding.toggleCodeForTextRange(doc, 0, 2, 'code_a');
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(global.appData.segments.map((segment) => ({
+    docId: segment.docId,
+    startIndex: segment.startIndex,
+    endIndex: segment.endIndex,
+    codeIds: segment.codeIds
+  })), [
+    {
+      docId: 'doc_fieldnote',
+      startIndex: 0,
+      endIndex: 2,
+      codeIds: ['code_a']
+    }
+  ]);
+});
+
+test('fieldnote selection normalization trims trailing separator newlines', () => {
+  resetSegments([]);
+
+  const doc = {
+    id: 'doc_fieldnote',
+    type: 'fieldnote',
+    content: 'Line one\n\nLine two'
+  };
+
+  const normalized = coding.normalizeTextSelectionForCoding(doc, {
+    startIndex: 0,
+    endIndex: 10
+  });
+
+  assert.deepEqual(normalized, {
+    startIndex: 0,
+    endIndex: 8,
+    text: 'Line one'
+  });
+});
+
+test('fieldnote selection normalization trims leading separator newlines', () => {
+  resetSegments([]);
+
+  const doc = {
+    id: 'doc_fieldnote',
+    type: 'fieldnote',
+    content: 'Line one\n\nLine two'
+  };
+
+  const normalized = coding.normalizeTextSelectionForCoding(doc, {
+    startIndex: 8,
+    endIndex: doc.content.length
+  });
+
+  assert.deepEqual(normalized, {
+    startIndex: 10,
+    endIndex: doc.content.length,
+    text: 'Line two'
+  });
+});

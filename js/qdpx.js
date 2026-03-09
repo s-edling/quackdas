@@ -149,6 +149,52 @@ function resolveZipSourceFile(rawPath, zipLookup) {
     return null;
 }
 
+async function readZipTextEntryWithSafety(zipObject, label, expandedReadState) {
+    const declaredBytes = getZipObjectDeclaredUncompressedBytes(zipObject);
+    if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+        throw new Error(`Invalid QDPX file: ${label} exceeds per-file safety limit.`);
+    }
+
+    const text = await zipObject.async('string');
+    const textBytes = getStringByteLength(text);
+    if (textBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+        throw new Error(`Invalid QDPX file: ${label} exceeds per-file safety limit.`);
+    }
+
+    if (expandedReadState) {
+        expandedReadState.bytes += textBytes;
+        if (expandedReadState.bytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+            throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+        }
+    }
+
+    return text;
+}
+
+async function readZipBinaryBase64EntryWithSafety(zipObject, label, expandedReadState) {
+    const declaredBytes = getZipObjectDeclaredUncompressedBytes(zipObject);
+    if (Number.isFinite(declaredBytes) && declaredBytes > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+        throw new Error(`Invalid QDPX file: ${label} exceeds per-file safety limit.`);
+    }
+
+    const bytes = await zipObject.async('uint8array');
+    if (bytes.byteLength > QDPX_MAX_SINGLE_SOURCE_BYTES) {
+        throw new Error(`Invalid QDPX file: ${label} exceeds per-file safety limit.`);
+    }
+
+    if (expandedReadState) {
+        expandedReadState.bytes += bytes.byteLength;
+        if (expandedReadState.bytes > QDPX_MAX_EXPANDED_READ_BYTES) {
+            throw new Error('Invalid QDPX file: decompressed content exceeds safety limit.');
+        }
+    }
+
+    const buffer = (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength)
+        ? bytes.buffer
+        : bytes.slice().buffer;
+    return arrayBufferToBase64ForQdpx(buffer);
+}
+
 function getSelectionCodeGuids(selectionEl) {
     const codeGuids = [];
     if (!selectionEl) return codeGuids;
@@ -587,11 +633,85 @@ function buildVariableDefinitionsForExport(project) {
     return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+async function readProjectRelativeObservationAsset(relativePath) {
+    if (!window.electronAPI || typeof window.electronAPI.readObservationAsset !== 'function') {
+        throw new Error('Observation asset reading is unavailable.');
+    }
+    const result = await window.electronAPI.readObservationAsset(relativePath);
+    if (!result || !result.ok || !result.base64) {
+        throw new Error(result?.error || `Could not read observation asset: ${relativePath}`);
+    }
+    return result.base64;
+}
+
+function extractBase64FromDataUrlForQdpx(dataUrl) {
+    const match = String(dataUrl || '').trim().match(/^data:.*?;base64,([a-z0-9+/=\s]+)$/i);
+    return match ? match[1].replace(/\s+/g, '') : '';
+}
+
+async function maybePackFieldnoteMediaIntoZip(doc, guid, sourcesFolder, serializerOptions) {
+    if (!doc || doc.type !== 'fieldnote' || !doc.fieldnoteData) {
+        return { fieldnoteData: typeof serializeFieldnoteDataForStorage === 'function' ? serializeFieldnoteDataForStorage(doc?.fieldnoteData) : (doc?.fieldnoteData || makeEmptyFieldnoteData()) };
+    }
+
+    const sourceEntryById = new Map();
+    for (const session of (doc.fieldnoteData.sessions || [])) {
+        for (const entry of (session.entries || [])) {
+            const entryId = String(entry?.id || '').trim();
+            if (!entryId || sourceEntryById.has(entryId)) continue;
+            sourceEntryById.set(entryId, entry);
+        }
+    }
+
+    const fieldnoteData = typeof serializeFieldnoteDataForStorage === 'function'
+        ? serializeFieldnoteDataForStorage(doc.fieldnoteData)
+        : JSON.parse(JSON.stringify(doc.fieldnoteData || makeEmptyFieldnoteData()));
+    const embedFieldnoteMedia = !!serializerOptions?.embedFieldnoteMedia;
+
+    for (const session of (fieldnoteData.sessions || [])) {
+        for (const entry of (session.entries || [])) {
+            const sourceEntry = sourceEntryById.get(String(entry.id || '').trim()) || {};
+            const normalizedScreenshot = String(entry.screenshotPath || '').trim();
+            const normalizedHtml = String(entry.htmlPath || '').trim();
+            const packedScreenshotBase64 = extractBase64FromDataUrlForQdpx(sourceEntry.packedScreenshotDataUrl);
+            const packedHtmlContent = String(sourceEntry.packedHtmlContent || '');
+
+            if (normalizedScreenshot && !/^internal:/i.test(normalizedScreenshot) && embedFieldnoteMedia) {
+                const base64 = await readProjectRelativeObservationAsset(normalizedScreenshot);
+                const ext = normalizedScreenshot.toLowerCase().endsWith('.png') ? '.png' : '.bin';
+                const packedName = `${guid}.fieldnote_media/${entry.id}${ext}`;
+                sourcesFolder.file(packedName, base64ToArrayBufferForQdpx(base64));
+                entry.screenshotPath = `internal://${packedName}`;
+            } else if (packedScreenshotBase64 && (!normalizedScreenshot || /^internal:/i.test(normalizedScreenshot))) {
+                const packedName = `${guid}.fieldnote_media/${entry.id}.png`;
+                sourcesFolder.file(packedName, base64ToArrayBufferForQdpx(packedScreenshotBase64));
+                entry.screenshotPath = `internal://${packedName}`;
+            }
+
+            if (normalizedHtml && !/^internal:/i.test(normalizedHtml) && embedFieldnoteMedia) {
+                const base64 = await readProjectRelativeObservationAsset(normalizedHtml);
+                const packedName = `${guid}.fieldnote_media/${entry.id}.html`;
+                const htmlText = (typeof TextDecoder !== 'undefined')
+                    ? new TextDecoder().decode(base64ToArrayBufferForQdpx(base64))
+                    : atob(base64);
+                sourcesFolder.file(packedName, htmlText);
+                entry.htmlPath = `internal://${packedName}`;
+            } else if (packedHtmlContent && (!normalizedHtml || /^internal:/i.test(normalizedHtml))) {
+                const packedName = `${guid}.fieldnote_media/${entry.id}.html`;
+                sourcesFolder.file(packedName, packedHtmlContent);
+                entry.htmlPath = `internal://${packedName}`;
+            }
+        }
+    }
+
+    return { fieldnoteData };
+}
+
 /**
  * Export project to QDPX format
  * @returns {Promise<Blob>} - QDPX file as a Blob
  */
-async function exportToQdpx() {
+async function exportToQdpx(options = {}) {
     if (typeof JSZip === 'undefined') {
         throw new Error('JSZip library not loaded');
     }
@@ -656,12 +776,24 @@ async function exportToQdpx() {
                 richTextPath = `internal://${richTextFileName}`;
             }
             
+            let fieldnotePath = '';
+            let docTypeAttr = '';
+            if (doc.type === 'fieldnote' && doc.fieldnoteData) {
+                const fieldnoteFileName = `${guid}.fieldnote.json`;
+                const packedFieldnote = await maybePackFieldnoteMediaIntoZip(doc, guid, sourcesFolder, options || {});
+                sourcesFolder.file(fieldnoteFileName, JSON.stringify(packedFieldnote.fieldnoteData, null, 2));
+                fieldnotePath = `internal://${fieldnoteFileName}`;
+                docTypeAttr = 'fieldnote';
+            }
+
             sources.push({
                 type: 'TextSource',
                 guid: guid,
                 name: doc.title,
                 path: `internal://${textFileName}`,
                 richTextPath,
+                fieldnotePath,
+                docTypeAttr,
                 plainTextContent: doc.content,
                 created: doc.created,
                 modified: doc.lastAccessed
@@ -752,6 +884,12 @@ async function exportToQdpx() {
             xml += `plainTextPath="${escapeXml(source.path)}" `;
             if (source.richTextPath) {
                 xml += `quackdasRichTextPath="${escapeXml(source.richTextPath)}" `;
+            }
+            if (source.docTypeAttr) {
+                xml += `quackdasDocType="${escapeXml(source.docTypeAttr)}" `;
+            }
+            if (source.fieldnotePath) {
+                xml += `quackdasFieldnotePath="${escapeXml(source.fieldnotePath)}" `;
             }
             xml += `creatingUserGUID="${userGuid}" `;
             xml += `creationDateTime="${formatDateTime(source.created)}" `;
@@ -1087,6 +1225,8 @@ async function importFromQdpx(qdpxData) {
         const sourcePathAttr = sourceEl.getAttribute('path');
         const plainTextPathAttr = sourceEl.getAttribute('plainTextPath');
         const richTextPathAttr = sourceEl.getAttribute('quackdasRichTextPath');
+        const docTypeAttr = sourceEl.getAttribute('quackdasDocType');
+        const fieldnotePathAttr = sourceEl.getAttribute('quackdasFieldnotePath');
         const representationEl = sourceEl.querySelector(':scope > Representation');
         const representationTextPath = representationEl ? representationEl.getAttribute('plainTextPath') : '';
         const representationPdfPagesPath = representationEl ? representationEl.getAttribute('quackdasPdfPagesPath') : '';
@@ -1244,10 +1384,62 @@ async function importFromQdpx(qdpxData) {
             }
         }
 
+        if (!isPdf && docTypeAttr === 'fieldnote' && fieldnotePathAttr) {
+            const resolvedFieldnote = resolveZipSourceFile(fieldnotePathAttr, zipLookup);
+            if (resolvedFieldnote && resolvedFieldnote.file) {
+                const expandedReadState = {
+                    get bytes() { return expandedReadBytes; },
+                    set bytes(value) { expandedReadBytes = value; }
+                };
+                const fieldnoteJson = await readZipTextEntryWithSafety(
+                    resolvedFieldnote.file,
+                    `fieldnote source "${name}"`,
+                    expandedReadState
+                );
+                try {
+                    const parsedFieldnote = JSON.parse(fieldnoteJson);
+                    doc.type = 'fieldnote';
+                    doc.fieldnoteData = parsedFieldnote;
+                    for (const session of (doc.fieldnoteData.sessions || [])) {
+                        for (const entry of (session.entries || [])) {
+                            const packedScreenshotPath = String(entry.screenshotPath || '').trim();
+                            if (packedScreenshotPath && /^internal:/i.test(packedScreenshotPath)) {
+                                const resolvedImage = resolveZipSourceFile(packedScreenshotPath, zipLookup);
+                                if (resolvedImage && resolvedImage.file) {
+                                    const imageBase64 = await readZipBinaryBase64EntryWithSafety(
+                                        resolvedImage.file,
+                                        `fieldnote screenshot "${packedScreenshotPath}"`,
+                                        expandedReadState
+                                    );
+                                    entry.packedScreenshotDataUrl = `data:image/png;base64,${imageBase64}`;
+                                }
+                            }
+                            const packedHtmlPath = String(entry.htmlPath || '').trim();
+                            if (packedHtmlPath && /^internal:/i.test(packedHtmlPath)) {
+                                const resolvedHtml = resolveZipSourceFile(packedHtmlPath, zipLookup);
+                                if (resolvedHtml && resolvedHtml.file) {
+                                    entry.packedHtmlContent = await readZipTextEntryWithSafety(
+                                        resolvedHtml.file,
+                                        `fieldnote HTML "${packedHtmlPath}"`,
+                                        expandedReadState
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if (typeof normalizeFieldnoteDocument === 'function') {
+                        normalizeFieldnoteDocument(doc);
+                    }
+                } catch (err) {
+                    console.warn('Could not parse fieldnote data:', err);
+                }
+            }
+        }
+
         const sourceAttributeExclusions = new Set([
             'guid', 'name', 'path', 'plainTextPath', 'creatingUserGUID',
             'creationDateTime', 'modifyingUserGUID', 'modifiedDateTime',
-            'quackdasRichTextPath'
+            'quackdasRichTextPath', 'quackdasDocType', 'quackdasFieldnotePath'
         ]);
         Array.from(sourceEl.attributes || []).forEach(attr => {
             if (!attr || sourceAttributeExclusions.has(attr.name)) return;
@@ -1680,6 +1872,9 @@ if (typeof module !== 'undefined' && module.exports) {
         getBinaryByteLength,
         getStringByteLength,
         getZipObjectDeclaredUncompressedBytes,
+        readZipTextEntryWithSafety,
+        readZipBinaryBase64EntryWithSafety,
+        extractBase64FromDataUrlForQdpx,
         normalizeQdpxSourcePath,
         buildZipFileLookup,
         resolveZipSourceFile,

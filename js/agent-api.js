@@ -147,11 +147,13 @@
                         currentRevision
                     };
                 }
-                if (doc.type === 'pdf') {
+                if (doc.type === 'pdf' || doc.type === 'fieldnote') {
                     return {
                         ok: false,
                         code: 'UNSUPPORTED_DOCUMENT_TYPE',
-                        message: 'PDF documents cannot be edited through the agent API.',
+                        message: doc.type === 'fieldnote'
+                            ? 'Fieldnote documents cannot be edited through the agent API.'
+                            : 'PDF documents cannot be edited through the agent API.',
                         currentRevision
                     };
                 }

@@ -1,3 +1,5 @@
+const { writeFileAtomically } = require('./project-files');
+
 const BACKUP_MAX_RECENT = 20;
 const BACKUP_DAILY_DAYS = 14;
 const BACKUP_DIR_NAME = 'project-backups';
@@ -144,7 +146,7 @@ function createProjectBackupService(deps) {
           onBackupWriteStateChange(1);
           writeTracked = true;
         }
-        await fs.promises.writeFile(backupPath, buffer);
+        await writeFileAtomically({ fs, path }, backupPath, buffer);
         if (writeTracked && typeof onBackupWriteStateChange === 'function') {
           onBackupWriteStateChange(-1);
           writeTracked = false;

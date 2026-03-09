@@ -34,6 +34,14 @@ function setupLogoQuackEasterEgg() {
     });
 }
 
+async function syncObservationSnapshotToMain() {
+    if (!(window.electronAPI && typeof window.electronAPI.updateObservationSnapshot === 'function')) return;
+    if (typeof getAllObservationHistorySnapshot !== 'function') return;
+    try {
+        await window.electronAPI.updateObservationSnapshot(getAllObservationHistorySnapshot());
+    } catch (_) {}
+}
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', async function() {
     window.__startupProjectRestoreInProgress = true;
@@ -49,6 +57,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                     reopenedLastProject = await applyImportedQdpx(buffer, {
                         projectPath: String(result.path || '')
                     });
+                    await syncObservationSnapshotToMain();
                 }
             } catch (err) {
                 console.warn('Could not reopen last project on startup:', err);
@@ -58,6 +67,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (!reopenedLastProject) {
             renderAll();
         }
+        await syncObservationSnapshotToMain();
         updateHistoryButtons();
         updateSaveStatus();
         applyPlatformShortcutTooltips();
@@ -84,6 +94,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         
         // Setup context menu dismissal
         setupContextMenuDismissal();
+        const pdfNextBtn = document.getElementById('pdfNextBtn');
+        if (pdfNextBtn && typeof openFieldnoteNavContextMenu === 'function') {
+            pdfNextBtn.addEventListener('contextmenu', (event) => {
+                if (typeof isFieldnoteDocumentActive === 'function' && isFieldnoteDocumentActive()) {
+                    openFieldnoteNavContextMenu(event);
+                }
+            });
+        }
         setupStaticActionBindings();
         setupLogoQuackEasterEgg();
         if (typeof initSemanticTools === 'function') {
@@ -163,6 +181,15 @@ function setupFileInputs() {
 
 function setupContextMenuDismissal() {
     window.addEventListener('click', () => hideContextMenu());
+    window.addEventListener('mousedown', (event) => {
+        const targetEl = getEventTargetElement(event);
+        if (!targetEl) return;
+        const codeItem = targetEl.closest('.code-item.draggable-code[data-code-id]');
+        if (!codeItem || isInteractiveControlTarget(targetEl)) return;
+        if (typeof captureCurrentSelectionForCoding === 'function') {
+            captureCurrentSelectionForCoding({ clearOnMiss: false });
+        }
+    }, true);
     // Capture-phase fallback: close open overlays/modals even when focused controls consume key events.
     window.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
@@ -247,8 +274,10 @@ function setupStaticActionBindings() {
             case 'openStatsModalAndCloseHeaderDropdown': openStatsModal(); closeHeaderDropdown(); break;
             case 'runProjectHealthCheckAndCloseHeaderDropdown': runProjectHealthCheck(); closeHeaderDropdown(); break;
             case 'openDiskImageSettingsAndCloseHeaderDropdown': openDiskImageSettingsModal(); closeHeaderDropdown(); break;
+            case 'openOnlineObservationsModalAndCloseHeaderDropdown': openOnlineObservationsModal(); closeHeaderDropdown(); break;
             case 'openRestoreBackupModalAndCloseHeaderDropdown': openRestoreBackupModal(); closeHeaderDropdown(); break;
             case 'exportCodedDataAndCloseHeaderDropdown': exportCodedData(); closeHeaderDropdown(); break;
+            case 'packProjectForExportAndCloseHeaderDropdown': packProjectForExport(); closeHeaderDropdown(); break;
             case 'openCaseModal': openCaseModal(); break;
             case 'openCodeModal': openCodeModal(); break;
             case 'undo': undo(); break;
@@ -283,6 +312,12 @@ function setupStaticActionBindings() {
             case 'mountDiskImageNow': mountDiskImageNow(); break;
             case 'unmountDiskImageNow': unmountDiskImageNow(); break;
             case 'saveDiskImageSettings': saveDiskImageSettings(); break;
+            case 'openOnlineObservationsHelpModal': openOnlineObservationsHelpModal(); break;
+            case 'closeOnlineObservationsHelpModal': closeOnlineObservationsHelpModal(); break;
+            case 'refreshOnlineObservationsModal': refreshOnlineObservationsModal(); break;
+            case 'copyOnlineObservationConfig': copyOnlineObservationConfig(); break;
+            case 'regenerateOnlineObservationToken': regenerateOnlineObservationToken(); break;
+            case 'closeOnlineObservationsModal': closeOnlineObservationsModal(); break;
             case 'closeSearchResults': closeSearchResults(); break;
             case 'closeSemanticToolsModal': closeSemanticToolsModal(); break;
             case 'inPageSearchPrev': inPageSearchPrev(); break;
@@ -741,17 +776,29 @@ document.addEventListener('keydown', function(e) {
         const hasStoredPdfTextSelection = !!(
             appData.selectedText &&
             appData.selectedText.kind !== 'pdfRegion' &&
+            appData.selectedText.kind !== 'fieldnoteImage' &&
             Number.isFinite(Number(appData.selectedText.startIndex)) &&
             Number.isFinite(Number(appData.selectedText.endIndex)) &&
             Number(appData.selectedText.endIndex) > Number(appData.selectedText.startIndex)
         );
         const hasPdfRegionSelection = !!(appData.selectedText && appData.selectedText.kind === 'pdfRegion' && appData.selectedText.pdfRegion);
-        if (hasTextSelection || hasStoredPdfTextSelection || hasPdfRegionSelection) {
+        const hasFieldnoteImageSelection = !!(appData.selectedText && appData.selectedText.kind === 'fieldnoteImage' && appData.selectedText.fieldnoteImageId);
+        if (hasTextSelection || hasStoredPdfTextSelection || hasPdfRegionSelection || hasFieldnoteImageSelection) {
             const shortcutNum = e.key;
             const code = appData.codes.find(c => c.shortcut === shortcutNum);
             if (code && appData.currentDocId && !appData.filterCodeId) {
                 e.preventDefault();
                 quickApplyCode(code.id);
+            }
+        }
+    }
+
+    if (!isTypingContext && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+        if (typeof isFieldnoteDocumentActive === 'function' && isFieldnoteDocumentActive()) {
+            const moved = goToAdjacentUncodedFieldnotePage(1);
+            if (moved) {
+                e.preventDefault();
+                return;
             }
         }
     }
@@ -778,9 +825,46 @@ if (window.electronAPI && window.electronAPI.onOpenQdpx) {
             // Buffer comes from Electron as a Node Buffer, convert to ArrayBuffer
             const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
             await applyImportedQdpx(arrayBuffer, { projectPath });
+            await syncObservationSnapshotToMain();
         } catch (e) {
             console.error('Failed to open QDPX project:', e);
             alert('Could not open project: ' + (e.message || e));
+        }
+    });
+}
+
+if (window.electronAPI && window.electronAPI.onObservationEntry) {
+    window.electronAPI.onObservationEntry((payload) => {
+        try {
+            if (!payload || !payload.entry || typeof applyObservationEntryToProject !== 'function') return;
+            const doc = applyObservationEntryToProject(Object.assign({}, payload.entry));
+            if (doc && typeof syncFieldnoteProjectMetadata === 'function') {
+                syncFieldnoteProjectMetadata(String(payload.projectPath || ''));
+                saveData();
+            }
+            syncObservationSnapshotToMain().catch(() => {});
+            renderAll();
+        } catch (error) {
+            console.error('Failed to ingest online observation entry:', error);
+            alert('Could not ingest online observation entry: ' + (error.message || error));
+        }
+    });
+}
+
+if (window.electronAPI && window.electronAPI.onObservationDeleted) {
+    window.electronAPI.onObservationDeleted((payload) => {
+        try {
+            if (!payload || !payload.entry || typeof deleteObservationEntryFromProject !== 'function') return;
+            const doc = deleteObservationEntryFromProject(Object.assign({}, payload.entry));
+            if (doc && typeof syncFieldnoteProjectMetadata === 'function') {
+                syncFieldnoteProjectMetadata(String(payload.projectPath || ''));
+                saveData();
+            }
+            syncObservationSnapshotToMain().catch(() => {});
+            renderAll();
+        } catch (error) {
+            console.error('Failed to delete online observation entry:', error);
+            alert('Could not delete online observation entry: ' + (error.message || error));
         }
     });
 }
@@ -800,6 +884,9 @@ if (window.electronAPI && window.electronAPI.onMenuAction) {
                 break;
             case 'saveAs':
                 manualSave(true);
+                break;
+            case 'openOnlineObservationsModal':
+                openOnlineObservationsModal();
                 break;
             default:
                 console.warn('Unknown menu action:', action);
@@ -822,9 +909,19 @@ if (window.electronAPI && window.electronAPI.hasProjectHandle) {
                 }
                 if (!base64) return;
 
-                await window.electronAPI.saveProject({
+                const result = await window.electronAPI.saveProject({
                     qdpxBase64: base64
                 }, { saveAs: false, silent: true, format: 'qdpx' });
+                if (!result || !result.ok) {
+                    if (result && result.error) {
+                        console.error('Autosave failed:', result.error);
+                    }
+                    return;
+                }
+
+                if (typeof syncFieldnoteProjectMetadata === 'function' && result.path) {
+                    syncFieldnoteProjectMetadata(result.path);
+                }
 
                 if (typeof createProjectBackup === 'function') {
                     createProjectBackup('autosave', { base64 }).catch(() => {});

@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveProject: (payload, opts) => ipcRenderer.invoke('project:save', payload, opts || {}),
   openLastUsedProject: () => ipcRenderer.invoke('project:openLastUsed'),
   getProjectInfo: () => ipcRenderer.invoke('project:getInfo'),
+  readObservationAsset: (relativePath) => ipcRenderer.invoke('observation:readAsset', relativePath),
+  getObservationConnectionInfo: () => ipcRenderer.invoke('observation:getConnectionInfo'),
+  regenerateObservationToken: () => ipcRenderer.invoke('observation:regenerateToken'),
+  updateObservationSnapshot: (snapshot) => ipcRenderer.invoke('observation:updateSnapshot', snapshot || {}),
   getStorageMode: () => ipcRenderer.invoke('settings:getStorageMode'),
   setDiskImageStorage: (enabled) => ipcRenderer.invoke('settings:setDiskImageStorage', !!enabled),
   getDiskImageSettings: () => ipcRenderer.invoke('diskImage:getSettings'),
@@ -30,6 +34,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearProjectHandle: () => ipcRenderer.invoke('project:clearHandle'),
   commitOpenedProject: (projectPath) => ipcRenderer.invoke('project:commitOpenPath', projectPath),
   onOpenQdpx: (cb) => subscribe('project:openQdpx', cb, (_evt, buffer) => [buffer]),
+  onObservationEntry: (cb) => subscribe('observation:ingestEntry', cb, (_evt, payload) => [payload]),
+  onObservationDeleted: (cb) => subscribe('observation:deleteEntry', cb, (_evt, payload) => [payload]),
   requestOpenProject: () => ipcRenderer.invoke('project:open'),
 
   // Native file helpers (dialog-gated, no arbitrary path access)

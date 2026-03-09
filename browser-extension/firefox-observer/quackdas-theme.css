@@ -1,0 +1,31 @@
+:root {
+    --bg-primary: #f8f6f1;
+    --bg-secondary: #ffffff;
+    --bg-hover: #f0ede5;
+    --text-primary: #2a2520;
+    --text-secondary: #8a8580;
+    --text-tertiary: #a8a4a0;
+    --border: #ddd8d0;
+    --accent: #c17a5c;
+    --accent-light: #e8d5cc;
+    --accent-dark: #a86a4e;
+    --shadow: rgba(42, 37, 32, 0.08);
+    --shadow-md: rgba(42, 37, 32, 0.12);
+    --focus-ring: rgba(193, 122, 92, 0.4);
+    --code-colors: #7c9885, #b67d8f, #8b8daa, #c8956f, #8aa4b5, #a68d7c, #9a8d9e, #7d9e9c;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --radius-card: 0;
+    --radius-control: 2px;
+    --radius-field: 2px;
+    --radius-compact: 2px;
+    --radius-overlay: 2px;
+    --header-height: 68px;
+}

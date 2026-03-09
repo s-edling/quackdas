@@ -87,3 +87,14 @@ Keep entries concise and practical.
 ## High-Risk Regression Checklist
 
 - (Add notes)
+## Online observation fieldnotes
+
+- Normal fieldnote saves keep media outside the QDPX in `.[project-name]_media/`; only relative `screenshots/...` and `html/...` refs belong in the fieldnote JSON persisted inside the project.
+- If a fieldnote entry was imported from a packed/export-only source and the only surviving media is the in-memory `packedScreenshotDataUrl` / `packedHtmlContent`, a normal save must preserve those assets inside the QDPX instead of writing dangling `internal://...` refs. Keep sidecar-relative refs external when they still exist.
+- Main-process ingest must move files out of `incoming/` before notifying the renderer, so the renderer only ever sees stable sidecar paths and never races partially-written extension output.
+- The Firefox extension no longer writes sidecar files directly. The supported path is a localhost-only HTTP server in the Electron main process, authenticated with a high-entropy bearer token and bound to `127.0.0.1` only.
+- Keep the localhost API narrow: status, fieldsites, fieldsite-history reads, and observation ingest only. Do not expose generic file-write or path-based actions to the extension.
+- Treat Quackdas fieldnotes as the authority for extension history. Browser `storage.local` should only cache sidebar state for resilience/performance; startup and fieldsite switches should be able to rebuild the sidebar from Quackdas' live fieldnote data plus sidecar assets.
+- Fieldnote document `content` is derived note text only. Session headings, metadata boxes, and screenshot blocks are rendered from `fieldnoteData`; text coding offsets should therefore only target note bodies.
+- Image codings for fieldnotes use `segment.fieldnoteImageId`, not text offsets or PDF-region geometry. Any segment code that assumes only plain text vs `pdfRegion` now also needs to tolerate fieldnote image segments.
+- Packed fieldnote exports should rewrite media refs to `internal://...` only for the export artifact. Do not rewrite the in-memory working project to embedded refs during normal save/autosave; the only exception is preserving already-packed imported media inside the saved QDPX when no external sidecar asset exists to reference safely.

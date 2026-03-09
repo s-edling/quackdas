@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quackdas Online Observation</title>
+    <link rel="stylesheet" href="quackdas-theme.css">
+    <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+    <div class="sidebar-shell">
+        <section class="sidebar-toolbar">
+            <div class="fieldsite-row">
+                <div class="sidebar-logo" aria-hidden="true">
+                    <img src="assets/logo.jpg" alt="">
+                </div>
+                <select id="fieldsiteSelect" class="field-input"></select>
+                <button id="openSettingsButton" class="secondary-button" type="button">Settings</button>
+            </div>
+            <div id="newFieldsiteRow" class="new-fieldsite-row" hidden>
+                <input id="newFieldsiteInput" class="field-input" type="text" maxlength="120" placeholder="New fieldsite name">
+            </div>
+        </section>
+
+        <section id="statusBanner" class="status-banner" hidden></section>
+
+        <main id="entriesContainer" class="entries-container" aria-live="polite"></main>
+
+        <footer class="sidebar-toolbar sidebar-actions">
+            <div class="actions-row actions-row-inline">
+                <button id="captureButton" class="primary-button" type="button">Capture region</button>
+                <button id="newNoteButton" class="secondary-button" type="button">New note</button>
+                <button id="startSessionButton" class="secondary-button" type="button">New session</button>
+            </div>
+        </footer>
+    </div>
+
+    <template id="entryTemplate">
+        <article class="entry-card">
+            <div class="session-heading-row" hidden>
+                <h2 class="session-heading"></h2>
+                <button class="session-target-button secondary-button" type="button">Add to session</button>
+            </div>
+            <div class="metadata-box" hidden>
+                <a class="entry-url" href="" target="_blank" rel="noreferrer noopener"></a>
+                <div class="entry-title"></div>
+                <div class="entry-timestamp"></div>
+            </div>
+            <div class="entry-note-wrap">
+                <div class="entry-delete-row" hidden>
+                    <button class="entry-delete-link" type="button">Delete note</button>
+                </div>
+                <textarea class="entry-note" rows="4" placeholder="Add observation note..."></textarea>
+            </div>
+            <div class="entry-image-wrap" hidden>
+                <img class="entry-image" alt="Captured observation">
+            </div>
+        </article>
+    </template>
+
+    <script src="lib/storage.js"></script>
+    <script src="lib/session.js"></script>
+    <script src="lib/fieldsites.js"></script>
+    <script src="lib/serialize.js"></script>
+    <script src="lib/capture.js"></script>
+    <script src="native-bridge-client.js"></script>
+    <script src="sidebar.js"></script>
+</body>
+</html>

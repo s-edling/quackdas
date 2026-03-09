@@ -9,7 +9,7 @@ function makeEmptyProject(overrides = {}) {
         projectName: 'untitled-project',
         documents: [],
         codes: [],
-        segments: [], // {docId, text, codeIds: [], startIndex, endIndex}
+        segments: [], // {docId, text, codeIds: [], startIndex, endIndex, pdfRegion?, fieldnoteImageId?}
         memos: [], // {id, type, targetId, content, created}
         folders: [], // {id, name, parentId, created, expanded, description}
         cases: [], // {id, name, type, parentId, description, notes, attributes: {}, linkedDocumentIds: [], created, modified}
@@ -236,6 +236,9 @@ function normaliseProject(p) {
         if (seg && seg.pdfRegion) {
             seg.pdfRegion = normalizePdfRegionShape(seg.pdfRegion);
         }
+        if (seg && seg.fieldnoteImageId) {
+            seg.fieldnoteImageId = String(seg.fieldnoteImageId || '').trim();
+        }
     });
 
     out.memos.forEach(memo => {
@@ -253,12 +256,16 @@ function normaliseProject(p) {
     const validDocIds = new Set(out.documents.map(doc => doc && doc.id).filter(Boolean));
     out.documents.forEach((doc) => {
         if (!doc || typeof doc !== 'object') return;
+        if (!doc.type) doc.type = 'text';
         if (!doc.metadata || typeof doc.metadata !== 'object') doc.metadata = {};
         if (!Array.isArray(doc.caseIds)) {
             doc.caseIds = [];
-            return;
+        } else {
+            doc.caseIds = doc.caseIds.filter(caseId => typeof caseId === 'string' && caseId.trim() !== '');
         }
-        doc.caseIds = doc.caseIds.filter(caseId => typeof caseId === 'string' && caseId.trim() !== '');
+        if (doc.type === 'fieldnote' && typeof normalizeFieldnoteDocument === 'function') {
+            normalizeFieldnoteDocument(doc);
+        }
     });
     out.cases = normalizeCasesForProject(out.cases, validDocIds, buildLocalId);
     const validCaseIds = new Set(out.cases.map((caseItem) => caseItem.id));
@@ -727,7 +734,8 @@ function replaceProjectData(nextProject, options = {}) {
 // Undo/Redo support
 // Snapshots exclude document content since it's immutable after import.
 // This dramatically reduces memory usage for large projects.
-// Trade-off: deleting a document cannot be undone via Ctrl+Z.
+// Trade-off: document create/delete operations clear undo history instead of
+// pretending the lightweight snapshot can restore document content safely.
 function saveHistory() {
     const snapshot = JSON.stringify({
         // Store document metadata only, not content
@@ -750,6 +758,15 @@ function saveHistory() {
     }
     history.future = [];
     updateHistoryButtons();
+}
+
+function resolveRestoredCurrentDocId(docId) {
+    const normalized = String(docId || '').trim();
+    if (!normalized) return null;
+    if (Array.isArray(appData.documents) && appData.documents.some((doc) => doc && doc.id === normalized)) {
+        return normalized;
+    }
+    return Array.isArray(appData.documents) ? (appData.documents[0]?.id || null) : null;
 }
 
 function undo() {
@@ -784,7 +801,7 @@ function undo() {
     appData.folders = restored.folders || [];
     appData.cases = restored.cases || [];
     appData.variableDefinitions = restored.variableDefinitions || [];
-    appData.currentDocId = restored.currentDocId;
+    appData.currentDocId = resolveRestoredCurrentDocId(restored.currentDocId);
     appData.selectedCaseId = restored.selectedCaseId || null;
     appData.filterCodeId = restored.filterCodeId;
     if (typeof syncDocumentCaseIdsFromCases === 'function') {
@@ -795,16 +812,16 @@ function undo() {
         typeof currentPdfState !== 'undefined' &&
         currentPdfState &&
         currentPdfState.docId &&
-        restored.currentDocId === currentPdfState.docId &&
+        appData.currentDocId === currentPdfState.docId &&
         !restored.filterCodeId &&
         !restored.selectedCaseId
     ) {
         const restoredDoc = Array.isArray(appData.documents)
-            ? appData.documents.find((doc) => doc && doc.id === restored.currentDocId)
+            ? appData.documents.find((doc) => doc && doc.id === appData.currentDocId)
             : null;
         if (restoredDoc?.type === 'pdf') {
             currentPdfState.pendingGoToPage = {
-                docId: restored.currentDocId,
+                docId: appData.currentDocId,
                 pageNum: Math.max(1, Number.parseInt(currentPdfState.currentPage, 10) || 1)
             };
         }
@@ -845,7 +862,7 @@ function redo() {
     appData.folders = restored.folders || [];
     appData.cases = restored.cases || [];
     appData.variableDefinitions = restored.variableDefinitions || [];
-    appData.currentDocId = restored.currentDocId;
+    appData.currentDocId = resolveRestoredCurrentDocId(restored.currentDocId);
     appData.selectedCaseId = restored.selectedCaseId || null;
     appData.filterCodeId = restored.filterCodeId;
     if (typeof syncDocumentCaseIdsFromCases === 'function') {
@@ -856,16 +873,16 @@ function redo() {
         typeof currentPdfState !== 'undefined' &&
         currentPdfState &&
         currentPdfState.docId &&
-        restored.currentDocId === currentPdfState.docId &&
+        appData.currentDocId === currentPdfState.docId &&
         !restored.filterCodeId &&
         !restored.selectedCaseId
     ) {
         const restoredDoc = Array.isArray(appData.documents)
-            ? appData.documents.find((doc) => doc && doc.id === restored.currentDocId)
+            ? appData.documents.find((doc) => doc && doc.id === appData.currentDocId)
             : null;
         if (restoredDoc?.type === 'pdf') {
             currentPdfState.pendingGoToPage = {
-                docId: restored.currentDocId,
+                docId: appData.currentDocId,
                 pageNum: Math.max(1, Number.parseInt(currentPdfState.currentPage, 10) || 1)
             };
         }
@@ -934,6 +951,7 @@ if (typeof module !== 'undefined' && module.exports) {
         applyDocumentFolderSnapshot,
         clearHistoryState,
         replaceProjectData,
+        resolveRestoredCurrentDocId,
         saveHistory,
         undo,
         redo,

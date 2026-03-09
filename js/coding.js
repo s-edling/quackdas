@@ -22,6 +22,7 @@ let currentPdfAnnotationCodeId = null;
 let currentPdfAnnotationCodeName = '';
 let pdfAnnotationOutsideBound = false;
 let pdfAnnotationOpenedAt = 0;
+let documentSelectionTrackingBound = false;
 
 function resolveSegmentMemoCodeId(segmentId, codeId) {
     const normalizedCodeId = String(codeId || '').trim();
@@ -360,6 +361,21 @@ function bindReadOnlyViewerOutsidePointerHandler() {
     readOnlyViewerCaretState.outsidePointerBound = true;
 }
 
+function bindDocumentSelectionTracking() {
+    if (documentSelectionTrackingBound) return;
+    if (typeof document === 'undefined' || !document || typeof document.addEventListener !== 'function') return;
+    document.addEventListener('selectionchange', () => {
+        const doc = appData.documents.find(d => d.id === appData.currentDocId);
+        const contentElement = document.getElementById('documentContent');
+        if (!doc || !contentElement || doc.type === 'pdf' || appData.filterCodeId) return;
+        const selection = window.getSelection ? window.getSelection() : null;
+        if (!selection || !selection.rangeCount || selection.isCollapsed) return;
+        if (!selectionBelongsToElement(selection, contentElement)) return;
+        captureCurrentSelectionForCoding({ clearOnMiss: false });
+    });
+    documentSelectionTrackingBound = true;
+}
+
 function enableReadOnlyTextViewerCaret(contentElement = document.getElementById('documentContent')) {
     if (!contentElement) return;
     if (!isCurrentDocumentTextView()) return;
@@ -419,46 +435,223 @@ function disableReadOnlyTextViewerCaret(options = {}) {
     selection.removeAllRanges();
 }
 
-// Text selection and coding
-function handleTextSelection() {
-    if (appData.filterCodeId) return; // Don't allow coding in filter view
-
+function captureCurrentSelectionForCoding(options = {}) {
+    const clearOnMiss = options.clearOnMiss !== false;
+    if (appData.filterCodeId) {
+        if (clearOnMiss) appData.selectedText = null;
+        return null;
+    }
     const selection = window.getSelection();
     if (!selection) {
-        appData.selectedText = null;
-        return;
+        if (clearOnMiss) appData.selectedText = null;
+        return null;
     }
     const text = selection.toString().trim();
 
-    // Clear stored selection if nothing is selected
     if (!text || text.length === 0 || !selection.rangeCount) {
-        appData.selectedText = null;
-        return;
+        if (clearOnMiss) appData.selectedText = null;
+        return null;
     }
 
     const range = selection.getRangeAt(0);
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const contentElement = document.getElementById('documentContent');
     if (!doc || !contentElement || typeof doc.content !== 'string') {
-        appData.selectedText = null;
-        return;
+        if (clearOnMiss) appData.selectedText = null;
+        return null;
     }
 
-    // Calculate actual character positions in the document
-    const position = getTextPosition(contentElement, range, doc.content);
+    const position = doc.type === 'fieldnote'
+        ? getFieldnoteSelectionPosition(doc, range)
+        : getTextPosition(contentElement, range, doc.content);
 
     if (position) {
-        // Store indices (not just a DOM Range) so we can restore selection after re-render
         appData.selectedText = {
             text: doc.content.substring(position.start, position.end),
             startIndex: position.start,
             endIndex: position.end
         };
+        return appData.selectedText;
+    } else {
+        if (clearOnMiss) appData.selectedText = null;
+        return null;
     }
+}
+
+// Text selection and coding
+function handleTextSelection() {
+    captureCurrentSelectionForCoding({ clearOnMiss: true });
+}
+
+function getFieldnoteSelectionPosition(doc, range) {
+    const direct = getFieldnoteSelectionPositionFromBoundaries(doc, range);
+    if (direct) return direct;
+    return getWholeFieldnoteNoteSelectionPosition(doc, range);
+}
+
+function getFieldnoteSelectionPositionFromBoundaries(doc, range) {
+    const startBoundary = resolveFieldnoteNoteBoundary(range.startContainer, range.startOffset, false);
+    const endBoundary = resolveFieldnoteNoteBoundary(range.endContainer, range.endOffset, true);
+    if (!startBoundary || !endBoundary) return null;
+    const startEntryId = String(startBoundary.noteEl.dataset.fieldnoteNoteEntryId || '').trim();
+    const endEntryId = String(endBoundary.noteEl.dataset.fieldnoteNoteEntryId || '').trim();
+    if (!startEntryId || startEntryId !== endEntryId) return null;
+
+    const noteRange = doc._fieldnoteTextRangesByEntryId ? doc._fieldnoteTextRangesByEntryId[startEntryId] : null;
+    if (!noteRange) return null;
+    const entry = findFieldnoteEntryRecord(doc, startEntryId);
+    if (!entry) return null;
+
+    const normalizedRange = document.createRange();
+    normalizedRange.setStart(startBoundary.container, startBoundary.offset);
+    normalizedRange.setEnd(endBoundary.container, endBoundary.offset);
+    const relative = getTextPosition(startBoundary.noteEl, normalizedRange, String(entry.note || ''));
+    if (!relative || !(relative.end > relative.start)) return null;
+    return {
+        start: noteRange.start + relative.start,
+        end: noteRange.start + relative.end
+    };
+}
+
+function getWholeFieldnoteNoteSelectionPosition(doc, range) {
+    const noteEl = findFieldnoteSelectionNoteElement(range);
+    if (!noteEl) return null;
+    const entryId = String(noteEl.dataset.fieldnoteNoteEntryId || '').trim();
+    if (!entryId) return null;
+    const noteRange = doc._fieldnoteTextRangesByEntryId ? doc._fieldnoteTextRangesByEntryId[entryId] : null;
+    if (!noteRange) return null;
+    const entry = findFieldnoteEntryRecord(doc, entryId);
+    if (!entry) return null;
+
+    const selectedText = normalizeFieldnoteSelectionText(range.toString());
+    const noteText = normalizeFieldnoteSelectionText(String(entry.note || ''));
+    if (!selectedText || !noteText) return null;
+    if (selectedText !== noteText) return null;
+    return {
+        start: noteRange.start,
+        end: noteRange.end
+    };
+}
+
+function findClosestFieldnoteNoteElement(node) {
+    if (!node) return null;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    return element && element.closest ? element.closest('[data-fieldnote-note-entry-id]') : null;
+}
+
+function findFieldnoteSelectionNoteElement(range) {
+    if (!range) return null;
+    const commonNote = findClosestFieldnoteNoteElement(range.commonAncestorContainer);
+    if (commonNote) return commonNote;
+
+    const startNote = findClosestFieldnoteNoteElement(range.startContainer);
+    const endNote = findClosestFieldnoteNoteElement(range.endContainer);
+    if (startNote && endNote && startNote === endNote) return startNote;
+
+    const contentElement = document.getElementById('documentContent');
+    if (!contentElement || typeof range.intersectsNode !== 'function') return null;
+    const intersectingNotes = Array.from(contentElement.querySelectorAll('[data-fieldnote-note-entry-id]')).filter((noteEl) => {
+        try {
+            return range.intersectsNode(noteEl);
+        } catch (_) {
+            return false;
+        }
+    });
+    return intersectingNotes.length === 1 ? intersectingNotes[0] : null;
+}
+
+function normalizeFieldnoteSelectionText(value) {
+    return String(value || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\r\n?/g, '\n')
+        .trim();
+}
+
+function findFieldnoteEntryRecord(doc, entryId) {
+    const normalized = String(entryId || '').trim();
+    if (!normalized) return null;
+    for (const session of (doc.fieldnoteData?.sessions || [])) {
+        const entry = (session.entries || []).find((item) => String(item.id || '').trim() === normalized);
+        if (entry) return entry;
+    }
+    return null;
+}
+
+function resolveFieldnoteNoteBoundary(node, offset, isEndBoundary) {
+    const noteEl = findClosestFieldnoteNoteElement(node);
+    if (noteEl && noteEl.contains(node)) {
+        return {
+            noteEl,
+            container: node,
+            offset
+        };
+    }
+
+    const fallbackNoteEl = noteEl || findClosestFieldnoteNoteElement(node && node.nodeType === Node.ELEMENT_NODE
+        ? resolveFieldnoteBoundaryChild(node, offset, isEndBoundary)
+        : null);
+    if (!fallbackNoteEl) return null;
+    const fallbackBoundary = isEndBoundary
+        ? findLastTextBoundary(fallbackNoteEl)
+        : findFirstTextBoundary(fallbackNoteEl);
+    if (!fallbackBoundary) return null;
+    return {
+        noteEl: fallbackNoteEl,
+        container: fallbackBoundary.node,
+        offset: fallbackBoundary.offset
+    };
+}
+
+function resolveFieldnoteBoundaryChild(node, offset, isEndBoundary) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+    const childNodes = node.childNodes || [];
+    if (!childNodes.length) return node;
+    const rawIndex = isEndBoundary ? offset - 1 : offset;
+    const index = Math.max(0, Math.min(childNodes.length - 1, rawIndex));
+    return childNodes[index] || null;
+}
+
+function findFirstTextBoundary(root) {
+    if (!root) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => ((node.nodeValue || '').length > 0
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP)
+    });
+    const first = walker.nextNode();
+    if (first) {
+        return { node: first, offset: 0 };
+    }
+    return { node: root, offset: 0 };
+}
+
+function findLastTextBoundary(root) {
+    if (!root) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => ((node.nodeValue || '').length > 0
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP)
+    });
+    let last = null;
+    while (walker.nextNode()) {
+        last = walker.currentNode;
+    }
+    if (last) {
+        return { node: last, offset: (last.nodeValue || '').length };
+    }
+    return { node: root, offset: root.childNodes ? root.childNodes.length : 0 };
 }
 
 function isTinyTextRange(startIndex, endIndex) {
     return (Number(endIndex) - Number(startIndex)) < MIN_TEXT_CODING_LENGTH;
+}
+
+function allowsTinyTextCoding(doc) {
+    return !!(doc && doc.type === 'fieldnote');
+}
+
+function shouldBlockTinyTextCoding(doc, startIndex, endIndex) {
+    return !allowsTinyTextCoding(doc) && isTinyTextRange(startIndex, endIndex);
 }
 
 function mergeIntervals(intervals) {
@@ -548,7 +741,14 @@ function normalizeTextSelectionForCoding(doc, rawSelection, options = {}) {
     endIndex = Math.max(0, Math.min(endIndex, doc.content.length));
     if (!(endIndex > startIndex)) return null;
 
-    const allowSnapToExistingSegment = options.allowSnapToExistingSegment !== false && doc.type !== 'pdf';
+    if (doc.type === 'fieldnote') {
+        const trimmed = trimFieldnoteSelectionBoundaryNewlines(doc, startIndex, endIndex);
+        if (!trimmed) return null;
+        startIndex = trimmed.startIndex;
+        endIndex = trimmed.endIndex;
+    }
+
+    const allowSnapToExistingSegment = options.allowSnapToExistingSegment !== false && doc.type !== 'pdf' && doc.type !== 'fieldnote';
     const snapped = allowSnapToExistingSegment
         ? findSnapSegmentRange(doc.id, startIndex, endIndex)
         : null;
@@ -564,12 +764,43 @@ function normalizeTextSelectionForCoding(doc, rawSelection, options = {}) {
     };
 }
 
+function trimFieldnoteSelectionBoundaryNewlines(doc, startIndex, endIndex) {
+    if (!doc || doc.type !== 'fieldnote' || typeof doc.content !== 'string') {
+        return { startIndex, endIndex };
+    }
+    let nextStart = startIndex;
+    let nextEnd = endIndex;
+
+    while (nextStart < nextEnd && isFieldnoteBoundaryNewline(doc.content.charAt(nextStart))) {
+        nextStart += 1;
+    }
+    while (nextEnd > nextStart && isFieldnoteBoundaryNewline(doc.content.charAt(nextEnd - 1))) {
+        nextEnd -= 1;
+    }
+
+    if (!(nextEnd > nextStart)) return null;
+    return {
+        startIndex: nextStart,
+        endIndex: nextEnd
+    };
+}
+
+function isFieldnoteBoundaryNewline(char) {
+    return char === '\n' || char === '\r';
+}
+
 function pruneTinyTextSegments() {
+    const docTypeById = new Map(
+        (Array.isArray(appData.documents) ? appData.documents : [])
+            .filter((doc) => doc && doc.id)
+            .map((doc) => [doc.id, String(doc.type || 'text')])
+    );
     appData.segments = appData.segments.filter((segment) => {
-        if (!segment || segment.pdfRegion) return true;
+        if (!segment || segment.pdfRegion || segment.fieldnoteImageId) return true;
         const start = Number(segment.startIndex);
         const end = Number(segment.endIndex);
         if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) return false;
+        if (docTypeById.get(segment.docId) === 'fieldnote') return true;
         return !isTinyTextRange(start, end);
     });
 }
@@ -580,7 +811,7 @@ function coalesceExactTextSegments() {
 
     appData.segments.forEach((segment) => {
         if (!segment) return;
-        if (segment.pdfRegion) {
+        if (segment.pdfRegion || segment.fieldnoteImageId) {
             out.push(segment);
             return;
         }
@@ -607,7 +838,7 @@ function coalesceExactTextSegments() {
     });
 
     appData.segments = out.filter((segment) => {
-        if (segment.pdfRegion) return true;
+        if (segment.pdfRegion || segment.fieldnoteImageId) return true;
         return Array.isArray(segment.codeIds) && segment.codeIds.length > 0;
     });
 }
@@ -631,12 +862,12 @@ function toggleCodeForTextRange(doc, startIndex, endIndex, codeId) {
     );
 
     // Tiny ranges are allowed only for removal (fine-grained uncoding), never for adding new coding.
-    if (isTinyTextRange(startIndex, endIndex) && coveredIntervals.length === 0) {
+    if (shouldBlockTinyTextCoding(doc, startIndex, endIndex) && coveredIntervals.length === 0) {
         return { changed: false, skippedTiny: true };
     }
 
     const addIntervals = subtractIntervalsFromRange(startIndex, endIndex, coveredIntervals)
-        .filter(([a, b]) => !isTinyTextRange(a, b));
+        .filter(([a, b]) => !shouldBlockTinyTextCoding(doc, a, b));
 
     const affectedIds = new Set(overlapWithCode.map(segment => segment.id));
     const now = new Date().toISOString();
@@ -673,7 +904,7 @@ function toggleCodeForTextRange(doc, startIndex, endIndex, codeId) {
                 codeIds = codeIds.filter(id => id !== codeId);
                 changed = true;
             }
-            if (codeIds.length === 0 || isTinyTextRange(a, b)) continue;
+            if (codeIds.length === 0 || shouldBlockTinyTextCoding(doc, a, b)) continue;
 
             pieces.push({
                 ...segment,
@@ -753,8 +984,9 @@ function applyCodeToStoredSelection(codeId, options = {}) {
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
     const isPdfDoc = doc?.type === 'pdf';
     const isPdfRegion = sel.kind === 'pdfRegion' && sel.pdfRegion;
+    const isFieldnoteImage = sel.kind === 'fieldnoteImage' && !!sel.fieldnoteImageId;
     if (isPdfRegion && !sel.pdfRegion) return;
-    if (!isPdfRegion && (sel.startIndex === undefined || sel.endIndex === undefined)) return;
+    if (!isPdfRegion && !isFieldnoteImage && (sel.startIndex === undefined || sel.endIndex === undefined)) return;
 
     // Merge/toggle for PDF region or text range
     let segment = null;
@@ -764,10 +996,15 @@ function applyCodeToStoredSelection(codeId, options = {}) {
             s.pdfRegion &&
             regionsEqualForSegment(s.pdfRegion, sel.pdfRegion)
         );
+    } else if (isFieldnoteImage) {
+        segment = appData.segments.find(s =>
+            s.docId === doc.id &&
+            s.fieldnoteImageId === sel.fieldnoteImageId
+        );
     }
 
     let codeApplied = false;
-    if (!isPdfRegion) {
+    if (!isPdfRegion && !isFieldnoteImage) {
         const normalized = normalizeTextSelectionForCoding(doc, sel);
         if (!normalized) {
             appData.selectedText = null;
@@ -780,7 +1017,7 @@ function applyCodeToStoredSelection(codeId, options = {}) {
             return;
         }
 
-        if (isTinyTextRange(normalized.startIndex, normalized.endIndex)) {
+        if (shouldBlockTinyTextCoding(doc, normalized.startIndex, normalized.endIndex)) {
             // Keep going: tiny ranges may still remove existing coding.
             // Addition of tiny new coding is blocked in toggleCodeForTextRange.
         }
@@ -835,15 +1072,21 @@ function applyCodeToStoredSelection(codeId, options = {}) {
         segment = {
             id: 'seg_' + Date.now(),
             docId: doc.id,
-            text: typeof sel.text === 'string' && sel.text.length > 0
-                ? sel.text
-                : `[PDF region: page ${sel.pdfRegion.pageNum}]`,
+            text: isFieldnoteImage
+                ? `[Fieldnote image: ${sel.fieldnoteImageId}]`
+                : (typeof sel.text === 'string' && sel.text.length > 0
+                    ? sel.text
+                    : `[PDF region: page ${sel.pdfRegion.pageNum}]`),
             codeIds: [codeId],
             startIndex: 0,
             endIndex: 1,
-            pdfRegion: Object.assign({}, sel.pdfRegion),
             created: new Date().toISOString()
         };
+        if (isFieldnoteImage) {
+            segment.fieldnoteImageId = sel.fieldnoteImageId;
+        } else {
+            segment.pdfRegion = Object.assign({}, sel.pdfRegion);
+        }
         appData.segments.push(segment);
         codeApplied = true;
     }
@@ -877,7 +1120,7 @@ function applyCodeToStoredSelection(codeId, options = {}) {
     }
 
     // Applying a code should clear selection state (both stored and native).
-    if (!isPdfRegion) {
+    if (!isPdfRegion && !isFieldnoteImage) {
         appData.selectedText = null;
         if (doc?.type === 'pdf' && typeof clearActivePdfTextSelection === 'function') {
             clearActivePdfTextSelection();
@@ -901,54 +1144,77 @@ function applyCodeToStoredSelection(codeId, options = {}) {
                 caretSelection.addRange(caretRange);
             });
         }
-    } else if (typeof clearPendingPdfRegionSelection === 'function') {
+    } else if (isPdfRegion && typeof clearPendingPdfRegionSelection === 'function') {
         clearPendingPdfRegionSelection();
         appData.selectedText = null;
+    } else if (isFieldnoteImage) {
+        appData.selectedText = null;
+        if (typeof renderCurrentDocumentView === 'function') renderCurrentDocumentView();
     }
 }
 
 // Calculate the actual character position in the original document text
 function getTextPosition(container, range, docContent) {
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-        acceptNode: (node) => {
-            const p = node.parentElement;
-            if (!p) return NodeFilter.FILTER_ACCEPT;
-            if (p.classList.contains('memo-indicator') || p.classList.contains('code-actions')) return NodeFilter.FILTER_REJECT;
-            if (p.closest && p.closest('.code-actions')) return NodeFilter.FILTER_REJECT;
-            return NodeFilter.FILTER_ACCEPT;
-        }
-    });
-
     let startIndex = null;
     let endIndex = null;
-    let idx = 0;
 
-    while (walker.nextNode()) {
-        const node = walker.currentNode;
-        const text = node.nodeValue || '';
-        const len = text.length;
-
-        if (startIndex === null && node === range.startContainer) {
-            startIndex = idx + Math.max(0, Math.min(range.startOffset, len));
-        }
-        if (endIndex === null && node === range.endContainer) {
-            endIndex = idx + Math.max(0, Math.min(range.endOffset, len));
-        }
-
-        idx += len;
-
-        if (startIndex !== null && endIndex !== null) break;
+    try {
+        startIndex = getRangeCharacterOffset(container, range.startContainer, range.startOffset);
+        endIndex = getRangeCharacterOffset(container, range.endContainer, range.endOffset);
+    } catch (_) {
+        startIndex = null;
+        endIndex = null;
     }
 
-    // Fallbacks if boundaries are element nodes (should be rare with pre-wrap)
     if (startIndex === null) startIndex = 0;
-    if (endIndex === null) endIndex = startIndex + range.toString().length;
+    if (endIndex === null) endIndex = startIndex + getRangeRenderedLength(range);
 
     startIndex = Math.max(0, Math.min(startIndex, docContent.length));
     endIndex = Math.max(0, Math.min(endIndex, docContent.length));
 
     if (endIndex <= startIndex) return null;
     return { start: startIndex, end: endIndex };
+}
+
+function getRangeCharacterOffset(container, targetContainer, targetOffset) {
+    const probe = document.createRange();
+    probe.selectNodeContents(container);
+    probe.setEnd(targetContainer, targetOffset);
+    return getRangeRenderedLength(probe);
+}
+
+function getRangeRenderedLength(range) {
+    const fragment = range.cloneContents();
+    return getRenderedNodeLength(fragment);
+}
+
+function getRenderedNodeLength(root) {
+    let length = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL, {
+        acceptNode: (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const parent = node.parentElement;
+                if (!parent) return NodeFilter.FILTER_ACCEPT;
+                if (parent.classList.contains('memo-indicator') || parent.classList.contains('code-actions')) return NodeFilter.FILTER_REJECT;
+                if (parent.closest && parent.closest('.code-actions')) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+            if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+                return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_SKIP;
+        }
+    });
+
+    while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.nodeType === Node.TEXT_NODE) {
+            length += (node.nodeValue || '').length;
+        } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+            length += 1;
+        }
+    }
+    return length;
 }
 
 function openCodeSelectionModal() {
@@ -1001,7 +1267,7 @@ function applySelectedCodes() {
     }
 
     const normalized = normalizeTextSelectionForCoding(doc, selectedText);
-    if (!normalized || isTinyTextRange(normalized.startIndex, normalized.endIndex)) {
+    if (!normalized || shouldBlockTinyTextCoding(doc, normalized.startIndex, normalized.endIndex)) {
         closeCodeSelectionModal();
         return;
     }
@@ -1066,38 +1332,30 @@ function quickApplyCode(codeId) {
     if (!appData.currentDocId || appData.filterCodeId) return;
 
     const doc = appData.documents.find(d => d.id === appData.currentDocId);
+    if (!appData.selectedText) {
+        captureCurrentSelectionForCoding({ clearOnMiss: false });
+    }
     const stored = appData.selectedText;
     if (
-        doc &&
-        doc.type === 'pdf' &&
         stored &&
         (
-            (stored.kind === 'pdfRegion' && stored.pdfRegion) ||
-            (Number.isFinite(Number(stored.startIndex)) && Number.isFinite(Number(stored.endIndex)))
+            (doc && doc.type === 'pdf' && stored.kind === 'pdfRegion' && stored.pdfRegion) ||
+            (stored.kind === 'fieldnoteImage' && stored.fieldnoteImageId) ||
+            (Number.isFinite(Number(stored.startIndex)) &&
+             Number.isFinite(Number(stored.endIndex)) &&
+             Number(stored.endIndex) > Number(stored.startIndex))
         )
     ) {
         applyCodeToStoredSelection(codeId);
         return;
     }
-    
-    const selection = window.getSelection();
-    if (!selection) return;
-    const text = selection.toString().trim();
-    if (text.length === 0 || !selection.rangeCount) return;
 
-    const range = selection.getRangeAt(0);
-    const contentElement = document.getElementById('documentContent');
-    if (!doc || !contentElement || typeof doc.content !== 'string') return;
-    const position = getTextPosition(contentElement, range, doc.content);
-    if (!position) return;
-
-    appData.selectedText = {
-        text: doc.content.substring(position.start, position.end),
-        startIndex: position.start,
-        endIndex: position.end
-    };
+    const captured = captureCurrentSelectionForCoding({ clearOnMiss: false });
+    if (!doc || !captured) return;
     applyCodeToStoredSelection(codeId, { preserveCaretAfterApply: true });
 }
+
+bindDocumentSelectionTracking();
 
 function refreshAfterTextSegmentMutation(targetDocId) {
     const doc = appData.documents.find((item) => item && item.id === targetDocId);
@@ -1294,7 +1552,7 @@ function showSegmentContextMenu(segmentIds, event) {
         }
     ];
 
-    if (segments.length === 1 && primarySegment && !primarySegment.pdfRegion) {
+    if (segments.length === 1 && primarySegment && !primarySegment.pdfRegion && !primarySegment.fieldnoteImageId) {
         menuItems.push({ label: `Edit boundaries • ${label}`, onClick: () => openEditBoundariesModal(primarySegment.id) });
     }
 
@@ -1352,8 +1610,8 @@ function segmentActionChoice(action) {
 function openEditBoundariesModal(segmentId) {
     currentEditSegment = appData.segments.find(s => s.id === segmentId);
     if (!currentEditSegment) return;
-    if (currentEditSegment.pdfRegion) {
-        alert('Boundary editing is not available for PDF region codings.');
+    if (currentEditSegment.pdfRegion || currentEditSegment.fieldnoteImageId) {
+        alert('Boundary editing is not available for non-text codings.');
         currentEditSegment = null;
         return;
     }

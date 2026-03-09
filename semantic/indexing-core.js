@@ -43,6 +43,24 @@ async function runIncrementalIndexing(payload) {
 
   try {
     store.setMeta('embedding_model_name', modelName);
+    const currentDocIds = new Set(docs.map((doc) => doc.id));
+    const staleDocIds = store.getAllDocStates()
+      .map((row) => String(row.docId || '').trim())
+      .filter((docId) => docId && !currentDocIds.has(docId));
+
+    if (staleDocIds.length > 0) {
+      store.begin();
+      try {
+        staleDocIds.forEach((docId) => {
+          store.deleteChunksNotIn(docId, []);
+          store.deleteDocState(docId);
+        });
+        store.commit();
+      } catch (err) {
+        store.rollback();
+        throw err;
+      }
+    }
 
     const plans = docs.map((doc) => {
       const docHash = getDocumentTextHash(doc.content);
