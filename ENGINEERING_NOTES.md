@@ -68,6 +68,8 @@ Keep entries concise and practical.
 - 2026-03-06: macOS `Disk image storage` is an opt-in derived-storage mode, not a new persistence default. When enabled, backups and semantic indexes should follow the saved project path; unsaved projects still need app-local fallback until a concrete `.qdpx` path exists.
 - 2026-03-06: macOS auto-unmount should only target disk images Quackdas mounted in the current session. Do not auto-detach a volume that was already mounted before launch unless there is an explicit future setting for that behavior.
 - 2026-03-06: Do not assume Electron dev runs inherit a shell `PATH` that includes Homebrew binaries. OCR/Tesseract lookup should probe explicit env overrides plus common install paths like `/opt/homebrew/bin/tesseract`, not only `execFile('tesseract', ...)`.
+- 2026-03-09: For the Firefox online-observation extension, keep the production install path Mozilla-signed and self-distributed. The repo should produce a signable `.xpi`, and the manifest should use `browser_specific_settings.gecko.id` plus honest `data_collection_permissions` for the local Quackdas handoff rather than pretending the extension collects no site data.
+- 2026-03-09: If GitHub tag releases reuse a signed Firefox `.xpi`, make the workflow fetch the most recent prior release asset and skip cleanly when none exists yet. The first tag after enabling that automation should still publish the app installers instead of failing the whole release.
 
 ## Disk Image Mode
 

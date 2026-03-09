@@ -1,13 +1,16 @@
 {
   "manifest_version": 2,
   "name": "Quackdas Online Observation",
-  "version": "0.0.1",
+  "version": "0.7.1",
   "description": "Capture annotated web observation entries and send them to a running Quackdas app.",
+  "icons": {
+    "48": "assets/logo.svg",
+    "96": "assets/logo.svg"
+  },
   "permissions": [
     "activeTab",
     "tabs",
     "storage",
-    "<all_urls>",
     "http://127.0.0.1:45823/*"
   ],
   "background": {
@@ -24,9 +27,15 @@
     "browser_style": false,
     "open_in_tab": true
   },
-  "applications": {
+  "browser_specific_settings": {
     "gecko": {
-      "id": "quackdas-observer@staffanedling.se"
+      "id": "quackdas-observer@staffanedling.se",
+      "data_collection_permissions": {
+        "required": [
+          "websiteActivity",
+          "websiteContent"
+        ]
+      }
     }
   },
   "web_accessible_resources": [

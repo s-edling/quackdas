@@ -90,6 +90,55 @@ jobs:
           name: quackdas-macos-installer
           path: release-assets/macos
 
+      - name: Find last signed Firefox XPI asset
+        id: find-last-xpi
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const currentTag = context.ref.replace('refs/tags/', '');
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+
+            const priorReleaseWithXpi = releases.find((release) => {
+              if (release.draft || release.tag_name === currentTag) {
+                return false;
+              }
+
+              return release.assets.some((asset) => asset.name.toLowerCase().endsWith('.xpi'));
+            });
+
+            if (!priorReleaseWithXpi) {
+              core.info('No earlier release with a signed Firefox .xpi asset was found.');
+              core.setOutput('found', 'false');
+              return;
+            }
+
+            const xpiAsset = priorReleaseWithXpi.assets.find((asset) =>
+              asset.name.toLowerCase().endsWith('.xpi')
+            );
+
+            core.info(`Reusing signed Firefox .xpi from release ${priorReleaseWithXpi.tag_name}: ${xpiAsset.name}`);
+            core.setOutput('found', 'true');
+            core.setOutput('asset_name', xpiAsset.name);
+            core.setOutput('asset_api_url', xpiAsset.url);
+
+      - name: Download last signed Firefox XPI asset
+        if: steps.find-last-xpi.outputs.found == 'true'
+        env:
+          ASSET_NAME: ${{ steps.find-last-xpi.outputs.asset_name }}
+          ASSET_API_URL: ${{ steps.find-last-xpi.outputs.asset_api_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-assets/firefox
+          curl -L --fail \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "${ASSET_API_URL}" \
+            -o "release-assets/firefox/${ASSET_NAME}"
+
       - name: Create/Update GitHub release with installers
         uses: softprops/action-gh-release@v2
         with:
@@ -97,3 +146,9 @@ jobs:
             release-assets/windows/*.exe
             release-assets/macos/*.dmg
           generate_release_notes: true
+
+      - name: Attach reused signed Firefox XPI to GitHub release
+        if: steps.find-last-xpi.outputs.found == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/firefox/*.xpi

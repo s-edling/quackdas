@@ -13,6 +13,7 @@
     "check:lint": "eslint .",
     "check:audit:prod": "npm audit --omit=dev",
     "check:all": "npm run check:syntax && npm run check:lint && npm test && npm run check:audit:prod",
+    "pack:firefox-extension": "./tools/package-firefox-extension.sh",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "build-all": "npm run dist"

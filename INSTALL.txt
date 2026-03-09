@@ -8,3 +8,14 @@ macOS:
 Windows:
 1) Run the Setup .exe
 2) If SmartScreen warns: More info → Run anyway.
+
+Firefox extension (Online observations):
+1) Build the AMO upload package from the repo root:
+   `npm run pack:firefox-extension`
+2) Submit the resulting `.xpi` in `dist/firefox-extension/` to AMO for signing.
+3) After Mozilla signs it, open Firefox → Add-ons and themes → gear menu → Install Add-on From File…
+4) Select the signed `.xpi`.
+5) In Quackdas, open File → Online observations and copy the extension config into the extension settings.
+
+For development-only temporary loading, use:
+`about:debugging#/runtime/this-firefox` → `Load Temporary Add-on` → `browser-extension/firefox-observer/manifest.json`

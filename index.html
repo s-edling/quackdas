@@ -509,7 +509,7 @@
             <div class="disk-image-help-copy">
                 <p>This panel is for setting up the Quackdas Firefox extension for online observations. With this extension, you can take notes and screenshots in the Firefox browser which are automatically added to the Quackdas project.</p>
                 <p>These are stored in a hidden folder sitting next to the project file. If you want to move a project with online observations to another computer, use the Pack for export function to build online observations into the project file.</p>
-                <p>To set up the extension, open Firefox and go to <code>about:debugging#/runtime/this-firefox</code>, choose <code>Load Temporary Add-on</code>, and select the extension manifest at <code>browser-extension/firefox-observer/manifest.json</code> from the Quackdas folder. Then open the extension settings and paste the extension config from this panel.</p>
+                <p>To set up the extension, install the Mozilla-signed Quackdas Online Observation <code>.xpi</code> in Firefox via Add-ons and themes → gear menu → Install Add-on From File…, then open the extension settings and paste the extension config from this panel. For development-only testing, you can still use <code>about:debugging#/runtime/this-firefox</code> → <code>Load Temporary Add-on</code> and select <code>browser-extension/firefox-observer/manifest.json</code> from the Quackdas folder.</p>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-action="closeOnlineObservationsHelpModal">Close</button>
